@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// Paste into Firebase console → Firestore Database → Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Who's who ───────────────────────────────────────────────────
+    // The DM: keep in sync with DM_EMAILS in js/config.js.
+    function dmEmails() { return ['christopherwmazzoli@gmail.com']; }
+
+    // The party. Leave the list EMPTY to let anyone with a Google account in.
+    // Once you have everyone's address, list them (lowercase), e.g.
+    //   return ['player.one@gmail.com', 'player.two@gmail.com'];
+    // then Publish. No site redeploy needed.
+    function party() { return []; }
+
+    function googleUser() {
+      return request.auth != null
+        && 'email' in request.auth.token
+        && request.auth.token.email_verified == true;
+    }
+
+    function isDM() { return googleUser() && request.auth.token.email.lower() in dmEmails(); }
+
+    function isPlayer() {
+      return googleUser()
+        && (party().size() == 0 || request.auth.token.email.lower() in party() || isDM());
+    }
+
+    // Pages and pins: everyone reads what isn't hidden; only the DM writes.
+    match /pages/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.hidden == false);
+      allow write: if isDM();
+    }
+
+    match /pins/{id} {
+      allow read: if isDM()
+        || (isPlayer() && resource.data.hidden == false && resource.data.pageHidden == false);
+      allow write: if isDM();
+    }
+
+    // DM-only secrets for pins and pages (keyed by the pin/page id). Never readable by players.
+    match /secrets/{id} {
+      allow read, write: if isDM();
+    }
+
+    // Notes: every player can write their own.
+    // Private notes are readable only by their author, not even the DM.
+    match /notes/{id} {
+      allow read: if isPlayer() && (resource.data.private == false || resource.data.uid == request.auth.uid);
+
+      allow create: if isPlayer()
+        && request.resource.data.keys().hasOnly(['targetType', 'targetId', 'text', 'author', 'private', 'uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.targetType in ['pin', 'page']
+        && request.resource.data.targetId is string
+        && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000
+        && request.resource.data.author is string && request.resource.data.author.size() <= 60
+        && request.resource.data.private is bool;
+
+      allow update: if isPlayer()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
+        && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000;
+
+      allow delete: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
+    }
+
+    // Live "ping" shared by everyone at the table.
+    match /live/ping {
+      allow read: if isPlayer();
+      allow write: if isPlayer()
+        && request.resource.data.keys().hasOnly(['pageId', 'x', 'y', 'by', 'uid', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.by is string && request.resource.data.by.size() <= 60;
+    }
+  }
+}
