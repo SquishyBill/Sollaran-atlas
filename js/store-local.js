@@ -30,6 +30,7 @@ export class LocalStore {
     try { this.db = JSON.parse(lsGet(KEY)); } catch { this.db = null; }
     if (!this.db) { this.db = structuredClone(SEED); lsSet(KEY, JSON.stringify(this.db)); }
     this.db.secrets ||= {};
+    this.db.people ||= {};
   }
 
   persist() {
@@ -43,6 +44,7 @@ export class LocalStore {
     this.handlers.pages?.(rows(this.db.pages).filter((p) => dm || !p.hidden));
     this.handlers.pins?.(rows(this.db.pins).filter((p) => dm || (!p.hidden && !p.pageHidden)));
     this.handlers.notes?.(rows(this.db.notes).filter((n) => !n.private || n.uid === this.uid));
+    this.handlers.people?.(rows(this.db.people).filter((p) => dm || !p.hidden));
     if (dm) this.handlers.secrets?.(rows(this.db.secrets));
   }
 
@@ -80,6 +82,7 @@ export class LocalStore {
     Object.assign(this.db.pages, seed.pages);
     Object.assign(this.db.pins, seed.pins);
     Object.assign(this.db.secrets, seed.secrets || {});
+    Object.assign(this.db.people, seed.people || {});
     this.persist();
   }
 
@@ -89,6 +92,15 @@ export class LocalStore {
   }
 
   async deletePin(id) { delete this.db.pins[id]; this.persist(); }
+
+  async savePerson(data, id) {
+    if (!id) { id = 'person-' + rid(); this.db.people[id] = { hidden: false, createdAt: Date.now() }; }
+    Object.assign(this.db.people[id], data);
+    this.persist();
+    return id;
+  }
+
+  async deletePerson(id) { delete this.db.people[id]; delete this.db.secrets[id]; this.persist(); }
 
   async addNote(note) {
     this.db.notes[rid()] = { ...note, uid: this.uid, createdAt: Date.now() };

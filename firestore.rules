@@ -39,7 +39,13 @@ service cloud.firestore {
       allow write: if isDM();
     }
 
-    // DM-only secrets for pins and pages (keyed by the pin/page id). Never readable by players.
+    // People (NPCs): everyone reads who isn't hidden; only the DM writes.
+    match /people/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.hidden == false);
+      allow write: if isDM();
+    }
+
+    // DM-only secrets for pins, pages and people (keyed by their id). Never readable by players.
     match /secrets/{id} {
       allow read, write: if isDM();
     }
@@ -52,7 +58,7 @@ service cloud.firestore {
       allow create: if isPlayer()
         && request.resource.data.keys().hasOnly(['targetType', 'targetId', 'text', 'author', 'private', 'uid', 'createdAt'])
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.targetType in ['pin', 'page']
+        && request.resource.data.targetType in ['pin', 'page', 'person']
         && request.resource.data.targetId is string
         && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000
         && request.resource.data.author is string && request.resource.data.author.size() <= 60

@@ -55,7 +55,7 @@ const glyph = (k, size = 16) =>
 // ─── state ──────────────────────────────────────────────────────────
 const S = {
   store: null,
-  pages: [], pins: [], notes: [], secrets: {},
+  pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -79,7 +79,9 @@ function resolveLink(name) {
   const pin = S.pins.find((p) => p.title.toLowerCase() === n && pageById(p.pageId));
   if (pin) return { kind: 'pin', id: pin.id };
   const page = S.pages.find((p) => p.title.toLowerCase() === n);
-  return page ? { kind: 'page', id: page.id } : null;
+  if (page) return { kind: 'page', id: page.id };
+  const person = S.people.find((p) => p.name.toLowerCase() === n);
+  return person ? { kind: 'person', id: person.id } : null;
 }
 const md = (text) => renderMarkdown(text, resolveLink);
 
@@ -112,7 +114,7 @@ async function boot() {
   if (S.store.mode === 'local') $('#demoRibbon').hidden = false;
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, ping: onPing, error: onError });
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, ping: onPing, error: onError });
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -202,6 +204,7 @@ function onPages(list) {
     const hash = parseHash();
     const start = pageById(hash.p) ? hash.p : S.pages[0]?.id;
     if (hash.pin) S.pendingPin = hash.pin;
+    if (hash.person) S.pendingPerson = hash.person;
     if (start) goToPage(start, { instant: true });
     else renderEmptyAtlas();
     return;
@@ -228,7 +231,7 @@ function onPins(list) {
 
 function onSecrets(list) {
   S.secrets = Object.fromEntries(list.map((s) => [s.id, s.text]));
-  if (S.panel?.type === 'pin' || S.panel?.type === 'about') renderPanel();
+  if (['pin', 'about', 'person'].includes(S.panel?.type)) renderPanel();
   const page = currentPage();
   if (page?.type === 'doc' && S.panel?.type !== 'editPage') renderDoc(page);
 }
@@ -331,7 +334,8 @@ function goToPage(id, { dir, instant } = {}) {
   const to = S.pages.findIndex((p) => p.id === id);
   dir ||= to < from ? 'prev' : 'next';
 
-  if (S.panel && !(S.panel.type === 'pin' && S.pendingPin === S.panel.id)) closePanel(true);
+  // keep a pin that's about to open, and a person opened from a link while the first page loads
+  if (S.panel && S.pageId != null && !(S.panel.type === 'pin' && S.pendingPin === S.panel.id)) closePanel(true);
   const swap = () => { S.pageId = id; renderPage(); };
   if (instant || reduced || S.pageId == null) { swap(); return; }
 
@@ -432,8 +436,9 @@ async function syncSeed(e) {
       pages: missing(SEED.pages, pageById),
       pins: missing(SEED.pins, pinById),
       secrets: missing(SEED.secrets, (id) => id in S.secrets),
+      people: missing(SEED.people, personById),
     };
-    const counts = [Object.keys(add.pages).length, Object.keys(add.pins).length, Object.keys(add.secrets).length];
+    const counts = [Object.keys(add.pages).length, Object.keys(add.pins).length, Object.keys(add.secrets).length, Object.keys(add.people).length];
     if (counts.some(Boolean)) await S.store.importSeed(add);
     // Patches only fill in fields that are still unset, so they never undo the DM's own edits.
     let patched = 0;
@@ -445,7 +450,7 @@ async function syncSeed(e) {
       await (col === 'pins' ? S.store.savePin(fill, id) : S.store.savePage(fill, id));
       patched++;
     }
-    toast(`Added ${counts[0]} pages, ${counts[1]} pins and ${counts[2]} secrets; updated ${patched} existing pins/pages.`);
+    toast(`Added ${counts[0]} pages, ${counts[1]} pins, ${counts[3]} people and ${counts[2]} secrets; updated ${patched} existing pins/pages.`);
   } catch (err) {
     toast('Import failed: ' + err.message);
   }
@@ -722,7 +727,7 @@ function renderPanel() {
   const sameView = body.dataset.view === `${S.panel.type}:${S.panel.id}`;
   body.replaceChildren();
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
-  const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor };
+  const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -760,6 +765,7 @@ function pinView() {
       h('button', { class: 'btn ghost', text: 'Copy link', onclick: () => copyLink(p) }),
       isDM() ? h('button', { class: 'btn ghost', text: 'Edit', onclick: () => openPinEditor(p.id) }) : null),
     h('div', { class: 'prose', html: md(p.body) || '<p class="muted">Nothing is known of this place… yet.</p>' }),
+    peopleHere(peopleAt('pin', p.id), `pin:${p.id}`),
     secretBox(p.id),
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
     notesSection('pin', p.id));
@@ -774,6 +780,7 @@ function aboutView() {
     isDM() ? h('div', { class: 'codex-actions' },
       h('button', { class: 'btn ghost', text: 'Edit page', onclick: () => openPageEditor(page.id) })) : null,
     page.type === 'map' ? h('div', { class: 'prose', html: md(page.body) }) : null,
+    peopleHere(peopleAt('page', page.id), `page:${page.id}`),
     secretBox(page.id),
     page.type === 'map' && pinsOn(page.id).length ? legend(page) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
@@ -792,6 +799,229 @@ async function copyLink(p) {
   const url = `${location.origin}${location.pathname}#p=${p.pageId}&pin=${p.id}`;
   try { await navigator.clipboard.writeText(url); toast('Link copied. Paste it in your group chat.'); }
   catch { toast(url); }
+}
+
+// ─── people ─────────────────────────────────────────────────────────
+// A register of NPCs, separate from the maps. Each person lists the places they're
+// found ("pin:<id>" or "page:<id>"), and those places list them back.
+const personById = (id) => S.people.find((p) => p.id === id);
+// sort by the name itself, ignoring titles like "Duke" or "The"
+const HONORIFIC = /^(The|Duke|Duchess|Lord|Lady|Sir|Dame|Captain|Father|Mother|Brother|Sister)\s+/i;
+const byName = (a, b) => a.name.replace(HONORIFIC, '').localeCompare(b.name.replace(HONORIFIC, ''));
+
+function onPeople(list) {
+  S.people = list.sort(byName);
+  if (S.pendingPerson && personById(S.pendingPerson)) {
+    const id = S.pendingPerson; S.pendingPerson = null; openPerson(id);
+  } else if (['people', 'person', 'pin', 'about'].includes(S.panel?.type)) {
+    if (S.panel.type === 'person' && !personById(S.panel.id) && !S.panel.saving) openPeople(); else renderPanel();
+  }
+}
+
+// people found at a pin, or anywhere on a page (the page itself or any pin on it)
+function peopleAt(type, id) {
+  return S.people.filter((p) => (p.places || []).some((ref) => {
+    if (ref === `${type}:${id}`) return true;
+    return type === 'page' && ref.startsWith('pin:') && pinById(ref.slice(4))?.pageId === id;
+  }));
+}
+
+function placeInfo(ref) {
+  const [type, id] = ref.split(':');
+  if (type === 'pin') {
+    const pin = pinById(id);
+    return pin && pageById(pin.pageId) && { label: pin.title, sub: pageById(pin.pageId).title.replace(/^Dukedom of /, ''), go: () => openPin(id, { fly: true }) };
+  }
+  const page = pageById(id);
+  return page && { label: page.title, sub: page.type === 'map' ? 'Map' : 'Document', go: () => goToPage(id) };
+}
+
+function avatarHTML(p, cls = 'avatar') {
+  if (safeImg(p.image)) return `<span class="${cls}"><img src="${esc(p.image)}" alt=""></span>`;
+  const initials = p.name.replace(HONORIFIC, '')
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return `<span class="${cls} seal">${esc(initials || '?')}</span>`;
+}
+
+function personRow(p) {
+  return h('button', { class: `person-row${p.hidden ? ' is-hidden' : ''}`, onclick: () => openPerson(p.id) },
+    h('span', { html: avatarHTML(p) }),
+    h('span', { class: 'person-text' },
+      h('strong', { text: p.name }),
+      h('small', { text: [p.hidden ? 'Hidden' : '', p.title].filter(Boolean).join(' · ') || ' ' })));
+}
+
+function peopleHere(list, placeRef) {
+  if (!list.length && !isDM()) return null;
+  return h('section', { class: 'people-here' },
+    h('h3', { class: 'notes-title', text: `People here${list.length ? ` (${list.length})` : ''}` }),
+    list.map(personRow),
+    isDM() ? h('button', { class: 'btn small ghost', text: '+ Add a person here', onclick: () => openPersonEditor(null, [placeRef]) }) : null);
+}
+
+function openPeople() {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'people', id: 'all' };
+  renderPanel();
+  updateHash();
+  if (!isPhone()) $('#panelBody .people-search')?.focus();
+}
+
+function openPerson(id) {
+  if (!personById(id)) return;
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'person', id };
+  renderPanel();
+  updateHash();
+}
+
+function peopleView() {
+  const list = h('div', { class: 'people-list' });
+  const search = h('input', { type: 'search', class: 'people-search', placeholder: 'Search people, titles, groups, places…', value: S.peopleQuery });
+  const fill = () => {
+    const words = S.peopleQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = S.people.filter((p) => {
+      const text = [p.name, p.title, p.group, p.body, ...(p.places || []).map((r) => placeInfo(r)?.label)].join(' ').toLowerCase();
+      return words.every((w) => text.includes(w));
+    });
+    const groups = new Map();
+    for (const p of matches) {
+      const g = p.group?.trim() || 'Others';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(p);
+    }
+    const names = [...groups.keys()].sort((a, b) => (a === 'Others') - (b === 'Others') || a.localeCompare(b));
+    list.replaceChildren(...(matches.length
+      ? names.map((g) => h('section', { class: 'people-group' },
+        h('h4', { text: `${g} (${groups.get(g).length})` }),
+        groups.get(g).sort(byName).map(personRow)))
+      : [h('p', { class: 'muted', text: S.people.length ? 'No one matches that.' : 'No one has been added yet.' })]));
+  };
+  search.addEventListener('input', () => { S.peopleQuery = search.value; fill(); });
+  fill();
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>Dramatis Personae</span>' }),
+    h('h2', { class: 'codex-title', text: 'People of the Realm' }),
+    h('p', { class: 'codex-sub', text: `${S.people.length} ${S.people.length === 1 ? 'person' : 'people'} known` }),
+    isDM() ? h('div', { class: 'codex-actions' }, h('button', { class: 'btn', text: '+ Add a person', onclick: () => openPersonEditor(null, []) })) : null,
+    search,
+    list);
+}
+
+function personView() {
+  const p = personById(S.panel.id);
+  if (!p) return h('p', { class: 'muted', text: 'Inscribing…' });
+  const places = (p.places || []).map((ref) => placeInfo(ref)).filter(Boolean);
+  return h('div', { class: 'codex' },
+    h('button', { class: 'linklike back', text: '← All people', onclick: openPeople }),
+    h('div', { class: 'person-head' },
+      h('span', { html: avatarHTML(p, 'avatar big') }),
+      h('div', {},
+        h('div', { class: 'codex-kind', html: `<span>${esc(p.group || 'Person')}${p.hidden ? ' · Hidden from players' : ''}</span>` }),
+        h('h2', { class: 'codex-title', text: p.name }),
+        p.title ? h('p', { class: 'codex-sub', text: p.title }) : null)),
+    h('div', { class: 'codex-actions' },
+      h('button', { class: 'btn ghost', text: 'Copy link', onclick: () => copyPersonLink(p) }),
+      isDM() ? h('button', { class: 'btn ghost', text: 'Edit', onclick: () => openPersonEditor(p.id) }) : null),
+    places.length ? h('div', { class: 'found-at' },
+      h('h4', { text: 'Found at' }),
+      places.map((pl) => h('button', { class: 'place-chip', onclick: pl.go }, h('strong', { text: pl.label }), h('small', { text: pl.sub })))) : null,
+    h('div', { class: 'prose', html: md(p.body) || '<p class="muted">Little is known of them… yet.</p>' }),
+    secretBox(p.id),
+    h('div', { class: 'ornament', 'aria-hidden': 'true' }),
+    notesSection('person', p.id));
+}
+
+async function copyPersonLink(p) {
+  const url = `${location.origin}${location.pathname}#p=${S.pageId}&person=${p.id}`;
+  try { await navigator.clipboard.writeText(url); toast('Link copied. Paste it in your group chat.'); }
+  catch { toast(url); }
+}
+
+function openPersonEditor(id, places) {
+  S.panel = { type: 'editPerson', id: id || 'new', places };
+  renderPanel();
+  $('#panelBody input[name=name]')?.focus();
+}
+
+// Chips for the places a person is found, plus a type-ahead to add more.
+function placePicker(initial) {
+  const refs = [...initial];
+  const box = h('div', { class: 'place-picker' });
+  const chips = h('div', { class: 'chips' });
+  const options = [
+    ...S.pages.map((pg) => [`${pg.title} (whole page)`, `page:${pg.id}`]),
+    ...S.pins.filter((pin) => pageById(pin.pageId)).map((pin) => [`${pin.title} — ${pageById(pin.pageId).title}`, `pin:${pin.id}`]),
+  ];
+  const listId = 'place-options';
+  const input = h('input', { type: 'text', list: listId, placeholder: 'Type a place or map name…' });
+  const draw = () => chips.replaceChildren(...refs.map((ref) => {
+    const info = placeInfo(ref);
+    return h('span', { class: 'chip' }, info ? `${info.label} · ${info.sub}` : '(deleted place)',
+      h('button', { type: 'button', 'aria-label': 'Remove', text: '×', onclick: () => { refs.splice(refs.indexOf(ref), 1); draw(); } }));
+  }));
+  input.addEventListener('change', () => {
+    const hit = options.find(([label]) => label === input.value);
+    if (hit && !refs.includes(hit[1])) refs.push(hit[1]);
+    input.value = '';
+    draw();
+  });
+  draw();
+  box.append(chips, input, h('datalist', { id: listId }, options.map(([label]) => h('option', { value: label }))));
+  box.getRefs = () => refs;
+  return box;
+}
+
+function personEditor() {
+  const isNew = S.panel.id === 'new';
+  const p = isNew ? { name: '', title: '', group: '', image: '', body: '', hidden: false, places: S.panel.places || [] } : personById(S.panel.id);
+  if (!p) return h('p', { text: 'This person no longer exists.' });
+  const groups = [...new Set(S.people.map((x) => x.group).filter(Boolean))].sort();
+  const body = h('textarea', { name: 'body', rows: 8 }); body.value = p.body || '';
+  const picker = placePicker(p.places || []);
+  const form = h('form', { class: 'editor' },
+    h('h2', { class: 'codex-title', text: isNew ? 'Add a person' : 'Edit person' }),
+    field('Name', h('input', { name: 'name', required: true, maxlength: 120, value: p.name })),
+    field('Title or role', h('input', { name: 'title', maxlength: 160, value: p.title || '', placeholder: 'e.g. Duke of Harthall, "The Gilded Lion"' })),
+    field('Group', h('div', {},
+      h('input', { name: 'group', maxlength: 80, value: p.group || '', list: 'group-options', placeholder: 'e.g. Council of Ten, Seven Families of Emmett' }),
+      h('datalist', { id: 'group-options' }, groups.map((g) => h('option', { value: g })))),
+      'People are listed under their group in the directory.'),
+    field('Portrait (optional)', imageField(p.image)),
+    field('Found at', picker, 'Places this person can be found. They show up in each place\'s "People here".'),
+    field('Description', body, 'Formatting: **bold**, *italic*, - list items, &gt; quote, [[Link to a place or person]].'),
+    secretField(isNew ? null : p.id),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'hidden', checked: !!p.hidden }), ' Hidden from players (DM only)'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'submit', text: isNew ? 'Add person' : 'Save' }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => (isNew ? openPeople() : openPerson(p.id)) }),
+      !isNew ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Remove ${p.name} from the atlas?`)) return;
+        await S.store.deletePerson(p.id).catch((e) => toast(e.message));
+        openPeople();
+      } }) : null));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const data = {
+      name: fd.get('name').trim(), title: fd.get('title').trim(), group: fd.get('group').trim(),
+      image: fd.get('image').trim(), body: fd.get('body'), hidden: fd.get('hidden') === 'on', places: picker.getRefs(),
+    };
+    try {
+      if (isNew) {
+        S.panel = { type: 'person', id: null, saving: true };
+        const id = await S.store.savePerson(data);
+        await saveSecret(id, fd);
+        openPerson(id);
+        if (!personById(id)) S.pendingPerson = id;
+      } else {
+        await S.store.savePerson(data, p.id);
+        await saveSecret(p.id, fd);
+        openPerson(p.id);
+      }
+    } catch (err) { toast('Could not save: ' + err.message); }
+  });
+  return form;
 }
 
 // ─── notes ──────────────────────────────────────────────────────────
@@ -1094,6 +1324,10 @@ function runSearch(q) {
       label: p.title, sub: p.type === 'map' ? 'Map' : 'Document', icon: '<span class="res-dot"></span>',
       go: () => goToPage(p.id),
     })),
+    ...S.people.filter((p) => hit(p.name, p.title || '', p.group || '', p.body || '')).map((p) => ({
+      label: p.name, sub: ['Person', p.title, p.group].filter(Boolean).join(' · '), icon: avatarHTML(p, 'res-avatar'),
+      go: () => openPerson(p.id),
+    })),
     ...S.pins.filter((p) => pageById(p.pageId) && hit(p.title, p.body || '', kindOf(p).label)).map((p) => ({
       label: p.title, sub: `${kindOf(p).label} · ${pageById(p.pageId).title}`, icon: glyph(kindOf(p), 18),
       go: () => openPin(p.id, { fly: true }),
@@ -1118,11 +1352,12 @@ function toast(msg, actionLabel, action) {
 
 function parseHash() {
   const q = new URLSearchParams(location.hash.slice(1));
-  return { p: q.get('p'), pin: q.get('pin') };
+  return { p: q.get('p'), pin: q.get('pin'), person: q.get('person') };
 }
 function updateHash() {
   if (!S.pageId) return;
-  const hash = `#p=${encodeURIComponent(S.pageId)}${S.pinId ? `&pin=${encodeURIComponent(S.pinId)}` : ''}`;
+  const person = S.panel?.type === 'person' ? S.panel.id : null;
+  const hash = `#p=${encodeURIComponent(S.pageId)}${S.pinId ? `&pin=${encodeURIComponent(S.pinId)}` : ''}${person ? `&person=${encodeURIComponent(person)}` : ''}`;
   if (location.hash !== hash) history.replaceState(null, '', hash);
 }
 
@@ -1140,6 +1375,7 @@ function setupChrome() {
   $('#aboutBtn').onclick = openAbout;
   $('#aboutTab').onclick = openAbout;
   $('#searchBtn').onclick = openSearch;
+  $('#peopleBtn').onclick = () => (S.panel?.type === 'people' ? closePanel() : openPeople());
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);
   $('#torchBtn').onclick = () => {
@@ -1173,6 +1409,7 @@ function setupChrome() {
     if (!a) return;
     e.preventDefault();
     if (a.dataset.kind === 'pin') openPin(a.dataset.id, { fly: true });
+    else if (a.dataset.kind === 'person') openPerson(a.dataset.id);
     else goToPage(a.dataset.id);
   });
 

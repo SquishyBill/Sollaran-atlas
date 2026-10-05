@@ -58,6 +58,9 @@ export class FirebaseStore {
     onSnapshot(query(this.col('notes'), where('private', '==', false)), (s) => { shared = list(s); merge(); }, err);
     onSnapshot(query(this.col('notes'), where('uid', '==', this.uid)), (s) => { mine = list(s); merge(); }, err);
 
+    onSnapshot(this.isDM ? this.col('people') : query(this.col('people'), where('hidden', '==', false)),
+      (s) => h.people?.(list(s)), err);
+
     // DM-only secrets live in their own collection; rules refuse it to everyone else.
     if (this.isDM) onSnapshot(this.col('secrets'), (s) => h.secrets(list(s)), err);
 
@@ -71,6 +74,7 @@ export class FirebaseStore {
       ...Object.entries(seed.pages).map(([id, d]) => ['pages', id, d]),
       ...Object.entries(seed.pins).map(([id, d]) => ['pins', id, d]),
       ...Object.entries(seed.secrets || {}).map(([id, d]) => ['secrets', id, d]),
+      ...Object.entries(seed.people || {}).map(([id, d]) => ['people', id, d]),
     ];
     for (let i = 0; i < writes.length; i += 400) {
       const batch = writeBatch(this.fs);
@@ -123,6 +127,18 @@ export class FirebaseStore {
   }
 
   deletePin(id) { return this.F.deleteDoc(this.ref('pins', id)); }
+
+  async savePerson(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('people'), { hidden: false, createdAt: Date.now(), ...data })).id;
+    await setDoc(this.ref('people', id), data, { merge: true });
+    return id;
+  }
+
+  async deletePerson(id) {
+    await this.F.deleteDoc(this.ref('people', id));
+    await this.F.deleteDoc(this.ref('secrets', id)).catch(() => {});
+  }
 
   addNote(note) {
     return this.F.addDoc(this.col('notes'), { ...note, uid: this.uid, createdAt: Date.now() });
