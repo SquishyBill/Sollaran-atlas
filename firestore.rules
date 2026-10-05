@@ -60,6 +60,21 @@ service cloud.firestore {
       allow write: if isDM();
     }
 
+    // Party renown: a standing per place/group, its change log, and the tier definitions.
+    // Players see standings (and their history) unless the DM has hidden them.
+    match /renown/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.hidden == false);
+      allow write: if isDM();
+    }
+    match /renownLog/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.hidden == false);
+      allow write: if isDM();
+    }
+    match /config/{id} {
+      allow read: if isPlayer();
+      allow write: if isDM();
+    }
+
     // DM-only secrets for pins, pages and people (keyed by their id). Never readable by players.
     match /secrets/{id} {
       allow read, write: if isDM();

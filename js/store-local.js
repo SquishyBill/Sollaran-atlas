@@ -32,6 +32,9 @@ export class LocalStore {
     this.db.secrets ||= {};
     this.db.people ||= {};
     this.db.pictures ||= {};
+    this.db.renown ||= {};
+    this.db.renownLog ||= {};
+    this.db.config ||= {};
   }
 
   persist() {
@@ -46,6 +49,9 @@ export class LocalStore {
     this.handlers.pins?.(rows(this.db.pins).filter((p) => dm || (!p.hidden && !p.pageHidden)));
     this.handlers.notes?.(rows(this.db.notes).filter((n) => !n.private || n.uid === this.uid));
     this.handlers.people?.(rows(this.db.people).filter((p) => dm || !p.hidden));
+    this.handlers.renown?.(rows(this.db.renown).filter((r) => dm || !r.hidden));
+    this.handlers.renownLog?.(rows(this.db.renownLog).filter((l) => dm || !l.hidden));
+    this.handlers.renownTiers?.(this.db.config.renown?.tiers || null);
     if (dm) this.handlers.secrets?.(rows(this.db.secrets));
   }
 
@@ -102,6 +108,33 @@ export class LocalStore {
   }
 
   // Pictures for pins and pages live apart from them and are fetched only when shown.
+  // ── renown: one record per place/group ("page:<id>" / "group:<path>"), plus a change log
+  async saveRenown(key, data) {
+    const id = encodeURIComponent(key);
+    this.db.renown[id] = { key, hidden: false, score: 0, ...this.db.renown[id], ...data };
+    if ('hidden' in data) for (const l of Object.values(this.db.renownLog)) if (l.key === key) l.hidden = !!data.hidden;
+    this.persist();
+  }
+
+  async deleteRenown(key) {
+    delete this.db.renown[encodeURIComponent(key)];
+    for (const [id, l] of Object.entries(this.db.renownLog)) if (l.key === key) delete this.db.renownLog[id];
+    this.persist();
+  }
+
+  async logRenown(entry) { this.db.renownLog[rid()] = entry; this.persist(); }
+
+  async moveRenown(oldKey, newKey) {
+    const old = this.db.renown[encodeURIComponent(oldKey)];
+    if (!old) return;
+    delete this.db.renown[encodeURIComponent(oldKey)];
+    this.db.renown[encodeURIComponent(newKey)] = { ...old, key: newKey };
+    for (const l of Object.values(this.db.renownLog)) if (l.key === oldKey) l.key = newKey;
+    this.persist();
+  }
+
+  async saveRenownTiers(tiers) { this.db.config.renown = { tiers }; this.persist(); }
+
   async getPicture(id) { return this.db.pictures[id]?.data ?? null; }
 
   async savePicture(id, kind, data) {

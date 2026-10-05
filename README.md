@@ -95,6 +95,8 @@ Large maps: anything up to ~8000 px wide works well. Very large PNGs load faster
 | Everyone | **Ping** (the crosshair button, or right-click the map) shows a ripple on everyone's screen. |
 | Everyone | **Copy link** on a place gives a URL that opens straight to that pin. |
 | Everyone | **People** (the two-figure button) lists every NPC, grouped and searchable. Each person shows where they're found, and each place lists the people there. |
+| Everyone | **Renown** (the laurel button) shows the party's standing in each place and group: its tier, what that means, and a history of every change and why. Places also show it in their About panel. |
+| DM | Start tracking renown from a place's About panel or the Renown list, adjust it with **+1 / −1** (and a reason), add place-specific perks, hide a standing, and edit the tiers. |
 | DM | **Edit mode** (quill): click the map to add a location, and drag pins to move them. |
 | DM | Pins and pages can be **hidden from players** for secrets and prep. |
 | DM | A pin can **link to another page**, e.g. a city pin that opens the city map. |

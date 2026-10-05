@@ -56,6 +56,7 @@ const glyph = (k, size = 16) =>
 const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
+  renown: [], renownLog: [], renownTiers: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -114,7 +115,7 @@ async function boot() {
   if (S.store.mode === 'local') $('#demoRibbon').hidden = false;
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, ping: onPing, error: onError });
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, ping: onPing, error: onError });
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -229,9 +230,17 @@ function onPins(list) {
   if (page?.type === 'doc' && S.panel?.type !== 'editPage') renderDoc(page); // wiki links may now resolve
 }
 
+// Renown changes refresh whichever panel shows it (not the tier editor, so edits aren't lost).
+function refreshRenownViews() {
+  if (['renown', 'renownDetail', 'about', 'people'].includes(S.panel?.type)) renderPanel();
+}
+function onRenown(list) { S.renown = list; refreshRenownViews(); }
+function onRenownLog(list) { S.renownLog = list; if (S.panel?.type === 'renownDetail') renderPanel(); }
+function onRenownTiers(tiers) { S.renownTiers = tiers; refreshRenownViews(); }
+
 function onSecrets(list) {
   S.secrets = Object.fromEntries(list.map((s) => [s.id, s.text]));
-  if (['pin', 'about', 'person'].includes(S.panel?.type)) renderPanel();
+  if (['pin', 'about', 'person', 'renownDetail'].includes(S.panel?.type)) renderPanel();
   const page = currentPage();
   if (page?.type === 'doc' && S.panel?.type !== 'editPage') renderDoc(page);
 }
@@ -727,7 +736,8 @@ function renderPanel() {
   const sameView = body.dataset.view === `${S.panel.type}:${S.panel.id}`;
   body.replaceChildren();
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
-  const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor };
+  const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
+    renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -777,6 +787,7 @@ function aboutView() {
     h('div', { class: 'codex-kind', html: `<span>${page.type === 'map' ? 'Map' : 'Document'} · Page ${roman(S.pages.indexOf(page))}${page.hidden ? ' · Hidden from players' : ''}</span>` }),
     h('h2', { class: 'codex-title', text: page.title }),
     page.subtitle ? h('p', { class: 'codex-sub', text: page.subtitle }) : null,
+    renownCard(`page:${page.id}`),
     isDM() ? h('div', { class: 'codex-actions' },
       h('button', { class: 'btn ghost', text: 'Edit page', onclick: () => openPageEditor(page.id) })) : null,
     page.type === 'map' ? h('div', { class: 'prose', html: md(page.body) }) : null,
@@ -923,6 +934,8 @@ async function renameGroup(path) {
   const affected = S.people.filter((p) => { const g = normGroup(p.group); return g === path || g.startsWith(path + GROUP_SEP); });
   try {
     await Promise.all(affected.map((p) => S.store.savePerson({ group: next + normGroup(p.group).slice(path.length) }, p.id)));
+    const moving = S.renown.filter((r) => r.key === `group:${path}` || r.key.startsWith(`group:${path}${GROUP_SEP}`));
+    await Promise.all(moving.map((r) => S.store.moveRenown(r.key, `group:${next}${r.key.slice(`group:${path}`.length)}`)));
   } catch (e) { toast('Could not move the group: ' + e.message); return; }
   // keep it (and its parents) open in its new spot
   next.split(GROUP_SEP).forEach((_, i, parts) => groupsOpen.add(parts.slice(0, i + 1).join(GROUP_SEP)));
@@ -949,7 +962,7 @@ function peopleView() {
           h('button', {
             class: 'group-head', 'aria-expanded': open ? 'true' : 'false',
             onclick: () => { toggleGroup(node.path); fill(); },
-            html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><span>${esc(node.name)}</span><em>${groupCount(node)}</em>`,
+            html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><span>${esc(node.name)}</span>${renownFor(`group:${node.path}`) ? renownBadge(renownFor(`group:${node.path}`)) : ''}<em>${groupCount(node)}</em>`,
           }),
           isDM() && node.path !== 'Others' ? h('button', {
             class: 'group-edit', title: 'Rename or move this group', 'aria-label': `Rename or move ${node.name}`,
@@ -1170,6 +1183,244 @@ function personEditor() {
     } catch (err) { toast('Could not save: ' + err.message); }
   });
   return form;
+}
+
+// ─── renown ─────────────────────────────────────────────────────────
+// The party's standing with a place ("page:<id>") or a People group ("group:<path>"):
+// a score from -10 to +10 that falls into named tiers. Each tier says what that standing
+// means; a place or group can add its own specifics. Every change is logged with a reason.
+const RENOWN_MIN = -10, RENOWN_MAX = 10;
+const DEFAULT_TIERS = [
+  { name: 'Reviled', min: -10, text: 'Guards may arrest you on sight, no one will trade with you, and there may be a price on your heads.' },
+  { name: 'Distrusted', min: -6, text: 'Prices are higher, doors close in your faces, and the Watch keeps an eye on you.' },
+  { name: 'Unknown', min: -2, text: 'Nobody knows your names. Ordinary prices and ordinary treatment.' },
+  { name: 'Respected', min: 3, text: 'Locals share rumors and lend a hand; small favors come easily.' },
+  { name: 'Honored', min: 7, text: 'Discounts, free lodging, and an audience with the local leaders when you ask.' },
+  { name: 'Exalted', min: 10, text: 'Heroes here. People will take real risks on your behalf.' },
+];
+const renownTiers = () => [...(S.renownTiers?.length ? S.renownTiers : DEFAULT_TIERS)].sort((a, b) => a.min - b.min);
+function tierFor(score) {
+  const tiers = renownTiers();
+  let t = tiers[0];
+  for (const x of tiers) if (score >= x.min) t = x;
+  return t;
+}
+function tierTone(t) {
+  const tiers = renownTiers(), next = tiers[tiers.indexOf(t) + 1];
+  const max = next ? next.min - 1 : RENOWN_MAX;
+  return max < 0 ? 'neg' : t.min > 0 ? 'pos' : 'neu';
+}
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+const renownFor = (key) => S.renown.find((r) => r.key === key);
+const renownSecretId = (key) => `renown-${encodeURIComponent(key)}`;
+
+function renownTarget(key) {
+  const i = key.indexOf(':'), type = key.slice(0, i), id = key.slice(i + 1);
+  if (type === 'page') {
+    const page = pageById(id);
+    return page && { label: page.title, sub: page._parent ? `in ${pageById(page._parent)?.title.replace(/^Dukedom of /, '')}` : 'Place', go: () => { goToPage(id); setTimeout(openAbout, 600); } };
+  }
+  const exists = S.people.some((p) => { const g = normGroup(p.group); return g === id || g.startsWith(id + GROUP_SEP); });
+  return exists && { label: groupLabel(id), sub: 'Group', go: openPeople };
+}
+
+function meterHTML(score) {
+  const span = RENOWN_MAX - RENOWN_MIN, pct = (v) => ((v - RENOWN_MIN) / span) * 100;
+  const tiers = renownTiers();
+  const segs = tiers.map((t, i) => {
+    const from = Math.max(t.min, RENOWN_MIN), to = i + 1 < tiers.length ? tiers[i + 1].min : RENOWN_MAX + 1;
+    return `<span class="seg ${tierTone(t)}" style="left:${pct(from - 0.5)}%;width:${pct(to - 0.5) - pct(from - 0.5)}%" title="${esc(t.name)}"></span>`;
+  }).join('');
+  return `<div class="renown-meter" role="img" aria-label="Renown ${signed(score)} on a scale of ${RENOWN_MIN} to +${RENOWN_MAX}">${segs}<i class="zero" style="left:${pct(0)}%"></i><b class="mark" style="left:${pct(score)}%"></b></div>`;
+}
+
+function renownBadge(r) {
+  const t = tierFor(r.score);
+  return `<span class="renown-badge ${tierTone(t)}">${esc(t.name)} <em>${signed(r.score)}</em></span>`;
+}
+
+// The card on a place's About panel. DMs can start tracking a place that has none yet.
+function renownCard(key) {
+  const r = renownFor(key);
+  if (!r) {
+    return isDM() ? h('section', { class: 'renown-card empty' },
+      h('button', { class: 'btn small ghost', text: '+ Track the party’s renown here', onclick: () => startRenown(key) })) : null;
+  }
+  const t = tierFor(r.score);
+  return h('section', { class: `renown-card ${tierTone(t)}` },
+    h('div', { class: 'renown-top' },
+      h('span', { class: 'renown-label', text: 'Party renown' }),
+      h('span', { html: renownBadge(r) }),
+      r.hidden && isDM() ? h('span', { class: 'tag', text: 'hidden' }) : null),
+    h('div', { html: meterHTML(r.score) }),
+    h('p', { class: 'renown-text', text: t.text }),
+    r.perks ? h('div', { class: 'prose renown-perks', html: md(r.perks) }) : null,
+    h('button', { class: 'linklike', text: isDM() ? 'Adjust, history & details →' : 'History & details →', onclick: () => openRenown(key) }));
+}
+
+async function startRenown(key) {
+  try {
+    await S.store.saveRenown(key, { score: 0, hidden: false, perks: '', updatedAt: Date.now() });
+    openRenown(key);
+  } catch (e) { toast('Could not start tracking: ' + e.message); }
+}
+
+function openRenownList() {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'renown', id: 'all' };
+  renderPanel();
+}
+function openRenown(key) {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'renownDetail', id: key };
+  renderPanel();
+}
+
+function renownView() {
+  const rows = S.renown.map((r) => ({ r, target: renownTarget(r.key) }))
+    .filter((x) => x.target || isDM())
+    .sort((a, b) => b.r.score - a.r.score || (a.target?.label || '').localeCompare(b.target?.label || ''));
+  const tracked = new Set(S.renown.map((r) => r.key));
+  let picker = null;
+  if (isDM()) {
+    const groups = allGroupPaths();
+    const sel = h('select', {},
+      h('option', { value: '', text: 'Choose a place or group…' }),
+      h('optgroup', { label: 'Places' }, S.pages.filter((p) => !tracked.has(`page:${p.id}`)).map((p) =>
+        h('option', { value: `page:${p.id}`, text: `${' '.repeat(p._depth)}${p.title}` }))),
+      groups.length ? h('optgroup', { label: 'Groups' }, groups.filter((g) => !tracked.has(`group:${g}`)).map((g) =>
+        h('option', { value: `group:${g}`, text: groupLabel(g) }))) : null);
+    picker = h('div', { class: 'renown-start' }, sel,
+      h('button', { class: 'btn small', type: 'button', text: 'Start tracking', onclick: () => sel.value && startRenown(sel.value) }));
+  }
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>Standing of the party</span>' }),
+    h('h2', { class: 'codex-title', text: 'Renown' }),
+    h('p', { class: 'codex-sub', text: 'How the realm regards you, place by place.' }),
+    rows.length
+      ? h('div', { class: 'renown-list' }, rows.map(({ r, target }) => h('button', { class: 'renown-row', onclick: () => openRenown(r.key) },
+        h('span', { class: 'renown-row-text' },
+          h('strong', { text: target ? target.label : '(deleted)' }),
+          h('small', { text: [target?.sub, r.hidden ? 'hidden from players' : ''].filter(Boolean).join(' · ') })),
+        h('span', { html: renownBadge(r) }),
+        h('span', { class: 'renown-row-meter', html: meterHTML(r.score) }))))
+      : h('p', { class: 'muted', text: isDM() ? 'Not tracking renown anywhere yet. Pick a place or group below.' : 'The realm has yet to take notice of you.' }),
+    picker,
+    h('details', { class: 'legend renown-tiers' },
+      h('summary', { text: 'What the tiers mean' }),
+      h('ul', {}, renownTiers().map((t, i, all) => {
+        const max = i + 1 < all.length ? all[i + 1].min - 1 : RENOWN_MAX;
+        return h('li', {}, h('span', { html: `<span class="renown-badge ${tierTone(t)}">${esc(t.name)} <em>${t.min === max ? signed(t.min) : `${signed(t.min)} to ${signed(max)}`}</em></span>` }), h('p', { text: t.text }));
+      })),
+      isDM() ? h('button', { class: 'btn small ghost', text: 'Edit tiers', onclick: () => { S.panel = { type: 'renownTiers', id: 'tiers' }; renderPanel(); } }) : null));
+}
+
+function renownDetailView() {
+  const key = S.panel.id, r = renownFor(key), target = renownTarget(key);
+  if (!r) return h('p', { class: 'muted', text: 'No longer tracked.' });
+  const t = tierFor(r.score);
+  const log = S.renownLog.filter((l) => l.key === key).sort((a, b) => b.at - a.at);
+  const reason = h('input', { type: 'text', maxlength: 200, placeholder: 'Why? e.g. Returned the miller’s daughter' });
+  const amount = h('input', { type: 'number', min: -20, max: 20, step: 1, value: 1, class: 'renown-amount', 'aria-label': 'Amount' });
+  const adjust = async (delta) => {
+    if (!delta) return;
+    const score = Math.max(RENOWN_MIN, Math.min(RENOWN_MAX, r.score + delta));
+    const actual = score - r.score;
+    if (!actual) { toast(`Already at ${signed(r.score)}.`); return; }
+    try {
+      await S.store.saveRenown(key, { score, updatedAt: Date.now() });
+      await S.store.logRenown({ key, delta: actual, score, reason: reason.value.trim(), at: Date.now(), hidden: !!r.hidden });
+      const before = t, after = tierFor(score);
+      toast(after.name !== before.name ? `Renown is now ${after.name} (${signed(score)}).` : `Renown ${signed(actual)} → ${signed(score)}.`);
+    } catch (e) { toast('Could not change renown: ' + e.message); }
+  };
+  const perks = h('textarea', { rows: 3, placeholder: 'e.g. Free rooms at the Roosting Crow. The Claytons give you first pick of the flour.' });
+  perks.value = r.perks || '';
+  const notes = h('textarea', { rows: 3, placeholder: 'e.g. If this drops below -3, the Ashen Eye makes contact.' });
+  notes.value = S.secrets[renownSecretId(key)] || '';
+  return h('div', { class: 'codex' },
+    h('button', { class: 'linklike back', text: '← All renown', onclick: openRenownList }),
+    h('div', { class: 'codex-kind', html: `<span>Party renown${r.hidden ? ' · Hidden from players' : ''}</span>` }),
+    h('h2', { class: 'codex-title', text: target ? target.label : '(deleted)' }),
+    target ? h('button', { class: 'linklike', text: key.startsWith('page:') ? 'Go to this place →' : 'Open People →', onclick: target.go }) : null,
+    h('section', { class: `renown-card ${tierTone(t)}` },
+      h('div', { class: 'renown-top' }, h('span', { class: 'renown-label', text: 'Standing' }), h('span', { html: renownBadge(r) })),
+      h('div', { html: meterHTML(r.score) }),
+      h('p', { class: 'renown-text', text: t.text }),
+      r.perks ? h('div', { class: 'prose renown-perks', html: md(r.perks) }) : null),
+    secretBox(renownSecretId(key)),
+    isDM() ? h('section', { class: 'renown-dm' },
+      h('h3', { class: 'notes-title', text: 'Adjust' }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', type: 'button', text: '− 1', onclick: () => adjust(-1) }),
+        h('button', { class: 'btn', type: 'button', text: '+ 1', onclick: () => adjust(1) }),
+        h('span', { class: 'muted', text: 'or' }),
+        amount,
+        h('button', { class: 'btn ghost', type: 'button', text: 'Apply', onclick: () => adjust(parseInt(amount.value, 10) || 0) })),
+      reason,
+      h('h3', { class: 'notes-title', text: 'Here specifically' }),
+      perks,
+      h('small', { class: 'muted', text: 'Shown to players under the tier’s usual effects. Formatting and [[links]] work.' }),
+      h('h3', { class: 'notes-title', text: 'DM notes' }),
+      notes,
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!r.hidden, onchange: (e) => S.store.saveRenown(key, { hidden: e.target.checked }).catch((err) => toast(err.message)) }), ' Hidden from players'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', text: 'Save details', onclick: async () => {
+          try {
+            await S.store.saveRenown(key, { perks: perks.value });
+            if ((S.secrets[renownSecretId(key)] || '') !== notes.value) await S.store.saveSecret(renownSecretId(key), notes.value);
+            toast('Saved.');
+          } catch (e) { toast('Could not save: ' + e.message); }
+        } }),
+        h('button', { class: 'btn danger small', type: 'button', text: 'Stop tracking', onclick: async () => {
+          if (!confirm('Stop tracking renown here? Its history is deleted too.')) return;
+          await S.store.deleteRenown(key).catch((e) => toast(e.message));
+          if (S.secrets[renownSecretId(key)]) S.store.saveSecret(renownSecretId(key), '').catch(() => {});
+          openRenownList();
+        } }))) : null,
+    h('h3', { class: 'notes-title', text: `History${log.length ? ` (${log.length})` : ''}` }),
+    log.length
+      ? h('ol', { class: 'renown-log' }, log.map((l) => h('li', {},
+        h('span', { class: `delta ${l.delta > 0 ? 'pos' : 'neg'}`, text: signed(l.delta) }),
+        h('span', { class: 'why', text: l.reason || (l.delta > 0 ? 'Renown gained' : 'Renown lost') }),
+        h('time', { text: `${signed(l.score)} · ${ago(l.at)}`, title: new Date(l.at).toLocaleString() }))))
+      : h('p', { class: 'muted', text: 'No changes yet.' }));
+}
+
+function renownTiersView() {
+  const rows = h('div', { class: 'tier-rows' });
+  const addRow = (t = { name: '', min: 0, text: '' }) => {
+    const row = h('div', { class: 'tier-row' },
+      h('div', { class: 'row' },
+        h('input', { type: 'text', class: 'tier-name', value: t.name, placeholder: 'Tier name', maxlength: 40 }),
+        h('label', { class: 'tier-min' }, 'from ', h('input', { type: 'number', min: RENOWN_MIN, max: RENOWN_MAX, value: t.min })),
+        h('button', { type: 'button', class: 'linklike', text: 'remove', onclick: () => row.remove() })),
+      h('textarea', { rows: 2, placeholder: 'What this standing means for the party' }));
+    row.querySelector('textarea').value = t.text;
+    rows.append(row);
+  };
+  renownTiers().forEach(addRow);
+  return h('div', { class: 'codex' },
+    h('button', { class: 'linklike back', text: '← All renown', onclick: openRenownList }),
+    h('h2', { class: 'codex-title', text: 'Renown tiers' }),
+    h('p', { class: 'codex-sub', text: `Each tier runs from its number up to the next tier’s. Scores go from ${RENOWN_MIN} to +${RENOWN_MAX}.` }),
+    rows,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a tier', onclick: () => addRow() }),
+      h('button', { class: 'btn small', type: 'button', text: 'Save tiers', onclick: async () => {
+        const tiers = [...rows.querySelectorAll('.tier-row')].map((row) => ({
+          name: row.querySelector('.tier-name').value.trim(),
+          min: Math.max(RENOWN_MIN, Math.min(RENOWN_MAX, parseInt(row.querySelector('.tier-min input').value, 10) || 0)),
+          text: row.querySelector('textarea').value.trim(),
+        })).filter((t) => t.name);
+        if (!tiers.length) { toast('Keep at least one tier.'); return; }
+        if (new Set(tiers.map((t) => t.min)).size !== tiers.length) { toast('Two tiers start at the same number.'); return; }
+        tiers.sort((a, b) => a.min - b.min);
+        tiers[0].min = RENOWN_MIN; // the lowest tier covers everything below the next
+        try { await S.store.saveRenownTiers(tiers); toast('Tiers saved.'); openRenownList(); }
+        catch (e) { toast('Could not save: ' + e.message); }
+      } }),
+      h('button', { class: 'linklike', type: 'button', text: 'Reset to defaults', onclick: () => { rows.replaceChildren(); DEFAULT_TIERS.forEach(addRow); } })));
 }
 
 // ─── notes ──────────────────────────────────────────────────────────
@@ -1651,6 +1902,7 @@ function setupChrome() {
   $('#aboutTab').onclick = openAbout;
   $('#searchBtn').onclick = openSearch;
   $('#peopleBtn').onclick = () => (S.panel?.type === 'people' ? closePanel() : openPeople());
+  $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);
   $('#torchBtn').onclick = () => {

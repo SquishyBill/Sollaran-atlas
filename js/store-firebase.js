@@ -58,6 +58,13 @@ export class FirebaseStore {
     onSnapshot(query(this.col('notes'), where('private', '==', false)), (s) => { shared = list(s); merge(); }, err);
     onSnapshot(query(this.col('notes'), where('uid', '==', this.uid)), (s) => { mine = list(s); merge(); }, err);
 
+    // Renown: standings per place/group, their change log, and the tier definitions.
+    onSnapshot(this.isDM ? this.col('renown') : query(this.col('renown'), where('hidden', '==', false)),
+      (s) => h.renown?.(list(s)), err);
+    onSnapshot(this.isDM ? this.col('renownLog') : query(this.col('renownLog'), where('hidden', '==', false)),
+      (s) => h.renownLog?.(list(s)), err);
+    onSnapshot(this.ref('config', 'renown'), (s) => h.renownTiers?.(s.exists() ? s.data().tiers : null), err);
+
     onSnapshot(this.isDM ? this.col('people') : query(this.col('people'), where('hidden', '==', false)),
       (s) => h.people?.(list(s)), err);
 
@@ -137,6 +144,48 @@ export class FirebaseStore {
 
   // Pictures for pins and pages live in their own collection and are fetched only when
   // someone opens that pin or page, so a picture-heavy atlas still loads fast.
+  // ── renown ("page:<id>" / "group:<path>" keys; the record id is the encoded key)
+  async logsFor(key) {
+    const { getDocs, query, where } = this.F;
+    return getDocs(query(this.col('renownLog'), where('key', '==', key)));
+  }
+
+  async saveRenown(key, data) {
+    const { getDoc, setDoc, writeBatch } = this.F;
+    const ref = this.ref('renown', encodeURIComponent(key));
+    const exists = (await getDoc(ref)).exists();
+    await setDoc(ref, { key, ...(exists ? {} : { hidden: false, score: 0 }), ...data }, { merge: true });
+    if ('hidden' in data) {
+      // log entries follow their standing's visibility
+      const batch = writeBatch(this.fs);
+      (await this.logsFor(key)).forEach((d) => batch.update(d.ref, { hidden: !!data.hidden }));
+      await batch.commit();
+    }
+  }
+
+  async deleteRenown(key) {
+    const batch = this.F.writeBatch(this.fs);
+    (await this.logsFor(key)).forEach((d) => batch.delete(d.ref));
+    batch.delete(this.ref('renown', encodeURIComponent(key)));
+    await batch.commit();
+  }
+
+  logRenown(entry) { return this.F.addDoc(this.col('renownLog'), entry); }
+
+  async moveRenown(oldKey, newKey) {
+    const { getDoc, writeBatch } = this.F;
+    const oldRef = this.ref('renown', encodeURIComponent(oldKey));
+    const snap = await getDoc(oldRef);
+    if (!snap.exists()) return;
+    const batch = writeBatch(this.fs);
+    batch.set(this.ref('renown', encodeURIComponent(newKey)), { ...snap.data(), key: newKey });
+    batch.delete(oldRef);
+    (await this.logsFor(oldKey)).forEach((d) => batch.update(d.ref, { key: newKey }));
+    await batch.commit();
+  }
+
+  saveRenownTiers(tiers) { return this.F.setDoc(this.ref('config', 'renown'), { tiers }); }
+
   async getPicture(id) {
     try {
       const snap = await this.F.getDoc(this.ref('pictures', id));

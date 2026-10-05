@@ -723,3 +723,89 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
 .group-row:hover .group-edit, .group-edit:focus-visible { opacity: 1; }
 .group-edit:hover { color: var(--wax); background: rgba(142, 43, 32, .08); }
 @media (hover: none) { .group-edit { opacity: .7; } }
+
+/* ─── renown ─────────────────────────────────────────────────────── */
+.renown-meter { position: relative; height: 12px; margin: 8px 0 4px; border-radius: 6px; background: rgba(90, 60, 25, .12); box-shadow: inset 0 1px 2px rgba(60, 30, 10, .25); }
+.renown-meter .seg { position: absolute; top: 0; bottom: 0; opacity: .55; }
+.renown-meter .seg:first-child { border-radius: 6px 0 0 6px; }
+.renown-meter .seg:last-of-type { border-radius: 0 6px 6px 0; }
+.renown-meter .seg.neg { background: linear-gradient(90deg, #7a1f16, #b5451b); }
+.renown-meter .seg.neu { background: #b9a47c; }
+.renown-meter .seg.pos { background: linear-gradient(90deg, #6f8a3c, #c9a24a); }
+.renown-meter .seg + .seg { box-shadow: inset 1px 0 0 rgba(255, 250, 235, .7); }
+.renown-meter .zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: rgba(58, 40, 25, .5); }
+.renown-meter .mark {
+  position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #fff3d0, #d6b36a 55%, #8a6420); border: 2px solid #3a2819;
+  box-shadow: 0 2px 4px rgba(40, 20, 5, .4); transition: left .5s var(--ease);
+}
+
+.renown-badge {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 9px; border-radius: 12px; white-space: nowrap;
+  font: 700 12px var(--f-head); letter-spacing: .06em; text-transform: none; border: 1px solid transparent;
+}
+.renown-badge em { font-style: normal; font-weight: 500; opacity: .85; }
+.renown-badge.neg { background: rgba(142, 43, 32, .14); color: #8e2b20; border-color: rgba(142, 43, 32, .35); }
+.renown-badge.neu { background: rgba(90, 60, 25, .1); color: var(--ink-soft); border-color: rgba(90, 60, 25, .3); }
+.renown-badge.pos { background: rgba(111, 138, 60, .16); color: #4c6326; border-color: rgba(111, 138, 60, .45); }
+
+.renown-card {
+  margin: 12px 0 14px; padding: 10px 14px 10px; border-radius: 6px;
+  background: rgba(255, 252, 240, .55); border: 1px solid rgba(90, 60, 25, .25); border-left: 4px solid var(--parch-edge);
+}
+.renown-card.neg { border-left-color: #a33a22; }
+.renown-card.pos { border-left-color: #7a9440; }
+.renown-card.empty { background: none; border: 1px dashed rgba(90, 60, 25, .3); padding: 8px 10px; }
+.renown-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.renown-label { font: 700 11px var(--f-head); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-soft); margin-right: auto; }
+.renown-text { margin: 6px 0 4px; font-size: 17px; line-height: 1.4; }
+.renown-perks { font-size: 16px; padding-top: 4px; border-top: 1px dashed rgba(90, 60, 25, .25); }
+.renown-perks p:last-child { margin-bottom: 4px; }
+
+.renown-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 14px; }
+.renown-row {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "text badge" "meter meter"; gap: 2px 10px;
+  width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; text-align: left; color: var(--ink);
+}
+.renown-row:hover { background: rgba(142, 43, 32, .07); }
+.renown-row-text { grid-area: text; min-width: 0; display: flex; flex-direction: column; }
+.renown-row-text strong { font: 700 15px var(--f-head); }
+.renown-row-text small { font-size: 14px; font-style: italic; color: var(--ink-faint); }
+.renown-row > span:nth-child(2) { grid-area: badge; align-self: center; }
+.renown-row-meter { grid-area: meter; }
+.renown-row-meter .renown-meter { height: 8px; margin: 4px 0 0; }
+.renown-row-meter .mark { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-width: 1.5px; }
+
+.renown-start { display: flex; gap: 8px; margin: 4px 0 12px; }
+.renown-start select { flex: 1; min-width: 0; }
+.renown-tiers ul { columns: 1 !important; }
+.renown-tiers li { margin: 8px 0; }
+.renown-tiers li p { margin: 3px 0 0 4px; font-size: 16px; }
+
+.renown-dm { margin: 10px 0; padding: 10px 12px; border-radius: 6px; border: 1px dashed rgba(142, 43, 32, .45); background: rgba(142, 43, 32, .04); display: flex; flex-direction: column; gap: 8px; }
+.renown-dm .notes-title { margin: 6px 0 0; font-size: 14px; }
+.renown-amount { width: 70px !important; }
+
+.renown-log { list-style: none; padding: 0; margin: 4px 0 12px; }
+.renown-log li { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: baseline; padding: 6px 2px; border-bottom: 1px solid rgba(90, 60, 25, .15); }
+.renown-log .delta { font: 700 15px var(--f-head); text-align: center; border-radius: 10px; padding: 1px 0; }
+.renown-log .delta.pos { color: #4c6326; background: rgba(111, 138, 60, .15); }
+.renown-log .delta.neg { color: #8e2b20; background: rgba(142, 43, 32, .12); }
+.renown-log .why { font-size: 16px; }
+.renown-log time { font-size: 13px; color: var(--ink-faint); font-style: italic; white-space: nowrap; }
+
+.tier-rows { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 12px; }
+.tier-row { padding: 8px 10px; border-radius: 6px; background: rgba(255, 252, 240, .5); border: 1px solid rgba(90, 60, 25, .2); display: flex; flex-direction: column; gap: 6px; }
+.tier-row .tier-name { flex: 1; min-width: 120px; font-weight: 700; }
+.tier-min { display: flex; align-items: center; gap: 4px; font-size: 15px; color: var(--ink-soft); }
+.tier-min input { width: 64px; }
+
+.group-head .renown-badge { margin-right: 4px; letter-spacing: .02em; }
+
+/* the top bar has one more button: on phones, drop About (maps have the About tab) and tighten up */
+@media (max-width: 760px) {
+  #aboutBtn { display: none; }
+  .tools { gap: 3px; }
+  .icon-btn { width: 34px; height: 34px; }
+  .icon-btn svg { width: 17px; height: 17px; }
+}
