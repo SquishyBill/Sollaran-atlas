@@ -98,6 +98,7 @@ Large maps: anything up to ~8000 px wide works well. Very large PNGs load faster
 | DM | **Edit mode** (quill): click the map to add a location, and drag pins to move them. |
 | DM | Pins and pages can be **hidden from players** for secrets and prep. |
 | DM | A pin can **link to another page**, e.g. a city pin that opens the city map. |
+| DM | Pins and document pages take a **picture**: click or drop one into the box in the editor. It's shrunk and stored in the atlas (no GitHub upload) and only loads when someone opens that pin or page. |
 | DM | **Nested under** (in Edit page) puts a page inside another in Contents, e.g. a town under its dukedom and an inn under its town. Contents shows them as a tree with ▸/▾ to open and close each branch. |
 | DM | In descriptions, `[[Place Name]]` or `[[Person Name]]` makes a link to that place, page or person. |
 | DM | Add people from the People list or with **+ Add a person here** on any place. Set their group, portrait, where they're found, and DM secrets. |

@@ -679,3 +679,25 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
 .portrait-side { flex: 1; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .portrait-side small { font-size: 14px; color: var(--ink-faint); }
 .portrait-side input { width: 100%; }
+
+/* picture box for pins and document pages */
+.picture-field { display: flex; flex-direction: column; gap: 8px; }
+.picture-field .row input { flex: 1; min-width: 160px; }
+.picture-drop {
+  width: 100%; min-height: 120px; max-height: 260px; border-radius: 6px; overflow: hidden; cursor: pointer;
+  display: grid; place-items: center; text-align: center; font-size: 16px; line-height: 1.35; color: var(--ink-soft);
+  background: rgba(255, 252, 240, .6); border: 2px dashed rgba(90, 60, 25, .45);
+  transition: border-color .2s, background .2s;
+}
+.picture-drop small { font-size: 14px; color: var(--ink-faint); font-style: italic; }
+.picture-drop img { width: 100%; max-height: 256px; object-fit: contain; display: block; }
+.picture-drop:hover, .picture-drop:focus-visible, .picture-drop.over { border-color: var(--wax); background: rgba(142, 43, 32, .08); }
+.picture-drop.busy { opacity: .5; }
+
+/* a picture that's still on its way */
+.codex-img.loading, .doc-img.loading {
+  min-height: 160px; width: 100%;
+  background: linear-gradient(100deg, rgba(90, 60, 25, .08) 30%, rgba(255, 250, 235, .5) 50%, rgba(90, 60, 25, .08) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }

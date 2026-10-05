@@ -135,6 +135,21 @@ export class FirebaseStore {
     return id;
   }
 
+  // Pictures for pins and pages live in their own collection and are fetched only when
+  // someone opens that pin or page, so a picture-heavy atlas still loads fast.
+  async getPicture(id) {
+    try {
+      const snap = await this.F.getDoc(this.ref('pictures', id));
+      return snap.exists() ? snap.data().data : null;
+    } catch {
+      return null; // e.g. the pin is hidden from this player
+    }
+  }
+
+  savePicture(id, kind, data) {
+    return data ? this.F.setDoc(this.ref('pictures', id), { kind, data }) : this.F.deleteDoc(this.ref('pictures', id));
+  }
+
   async deletePerson(id) {
     await this.F.deleteDoc(this.ref('people', id));
     await this.F.deleteDoc(this.ref('secrets', id)).catch(() => {});

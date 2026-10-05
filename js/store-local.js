@@ -31,6 +31,7 @@ export class LocalStore {
     if (!this.db) { this.db = structuredClone(SEED); lsSet(KEY, JSON.stringify(this.db)); }
     this.db.secrets ||= {};
     this.db.people ||= {};
+    this.db.pictures ||= {};
   }
 
   persist() {
@@ -98,6 +99,14 @@ export class LocalStore {
     Object.assign(this.db.people[id], data);
     this.persist();
     return id;
+  }
+
+  // Pictures for pins and pages live apart from them and are fetched only when shown.
+  async getPicture(id) { return this.db.pictures[id]?.data ?? null; }
+
+  async savePicture(id, kind, data) {
+    if (data) this.db.pictures[id] = { kind, data }; else delete this.db.pictures[id];
+    this.persist();
   }
 
   async deletePerson(id) { delete this.db.people[id]; delete this.db.secrets[id]; this.persist(); }

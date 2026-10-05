@@ -45,6 +45,21 @@ service cloud.firestore {
       allow write: if isDM();
     }
 
+    // Pictures for pins and pages (keyed by the pin/page id, fetched only when shown).
+    // Players only get a picture if its pin or page isn't hidden from them.
+    function pinVisible(id) {
+      let pin = get(/databases/$(database)/documents/pins/$(id)).data;
+      return pin.hidden == false && pin.pageHidden == false;
+    }
+    function pageVisible(id) {
+      return get(/databases/$(database)/documents/pages/$(id)).data.hidden == false;
+    }
+    match /pictures/{id} {
+      allow read: if isDM() || (isPlayer() && (
+        (resource.data.kind == 'pin' && pinVisible(id)) || (resource.data.kind == 'page' && pageVisible(id))));
+      allow write: if isDM();
+    }
+
     // DM-only secrets for pins, pages and people (keyed by their id). Never readable by players.
     match /secrets/{id} {
       allow read, write: if isDM();

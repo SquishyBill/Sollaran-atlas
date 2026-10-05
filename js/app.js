@@ -756,7 +756,7 @@ function pinView() {
   const k = kindOf(p);
   const link = p.linkPage && pageById(p.linkPage);
   return h('div', { class: 'codex' },
-    safeImg(p.image) ? h('img', { class: 'codex-img', src: p.image, alt: '' }) : null,
+    pictureImg(p, 'codex-img'),
     h('div', { class: 'codex-kind', style: `--c:${k.color}`, html: `${glyph(k, 18)}<span>${esc(k.label)}${p.hidden ? ' · Hidden from players' : ''}</span>` }),
     h('h2', { class: 'codex-title', text: p.title }),
     h('div', { class: 'codex-actions' },
@@ -1197,7 +1197,7 @@ function renderDoc(page) {
     h('h1', { class: 'doc-title', text: page.title }),
     page.subtitle ? h('p', { class: 'doc-sub', text: page.subtitle }) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
-    safeImg(page.image) ? h('img', { class: 'doc-img', src: page.image, alt: '' }) : null,
+    pictureImg(page, 'doc-img'),
     h('div', { class: 'prose dropcap', html: md(page.body) }),
     secretBox(page.id),
     isDM() ? h('div', { class: 'codex-actions' }, h('button', { class: 'btn ghost', text: 'Edit page', onclick: () => openPageEditor(page.id) })) : null,
@@ -1230,6 +1230,112 @@ function imageField(value) {
   return wrap;
 }
 
+// ─── pictures for pins and document pages ───────────────────────────
+// A pin/page with `picture: true` has its image in the separate pictures store, fetched
+// only when shown. `pictureAt` changes whenever it's replaced, so old copies aren't reused.
+// (Older pins may still use a plain `image` link; that keeps working.)
+const pictureCache = new Map();
+function loadPicture(owner) {
+  const key = `${owner.id}:${owner.pictureAt || 0}`;
+  if (!pictureCache.has(key)) {
+    pictureCache.set(key, S.store.getPicture(owner.id).then((src) => {
+      if (!src) pictureCache.delete(key); // don't remember a miss; it may just not be saved yet
+      return src;
+    }));
+  }
+  return pictureCache.get(key);
+}
+
+function pictureImg(owner, cls) {
+  if (owner.picture) {
+    const img = h('img', { class: `${cls} loading`, alt: '' });
+    loadPicture(owner).then((src) => {
+      if (src) { img.src = src; img.classList.remove('loading'); } else img.remove();
+    });
+    return img;
+  }
+  return safeImg(owner.image) ? h('img', { class: cls, src: owner.image, alt: '' }) : null;
+}
+
+// Shrink a picked image to banner size (longest side ~1100px), keeping its shape.
+async function shrinkBanner(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    for (const [max, q] of [[1100, 0.8], [900, 0.68], [700, 0.6]]) {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * scale);
+      c.height = Math.round(img.naturalHeight * scale);
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      let out = c.toDataURL('image/webp', q);
+      if (!out.startsWith('data:image/webp')) out = c.toDataURL('image/jpeg', q);
+      if (out.length < 700_000) return out; // stays well inside a database record's 1 MB limit
+    }
+    throw new Error('too large');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// The click-or-drop picture box for pins and document pages. Read the outcome with .result():
+// {mode:'keep'} | {mode:'new', data} | {mode:'remove'} | {mode:'link', link}
+function pictureField(owner, label = 'Picture (optional)') {
+  let state = { mode: 'keep' };
+  const file = h('input', { type: 'file', accept: 'image/*', hidden: true });
+  const box = h('div', { class: 'picture-drop', tabindex: '0', role: 'button', 'aria-label': 'Choose a picture' });
+  const remove = h('button', { type: 'button', class: 'btn small ghost', text: 'Remove picture' });
+  const link = h('input', { type: 'text', placeholder: 'or paste an image link', value: owner.picture ? '' : (owner.image || '') });
+  const show = (src) => {
+    box.replaceChildren(src ? h('img', { src, alt: '' }) : h('span', { html: 'Click or drop a picture here<br><small>a scene, a building, a handout…</small>' }));
+    remove.hidden = !src;
+  };
+  const load = async (f) => {
+    if (!f || !f.type.startsWith('image/')) { toast("That file isn't an image."); return; }
+    box.classList.add('busy');
+    try { const data = await shrinkBanner(f); state = { mode: 'new', data }; link.value = ''; show(data); }
+    catch { toast("Couldn't use that image. Try a PNG or JPG."); }
+    box.classList.remove('busy');
+  };
+  box.addEventListener('click', () => file.click());
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
+  box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('over'); });
+  box.addEventListener('dragleave', () => box.classList.remove('over'));
+  box.addEventListener('drop', (e) => { e.preventDefault(); box.classList.remove('over'); load(e.dataTransfer.files[0]); });
+  file.addEventListener('change', () => load(file.files[0]));
+  remove.addEventListener('click', () => { state = { mode: 'remove' }; link.value = ''; show(''); });
+  link.addEventListener('change', () => {
+    const v = link.value.trim();
+    state = v ? { mode: 'link', link: v } : { mode: 'remove' };
+    show(safeImg(v) ? v : '');
+  });
+  show(owner.picture ? '' : (safeImg(owner.image) ? owner.image : ''));
+  if (owner.picture) loadPicture(owner).then((src) => { if (state.mode === 'keep') show(src || ''); });
+  const wrap = field(label, h('div', { class: 'picture-field' }, box, h('div', { class: 'row' }, link, remove), file),
+    'Shrunk automatically and stored in the atlas. No GitHub upload needed.');
+  wrap.result = () => state;
+  return wrap;
+}
+
+// Fold a pictureField outcome into the record being saved (before the save)…
+function pictureData(result) {
+  if (result.mode === 'new') return { picture: true, pictureAt: Date.now(), image: '' };
+  if (result.mode === 'remove') return { picture: false, image: '' };
+  if (result.mode === 'link') return { picture: false, image: result.link };
+  return {};
+}
+// …and store or clear the picture itself once we know the record's id (after the save).
+async function savePicture(id, kind, result, data, hadPicture) {
+  if (result.mode === 'new') {
+    await S.store.savePicture(id, kind, result.data);
+    pictureCache.set(`${id}:${data.pictureAt}`, Promise.resolve(result.data));
+  } else if ((result.mode === 'remove' || result.mode === 'link') && hadPicture) {
+    await S.store.savePicture(id, kind, null);
+  }
+}
+
 function openPinEditor(id, pos) {
   S.pinId = id;
   highlightPin();
@@ -1253,12 +1359,13 @@ function pinEditor() {
   const link = h('select', { name: 'linkPage' }, h('option', { value: '', text: 'None' }),
     S.pages.filter((pg) => pg.id !== S.pageId).map((pg) => h('option', { value: pg.id, selected: pg.id === p.linkPage, text: `${pg.title} (${pg.type})` })));
   const body = h('textarea', { name: 'body', rows: 9 }); body.value = p.body || '';
+  const picture = pictureField(p);
   const form = h('form', { class: 'editor' },
     h('h2', { class: 'codex-title', text: isNew ? 'New location' : 'Edit location' }),
     field('Name', h('input', { name: 'title', required: true, maxlength: 120, value: p.title })),
     field('Kind', kind),
     field('Description', body, 'Formatting: **bold**, *italic*, - list items, &gt; quote. Link to another place with [[Its Name]].'),
-    field('Picture (optional)', imageField(p.image)),
+    picture,
     field('Links to page', link, 'Clicking through opens this page, for example a city map from the world map.'),
     secretField(isNew ? null : p.id),
     h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'hidden', checked: !!p.hidden }), ' Hidden from players (DM only)'),
@@ -1268,6 +1375,7 @@ function pinEditor() {
       !isNew ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
         if (!confirm(`Delete "${p.title}" and remove it from the map?`)) return;
         await S.store.deletePin(p.id).catch((e) => toast(e.message));
+        if (p.picture) S.store.savePicture(p.id, 'pin', null).catch(() => {});
         closePanel();
       } }) : null));
   form.addEventListener('submit', async (e) => {
@@ -1275,18 +1383,22 @@ function pinEditor() {
     const fd = new FormData(form);
     const data = {
       title: fd.get('title').trim(), kind: fd.get('kind'), body: fd.get('body'),
-      image: fd.get('image').trim(), linkPage: fd.get('linkPage'), hidden: fd.get('hidden') === 'on',
+      linkPage: fd.get('linkPage'), hidden: fd.get('hidden') === 'on',
     };
+    const pic = picture.result();
+    Object.assign(data, pictureData(pic));
     try {
       if (isNew) {
         Object.assign(data, S.panel.pos, { pageId: S.pageId, pageHidden: !!currentPage().hidden });
         S.panel = { type: 'pin', id: null, saving: true };
         const id = await S.store.savePin(data);
+        await savePicture(id, 'pin', pic, data, false);
         await saveSecret(id, fd);
         S.ghost?.remove(); S.ghost = null;
         openPin(id);
       } else {
         await S.store.savePin(data, p.id);
+        await savePicture(p.id, 'pin', pic, data, !!p.picture);
         await saveSecret(p.id, fd);
         openPin(p.id);
       }
@@ -1318,7 +1430,12 @@ function pageEditor() {
   const p = isNew ? { type: 'map', title: '', subtitle: '', body: '', image: '', hidden: false } : pageById(S.panel.id);
   if (!p) return h('p', { text: 'This page no longer exists.' });
   const body = h('textarea', { name: 'body', rows: 10 }); body.value = p.body || '';
-  const typeSel = isNew ? field('Type', h('div', { class: 'seg' },
+  const mapImage = field('Map image', imageField(p.type === 'map' ? p.image : ''),
+    S.store.canUpload ? 'Upload a PNG, or paste a URL.' : 'Put the PNG in the site\'s <b>maps/</b> folder, commit it, and type its path here.');
+  const picture = pictureField(p.type === 'doc' ? p : {}, 'Header picture (optional)');
+  const showFor = (type) => { mapImage.hidden = type !== 'map'; picture.hidden = type !== 'doc'; };
+  showFor(p.type);
+  const typeSel = isNew ? field('Type', h('div', { class: 'seg', onchange: (e) => showFor(e.target.value) },
     h('label', {}, h('input', { type: 'radio', name: 'type', value: 'map', checked: true }), ' Map'),
     h('label', {}, h('input', { type: 'radio', name: 'type', value: 'doc' }), ' Document'))) : null;
   const form = h('form', { class: 'editor' },
@@ -1327,8 +1444,8 @@ function pageEditor() {
     field('Title', h('input', { name: 'title', required: true, maxlength: 120, value: p.title })),
     field('Subtitle', h('input', { name: 'subtitle', maxlength: 160, value: p.subtitle || '' })),
     parentField(p, isNew),
-    field(p.type === 'doc' && !isNew ? 'Header image (optional)' : 'Map image', imageField(p.image),
-      S.store.canUpload ? 'Upload a PNG, or paste a URL.' : 'Put the PNG in the site\'s <b>maps/</b> folder, commit it, and type its path here.'),
+    mapImage,
+    picture,
     field(p.type === 'map' && !isNew ? 'About this map' : 'Text', body, 'Formatting: # heading, **bold**, *italic*, - list items, &gt; quote, [[Link to a place]].'),
     secretField(isNew ? null : p.id),
     h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'labels', checked: isNew || !!p.labels }), ' Show pin names on the map (turn off if the map already has names printed on it)'),
@@ -1345,6 +1462,7 @@ function pageEditor() {
         closePanel();
         await Promise.all(kids.map((k) => S.store.savePage({ parent: p._parent || '' }, k.id))).catch((e) => toast(e.message));
         await S.store.deletePage(p.id).catch((e) => toast(e.message));
+        if (p.picture) S.store.savePicture(p.id, 'page', null).catch(() => {});
         if (fallback) goToPage(fallback.id, { instant: true });
       } }) : null));
   form.addEventListener('submit', async (e) => {
@@ -1352,22 +1470,28 @@ function pageEditor() {
     const fd = new FormData(form);
     const data = {
       title: fd.get('title').trim(), subtitle: fd.get('subtitle').trim(), body: fd.get('body'),
-      image: fd.get('image').trim(), hidden: fd.get('hidden') === 'on', labels: fd.get('labels') === 'on',
+      hidden: fd.get('hidden') === 'on', labels: fd.get('labels') === 'on',
       parent: fd.get('parent') || '',
     };
+    const type = isNew ? fd.get('type') : p.type;
+    const pic = type === 'doc' ? picture.result() : { mode: 'keep' };
+    if (type === 'map') data.image = (fd.get('image') || '').trim();
+    else Object.assign(data, pictureData(pic));
     try {
       if (isNew) {
-        data.type = fd.get('type');
+        data.type = type;
         const sibs = childrenOf(data.parent); // add it after the last page at that level
         data.order = sibs.length ? Math.max(...sibs.map((pg) => pg.order ?? 0)) + 1 : 0;
         if (data.parent) { tocOpen.add(data.parent); lsSet('atlas-toc-open', JSON.stringify([...tocOpen])); }
         closePanel(true);
         const id = await S.store.savePage(data);
+        await savePicture(id, 'page', pic, data, false);
         await saveSecret(id, fd);
         if (pageById(id)) goToPage(id); else S.pendingPage = id;
       } else {
         closePanel(true);
         await S.store.savePage(data, p.id);
+        await savePicture(p.id, 'page', pic, data, !!p.picture);
         await saveSecret(p.id, fd);
         if (p.id === S.pageId) renderPage();
       }
