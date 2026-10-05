@@ -76,6 +76,13 @@ export class LocalStore {
     return id;
   }
 
+  async importSeed(seed) {
+    Object.assign(this.db.pages, seed.pages);
+    Object.assign(this.db.pins, seed.pins);
+    Object.assign(this.db.secrets, seed.secrets || {});
+    this.persist();
+  }
+
   async saveSecret(id, text) {
     if (text.trim()) this.db.secrets[id] = { text }; else delete this.db.secrets[id];
     this.persist();

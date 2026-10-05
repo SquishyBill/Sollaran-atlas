@@ -148,8 +148,50 @@ function onError(e) {
 }
 
 // ─── data arrival ───────────────────────────────────────────────────
+// Pages form a tree through their `parent` field. S.pages holds them depth-first
+// (each page followed by its sub-maps), which is also the page-turning order.
+// Each page gets `_depth` and `_parent` (the parent actually used: '' at the top level).
+function orderPages(list) {
+  const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0);
+  const ids = new Set(list.map((p) => p.id));
+  const kids = new Map();
+  for (const p of list) {
+    const par = p.parent && p.parent !== p.id && ids.has(p.parent) ? p.parent : '';
+    if (!kids.has(par)) kids.set(par, []);
+    kids.get(par).push(p);
+  }
+  const out = [], seen = new Set();
+  const walk = (par, depth) => {
+    for (const p of (kids.get(par) || []).sort(byOrder)) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      Object.assign(p, { _depth: depth, _parent: par });
+      out.push(p);
+      walk(p.id, depth + 1);
+    }
+  };
+  walk('', 0);
+  // pages stuck in a parent loop are never reached from the top: list them at the top level
+  for (const p of [...list].sort(byOrder)) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    Object.assign(p, { _depth: 0, _parent: '' });
+    out.push(p);
+    walk(p.id, 1);
+  }
+  return out;
+}
+
+const childrenOf = (id) => S.pages.filter((p) => p._parent === id);
+function ancestorsOf(id) {
+  const out = [];
+  for (let p = pageById(id); p?._parent; p = pageById(p._parent)) out.push(p._parent);
+  return out;
+}
+const descendantsOf = (id) => S.pages.filter((p) => ancestorsOf(p.id).includes(id)).map((p) => p.id);
+
 function onPages(list) {
-  S.pages = list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  S.pages = orderPages(list);
   renderTOC();
   if (S.pendingPage && pageById(S.pendingPage)) {
     const id = S.pendingPage; S.pendingPage = null;
@@ -215,35 +257,65 @@ function onNotes(list) {
 }
 
 // ─── table of contents ──────────────────────────────────────────────
+// Which branches the reader has opened (remembered per browser). Turning to a page
+// opens the branch holding it.
+const tocOpen = new Set((() => { try { return JSON.parse(lsGet('atlas-toc-open')) || []; } catch { return []; } })());
+function toggleBranch(id) {
+  tocOpen.has(id) ? tocOpen.delete(id) : tocOpen.add(id);
+  lsSet('atlas-toc-open', JSON.stringify([...tocOpen]));
+  renderTOC();
+}
+
 function renderTOC() {
   const ol = $('#tocList');
   ol.replaceChildren();
+  const isOpen = (id) => tocOpen.has(id);
+  let hideBelow = Infinity; // depth under a closed branch
   S.pages.forEach((p, i) => {
+    if (p._depth > hideBelow) return;
+    hideBelow = Infinity;
+    const kids = childrenOf(p.id);
+    const open = kids.length && isOpen(p.id);
+    if (kids.length && !open) hideBelow = p._depth;
+
+    const sibs = childrenOf(p._parent);
+    const si = sibs.indexOf(p);
     const thumb = p.type === 'map' && safeImg(p.image)
       ? h('img', { src: p.image, alt: '', loading: 'lazy' })
       : h('span', { class: 'toc-doc', html: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7"/></svg>' });
-    const li = h('li', { class: `toc-item${p.id === S.pageId ? ' current' : ''}${p.hidden ? ' hidden-page' : ''}` },
+    const toggle = kids.length
+      ? h('button', {
+        class: `toc-toggle${open ? ' open' : ''}`, 'aria-expanded': open ? 'true' : 'false',
+        title: `${open ? 'Hide' : 'Show'} ${kids.length} map${kids.length > 1 ? 's' : ''} inside`,
+        'aria-label': `${open ? 'Collapse' : 'Expand'} ${p.title}`, onclick: () => toggleBranch(p.id),
+        html: '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>',
+      })
+      : h('span', { class: 'toc-toggle none' });
+    const li = h('li', {
+      class: `toc-item${p.id === S.pageId ? ' current' : ''}${p.hidden ? ' hidden-page' : ''}${p._depth ? ' nested' : ''}`,
+      style: `--depth:${p._depth}`, 'data-id': p.id,
+    },
+      toggle,
       h('button', { class: 'toc-link', onclick: () => { closeTOC(); goToPage(p.id); } },
         h('span', { class: 'toc-num', text: roman(i) }),
         h('span', { class: 'toc-thumb' }, thumb),
         h('span', { class: 'toc-text' },
           h('strong', { text: p.title }),
-          h('small', { text: (p.hidden ? 'Hidden · ' : '') + (p.subtitle || (p.type === 'map' ? 'Map' : 'Document')) }))),
+          h('small', { text: (p.hidden ? 'Hidden · ' : '') + (kids.length && !open ? `${kids.length} inside · ` : '') + (p.subtitle || (p.type === 'map' ? 'Map' : 'Document')) }))),
       isDM() ? h('span', { class: 'toc-order' },
-        h('button', { title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swapOrder(i, i - 1), text: '▲' }),
-        h('button', { title: 'Move down', 'aria-label': 'Move down', disabled: i === S.pages.length - 1, onclick: () => swapOrder(i, i + 1), text: '▼' })) : null);
+        h('button', { title: 'Move up', 'aria-label': 'Move up', disabled: si <= 0, onclick: () => moveSibling(p, -1), text: '▲' }),
+        h('button', { title: 'Move down', 'aria-label': 'Move down', disabled: si >= sibs.length - 1, onclick: () => moveSibling(p, 1), text: '▼' })) : null);
     ol.append(li);
   });
 }
 
-async function swapOrder(a, b) {
-  const pa = S.pages[a], pb = S.pages[b];
-  if (!pa || !pb) return;
-  // normalise order values so swaps are always meaningful
-  await Promise.all(S.pages.map((p, i) => {
-    const order = i === a ? b : i === b ? a : i;
-    return p.order === order ? null : S.store.savePage({ order }, p.id);
-  }));
+// ▲/▼ move a page among the pages that share its parent (its sub-maps come along).
+async function moveSibling(p, delta) {
+  const sibs = childrenOf(p._parent);
+  const i = sibs.indexOf(p), j = i + delta;
+  if (i < 0 || j < 0 || j >= sibs.length) return;
+  [sibs[i], sibs[j]] = [sibs[j], sibs[i]];
+  await Promise.all(sibs.map((s, k) => (s.order === k ? null : S.store.savePage({ order: k }, s.id))));
 }
 
 function openTOC() { document.body.classList.add('toc-open'); }
@@ -288,12 +360,16 @@ function renderPageChrome() {
   const page = currentPage();
   if (!page) return;
   const i = S.pages.indexOf(page);
-  $('#pageTitle').textContent = page.title + (page.hidden ? ' (hidden)' : '');
+  const parent = page._parent && pageById(page._parent);
+  $('#pageTitle').textContent = (parent ? `${parent.title.replace(/^Dukedom of /, '')} › ` : '') + page.title + (page.hidden ? ' (hidden)' : '');
   $('#folio').textContent = `${roman(i)} of ${roman(S.pages.length - 1)}`;
   $('#prevBtn').disabled = $('#cornerPrev').disabled = i <= 0;
   $('#nextBtn').disabled = $('#cornerNext').disabled = i >= S.pages.length - 1;
   document.body.classList.toggle('on-map', page.type === 'map');
-  $$('.toc-item').forEach((li, j) => li.classList.toggle('current', j === i));
+  // open the branch holding this page (the reader can still close it afterwards)
+  const path = ancestorsOf(page.id).filter((id) => !tocOpen.has(id));
+  if (path.length) { path.forEach((id) => tocOpen.add(id)); lsSet('atlas-toc-open', JSON.stringify([...tocOpen])); }
+  renderTOC();
   updateHash();
 }
 
@@ -342,6 +418,38 @@ async function importSeed(e) {
     toast('Import failed: ' + err.message);
     btn.disabled = false; btn.textContent = 'Try the import again';
   }
+}
+
+// Adds only what's new in js/seed.js (pages, pins, secrets the atlas doesn't have yet) plus its PATCHES.
+// Existing pages, pins, notes and edits are left alone. Runs from the local copy, where seed.js exists.
+async function syncSeed(e) {
+  const btn = e.currentTarget;
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    const { SEED, PATCHES = [] } = await import(`./seed.js?v=${Date.now()}`);
+    const missing = (obj, has) => Object.fromEntries(Object.entries(obj || {}).filter(([id]) => !has(id)));
+    const add = {
+      pages: missing(SEED.pages, pageById),
+      pins: missing(SEED.pins, pinById),
+      secrets: missing(SEED.secrets, (id) => id in S.secrets),
+    };
+    const counts = [Object.keys(add.pages).length, Object.keys(add.pins).length, Object.keys(add.secrets).length];
+    if (counts.some(Boolean)) await S.store.importSeed(add);
+    // Patches only fill in fields that are still unset, so they never undo the DM's own edits.
+    let patched = 0;
+    for (const { col, id, data } of PATCHES) {
+      const target = col === 'pins' ? pinById(id) : col === 'pages' ? pageById(id) : null;
+      if (!target) continue;
+      const fill = Object.fromEntries(Object.entries(data).filter(([k]) => target[k] === undefined));
+      if (!Object.keys(fill).length) continue;
+      await (col === 'pins' ? S.store.savePin(fill, id) : S.store.savePage(fill, id));
+      patched++;
+    }
+    toast(`Added ${counts[0]} pages, ${counts[1]} pins and ${counts[2]} secrets; updated ${patched} existing pins/pages.`);
+  } catch (err) {
+    toast('Import failed: ' + err.message);
+  }
+  btn.disabled = false; btn.textContent = 'Import new starter content';
 }
 
 // ─── the map ────────────────────────────────────────────────────────
@@ -893,6 +1001,17 @@ function openPageEditor(id) {
   $('#panelBody input[name=title]')?.focus();
 }
 
+// Where a page sits in Contents. New pages default to nesting under the page you're on.
+function parentField(p, isNew) {
+  const blocked = new Set(isNew ? [] : [p.id, ...descendantsOf(p.id)]); // no loops
+  const current = isNew ? (S.pageId || '') : (p._parent || '');
+  const sel = h('select', { name: 'parent' },
+    h('option', { value: '', selected: !current, text: '(Top level)' }),
+    S.pages.filter((pg) => !blocked.has(pg.id)).map((pg) =>
+      h('option', { value: pg.id, selected: pg.id === current, text: `${' '.repeat(pg._depth)}${pg.title}` })));
+  return field('Nested under', sel, 'Where this page sits in Contents, e.g. a town map under its dukedom, or an inn under its town.');
+}
+
 function pageEditor() {
   const isNew = S.panel.id === 'new';
   const p = isNew ? { type: 'map', title: '', subtitle: '', body: '', image: '', hidden: false } : pageById(S.panel.id);
@@ -906,6 +1025,7 @@ function pageEditor() {
     typeSel,
     field('Title', h('input', { name: 'title', required: true, maxlength: 120, value: p.title })),
     field('Subtitle', h('input', { name: 'subtitle', maxlength: 160, value: p.subtitle || '' })),
+    parentField(p, isNew),
     field(p.type === 'doc' && !isNew ? 'Header image (optional)' : 'Map image', imageField(p.image),
       S.store.canUpload ? 'Upload a PNG, or paste a URL.' : 'Put the PNG in the site\'s <b>maps/</b> folder, commit it, and type its path here.'),
     field(p.type === 'map' && !isNew ? 'About this map' : 'Text', body, 'Formatting: # heading, **bold**, *italic*, - list items, &gt; quote, [[Link to a place]].'),
@@ -916,10 +1036,13 @@ function pageEditor() {
       h('button', { class: 'btn', type: 'submit', text: isNew ? 'Add page' : 'Save' }),
       h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => { closePanel(); if (!isNew) renderPage(); } }),
       !isNew ? h('button', { class: 'btn danger', type: 'button', text: 'Delete page', onclick: async () => {
-        if (!confirm(`Delete "${p.title}" and every pin on it? Notes stay in the database but will be orphaned.`)) return;
+        const kids = childrenOf(p.id);
+        const kidNote = kids.length ? ` Its ${kids.length} sub-map${kids.length > 1 ? 's' : ''} will move up a level.` : '';
+        if (!confirm(`Delete "${p.title}" and every pin on it?${kidNote} Notes stay in the database but will be orphaned.`)) return;
         const idx = S.pages.indexOf(p);
         const fallback = S.pages[idx - 1] || S.pages[idx + 1];
         closePanel();
+        await Promise.all(kids.map((k) => S.store.savePage({ parent: p._parent || '' }, k.id))).catch((e) => toast(e.message));
         await S.store.deletePage(p.id).catch((e) => toast(e.message));
         if (fallback) goToPage(fallback.id, { instant: true });
       } }) : null));
@@ -929,11 +1052,14 @@ function pageEditor() {
     const data = {
       title: fd.get('title').trim(), subtitle: fd.get('subtitle').trim(), body: fd.get('body'),
       image: fd.get('image').trim(), hidden: fd.get('hidden') === 'on', labels: fd.get('labels') === 'on',
+      parent: fd.get('parent') || '',
     };
     try {
       if (isNew) {
         data.type = fd.get('type');
-        data.order = S.pages.length ? Math.max(...S.pages.map((pg) => pg.order ?? 0)) + 1 : 0;
+        const sibs = childrenOf(data.parent); // add it after the last page at that level
+        data.order = sibs.length ? Math.max(...sibs.map((pg) => pg.order ?? 0)) + 1 : 0;
+        if (data.parent) { tocOpen.add(data.parent); lsSet('atlas-toc-open', JSON.stringify([...tocOpen])); }
         closePanel(true);
         const id = await S.store.savePage(data);
         await saveSecret(id, fd);
@@ -1005,6 +1131,9 @@ function setupChrome() {
   $('#tocClose').onclick = closeTOC;
   $('#scrim').onclick = closeTOC;
   $('#addPageBtn').onclick = () => openPageEditor(null);
+  if (isDM() && S.store.importSeed && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+    $('#addPageBtn').after(h('button', { class: 'btn ghost', style: 'width:100%;margin-top:8px', text: 'Import new starter content', onclick: syncSeed }));
+  }
   $('#prevBtn').onclick = $('#cornerPrev').onclick = () => step(-1);
   $('#nextBtn').onclick = $('#cornerNext').onclick = () => step(1);
   $('#panelClose').onclick = () => closePanel();
