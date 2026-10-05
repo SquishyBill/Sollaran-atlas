@@ -882,6 +882,55 @@ function toggleGroup(g) {
   lsSet('atlas-people-open', JSON.stringify([...groupsOpen]));
 }
 
+// Groups nest with " / ": "Emmett / The Roosting Crow" sits inside "Emmett".
+const GROUP_SEP = ' / ';
+const normGroup = (g) => (g || '').split('/').map((s) => s.trim()).filter(Boolean).join(GROUP_SEP);
+const groupLabel = (g) => normGroup(g).split(GROUP_SEP).join(' › ');
+
+function groupTree(people) {
+  const root = { children: new Map(), people: [] };
+  for (const p of people) {
+    let node = root;
+    const parts = (normGroup(p.group) || 'Others').split(GROUP_SEP);
+    parts.forEach((name, i) => {
+      if (!node.children.has(name)) node.children.set(name, { name, path: parts.slice(0, i + 1).join(GROUP_SEP), children: new Map(), people: [] });
+      node = node.children.get(name);
+    });
+    node.people.push(p);
+  }
+  return root;
+}
+const sortedChildren = (node) => [...node.children.values()]
+  .sort((a, b) => (a.name === 'Others') - (b.name === 'Others') || a.name.localeCompare(b.name));
+const groupCount = (node) => node.people.length + [...node.children.values()].reduce((n, c) => n + groupCount(c), 0);
+
+// Every group path in use, including parents that only hold other groups.
+function allGroupPaths() {
+  const paths = new Set();
+  for (const p of S.people) {
+    const parts = normGroup(p.group).split(GROUP_SEP).filter(Boolean);
+    parts.forEach((_, i) => paths.add(parts.slice(0, i + 1).join(GROUP_SEP)));
+  }
+  return [...paths].sort((a, b) => a.localeCompare(b));
+}
+
+// Rename or move a group (and everything inside it) by editing its path.
+async function renameGroup(path) {
+  const answer = prompt(`Rename or move "${groupLabel(path)}" and everyone in it.\n\nUse / to put it inside another group, e.g. Emmett / The Roosting Crow`, path);
+  const next = normGroup(answer);
+  if (!next || next === path) return;
+  if ((next + GROUP_SEP).startsWith(path + GROUP_SEP)) { toast("A group can't go inside itself."); return; }
+  const affected = S.people.filter((p) => { const g = normGroup(p.group); return g === path || g.startsWith(path + GROUP_SEP); });
+  try {
+    await Promise.all(affected.map((p) => S.store.savePerson({ group: next + normGroup(p.group).slice(path.length) }, p.id)));
+  } catch (e) { toast('Could not move the group: ' + e.message); return; }
+  // keep it (and its parents) open in its new spot
+  next.split(GROUP_SEP).forEach((_, i, parts) => groupsOpen.add(parts.slice(0, i + 1).join(GROUP_SEP)));
+  lsSet('atlas-people-open', JSON.stringify([...groupsOpen]));
+  toast(`Moved ${affected.length} ${affected.length === 1 ? 'person' : 'people'} to "${groupLabel(next)}".`);
+  if (S.panel?.type === 'people') renderPanel();
+}
+
 function peopleView() {
   const list = h('div', { class: 'people-list' });
   const search = h('input', { type: 'search', class: 'people-search', placeholder: 'Search people, titles, groups, places…', value: S.peopleQuery });
@@ -891,26 +940,28 @@ function peopleView() {
       const text = [p.name, p.title, p.group, p.body, ...(p.places || []).map((r) => placeInfo(r)?.label)].join(' ').toLowerCase();
       return words.every((w) => text.includes(w));
     });
-    const groups = new Map();
-    for (const p of matches) {
-      const g = p.group?.trim() || 'Others';
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push(p);
-    }
-    const names = [...groups.keys()].sort((a, b) => (a === 'Others') - (b === 'Others') || a.localeCompare(b));
     // groups start closed; a search opens every group with a match
     const searching = words.length > 0;
-    list.replaceChildren(...(matches.length
-      ? names.map((g) => {
-        const open = searching || groupsOpen.has(g);
-        return h('section', { class: `people-group${open ? ' open' : ''}` },
+    const renderGroup = (node, depth) => {
+      const open = searching || groupsOpen.has(node.path);
+      return h('section', { class: `people-group${open ? ' open' : ''}${depth ? ' sub' : ''}` },
+        h('div', { class: 'group-row' },
           h('button', {
             class: 'group-head', 'aria-expanded': open ? 'true' : 'false',
-            onclick: () => { toggleGroup(g); fill(); },
-            html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><span>${esc(g)}</span><em>${groups.get(g).length}</em>`,
+            onclick: () => { toggleGroup(node.path); fill(); },
+            html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><span>${esc(node.name)}</span><em>${groupCount(node)}</em>`,
           }),
-          open ? groups.get(g).sort(byName).map(personRow) : null);
-      })
+          isDM() && node.path !== 'Others' ? h('button', {
+            class: 'group-edit', title: 'Rename or move this group', 'aria-label': `Rename or move ${node.name}`,
+            onclick: () => renameGroup(node.path), text: '✎',
+          }) : null),
+        open ? [
+          ...node.people.sort(byName).map(personRow),
+          ...sortedChildren(node).map((child) => renderGroup(child, depth + 1)),
+        ] : null);
+    };
+    list.replaceChildren(...(matches.length
+      ? sortedChildren(groupTree(matches)).map((node) => renderGroup(node, 0))
       : [h('p', { class: 'muted', text: S.people.length ? 'No one matches that.' : 'No one has been added yet.' })]));
   };
   search.addEventListener('input', () => { S.peopleQuery = search.value; fill(); });
@@ -933,7 +984,7 @@ function personView() {
     h('div', { class: 'person-head' },
       h('span', { html: avatarHTML(p, 'avatar big') }),
       h('div', {},
-        h('div', { class: 'codex-kind', html: `<span>${esc(p.group || 'Person')}${p.hidden ? ' · Hidden from players' : ''}</span>` }),
+        h('div', { class: 'codex-kind', html: `<span>${esc(groupLabel(p.group) || 'Person')}${p.hidden ? ' · Hidden from players' : ''}</span>` }),
         h('h2', { class: 'codex-title', text: p.name }),
         p.title ? h('p', { class: 'codex-sub', text: p.title }) : null)),
     h('div', { class: 'codex-actions' },
@@ -1046,12 +1097,21 @@ function portraitField(value) {
 // Free-text group with the existing groups offered as one-click buttons.
 // (Not a <label>: clicking a group button must not focus/trigger anything else.)
 function groupField(value, groups) {
-  const input = h('input', { name: 'group', maxlength: 80, value, placeholder: 'Type a new group, e.g. People of Emmett' });
+  const input = h('input', { name: 'group', maxlength: 120, value: normGroup(value), placeholder: 'Type a new group, e.g. Emmett / The Roosting Crow' });
   const chips = h('div', { class: 'group-chips' });
-  const draw = () => chips.replaceChildren(...groups.map((g) => h('button', {
-    type: 'button', class: `group-chip${input.value.trim() === g ? ' on' : ''}`, text: g,
-    onclick: () => { input.value = input.value.trim() === g ? '' : g; draw(); },
-  })));
+  const inside = h('button', { type: 'button', class: 'btn small ghost', hidden: true });
+  const draw = () => {
+    const cur = normGroup(input.value);
+    chips.replaceChildren(...groups.map((g) => h('button', {
+      type: 'button', class: `group-chip${cur === g ? ' on' : ''}`,
+      title: groupLabel(g), text: (g.includes(GROUP_SEP) ? '↳ ' : '') + g.split(GROUP_SEP).pop(),
+      onclick: () => { input.value = cur === g ? '' : g; draw(); },
+    })));
+    // once a group is picked, offer to start a new group inside it
+    inside.hidden = !groups.includes(cur);
+    inside.textContent = `+ New group inside ${cur.split(GROUP_SEP).pop()}`;
+    inside.onclick = () => { input.value = cur + GROUP_SEP; input.focus(); draw(); };
+  };
   input.addEventListener('input', draw);
   draw();
   return h('div', { class: 'field' },
@@ -1059,14 +1119,15 @@ function groupField(value, groups) {
     input,
     groups.length ? h('small', { text: 'Or pick an existing group:' }) : null,
     chips,
-    h('small', { text: 'Typing a name that isn’t listed creates a new group. Leave it blank to list them under "Others".' }));
+    inside,
+    h('small', { text: 'Typing a name that isn’t listed creates a new group. Use / to put a group inside another, e.g. "Emmett / The Roosting Crow". Leave it blank to list them under "Others".' }));
 }
 
 function personEditor() {
   const isNew = S.panel.id === 'new';
   const p = isNew ? { name: '', title: '', group: '', image: '', body: '', hidden: false, places: S.panel.places || [] } : personById(S.panel.id);
   if (!p) return h('p', { text: 'This person no longer exists.' });
-  const groups = [...new Set(S.people.map((x) => x.group).filter(Boolean))].sort();
+  const groups = allGroupPaths();
   const body = h('textarea', { name: 'body', rows: 8 }); body.value = p.body || '';
   const picker = placePicker(p.places || []);
   const form = h('form', { class: 'editor' },
@@ -1091,7 +1152,7 @@ function personEditor() {
     e.preventDefault();
     const fd = new FormData(form);
     const data = {
-      name: fd.get('name').trim(), title: fd.get('title').trim(), group: fd.get('group').trim(),
+      name: fd.get('name').trim(), title: fd.get('title').trim(), group: normGroup(fd.get('group')),
       image: fd.get('image').trim(), body: fd.get('body'), hidden: fd.get('hidden') === 'on', places: picker.getRefs(),
     };
     try {

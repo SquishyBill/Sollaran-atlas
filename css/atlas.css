@@ -710,3 +710,16 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
 }
 .group-chip:hover { border-color: var(--wax); }
 .group-chip.on { background: var(--wax); border-color: #5a150e; color: #f8e8c4; }
+
+/* nested People groups */
+.group-row { display: flex; align-items: center; gap: 4px; }
+.group-row .group-head { flex: 1; }
+.people-group.sub { margin-left: 16px; padding-left: 6px; border-left: 1px solid rgba(90, 60, 25, .2); }
+.people-group.sub .group-head { font-size: 11px; padding-top: 6px; padding-bottom: 6px; }
+.group-edit {
+  flex: none; width: 28px; height: 28px; border: 0; border-radius: 4px; background: none;
+  color: var(--ink-faint); font-size: 15px; opacity: 0; transition: opacity .15s;
+}
+.group-row:hover .group-edit, .group-edit:focus-visible { opacity: 1; }
+.group-edit:hover { color: var(--wax); background: rgba(142, 43, 32, .08); }
+@media (hover: none) { .group-edit { opacity: .7; } }
