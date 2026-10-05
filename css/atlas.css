@@ -648,3 +648,34 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
   background: rgba(142, 43, 32, .1); border: 1px solid rgba(142, 43, 32, .3); font-size: 14px;
 }
 .place-picker .chip button { border: 0; background: none; padding: 0 4px; font-size: 16px; line-height: 1; color: var(--wax); }
+
+/* collapsible People groups */
+.people-group { margin: 2px 0; }
+.group-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; padding: 8px 6px;
+  border: 0; border-bottom: 1px solid rgba(90, 60, 25, .25); border-radius: 4px 4px 0 0; background: none; text-align: left;
+  font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft);
+}
+.group-head:hover { background: rgba(142, 43, 32, .06); color: var(--ink); }
+.group-head svg { width: 13px; height: 13px; flex: none; fill: none; stroke: var(--wax); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s var(--ease); }
+.people-group.open .group-head svg { transform: rotate(90deg); }
+.group-head span { flex: 1; }
+.group-head em {
+  font-style: normal; letter-spacing: 0; min-width: 24px; padding: 1px 7px; border-radius: 10px; text-align: center;
+  background: rgba(142, 43, 32, .12); color: var(--wax);
+}
+
+/* portrait upload box */
+.portrait-field { display: flex; gap: 14px; align-items: flex-start; }
+.portrait-drop {
+  flex: none; width: 104px; height: 104px; border-radius: 50%; overflow: hidden; cursor: pointer;
+  display: grid; place-items: center; text-align: center; font-size: 14px; line-height: 1.25; color: var(--ink-soft);
+  background: rgba(255, 252, 240, .6); border: 2px dashed rgba(90, 60, 25, .45);
+  transition: border-color .2s, background .2s, transform .2s var(--ease);
+}
+.portrait-drop img { width: 100%; height: 100%; object-fit: cover; }
+.portrait-drop:hover, .portrait-drop:focus-visible, .portrait-drop.over { border-color: var(--wax); background: rgba(142, 43, 32, .08); transform: scale(1.03); }
+.portrait-drop.busy { opacity: .5; }
+.portrait-side { flex: 1; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.portrait-side small { font-size: 14px; color: var(--ink-faint); }
+.portrait-side input { width: 100%; }

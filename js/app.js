@@ -875,6 +875,13 @@ function openPerson(id) {
   updateHash();
 }
 
+// Which People groups the reader has opened (remembered per browser).
+const groupsOpen = new Set((() => { try { return JSON.parse(lsGet('atlas-people-open')) || []; } catch { return []; } })());
+function toggleGroup(g) {
+  groupsOpen.has(g) ? groupsOpen.delete(g) : groupsOpen.add(g);
+  lsSet('atlas-people-open', JSON.stringify([...groupsOpen]));
+}
+
 function peopleView() {
   const list = h('div', { class: 'people-list' });
   const search = h('input', { type: 'search', class: 'people-search', placeholder: 'Search people, titles, groups, places…', value: S.peopleQuery });
@@ -891,10 +898,19 @@ function peopleView() {
       groups.get(g).push(p);
     }
     const names = [...groups.keys()].sort((a, b) => (a === 'Others') - (b === 'Others') || a.localeCompare(b));
+    // groups start closed; a search opens every group with a match
+    const searching = words.length > 0;
     list.replaceChildren(...(matches.length
-      ? names.map((g) => h('section', { class: 'people-group' },
-        h('h4', { text: `${g} (${groups.get(g).length})` }),
-        groups.get(g).sort(byName).map(personRow)))
+      ? names.map((g) => {
+        const open = searching || groupsOpen.has(g);
+        return h('section', { class: `people-group${open ? ' open' : ''}` },
+          h('button', {
+            class: 'group-head', 'aria-expanded': open ? 'true' : 'false',
+            onclick: () => { toggleGroup(g); fill(); },
+            html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg><span>${esc(g)}</span><em>${groups.get(g).length}</em>`,
+          }),
+          open ? groups.get(g).sort(byName).map(personRow) : null);
+      })
       : [h('p', { class: 'muted', text: S.people.length ? 'No one matches that.' : 'No one has been added yet.' })]));
   };
   search.addEventListener('input', () => { S.peopleQuery = search.value; fill(); });
@@ -972,6 +988,61 @@ function placePicker(initial) {
   return box;
 }
 
+// Square-crop and shrink a picked image so it can live inside the person's record
+// (no file storage needed). Crops a little above center, where faces usually are.
+async function shrinkPortrait(file, size = 256) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const w = img.naturalWidth, hgt = img.naturalHeight, s = Math.min(w, hgt);
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, (w - s) / 2, (hgt - s) * 0.3, s, s, 0, 0, size, size);
+    const webp = c.toDataURL('image/webp', 0.82);
+    return webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/jpeg', 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function portraitField(value) {
+  let current = value || '';
+  const hidden = h('input', { type: 'hidden', name: 'image', value: current });
+  const file = h('input', { type: 'file', accept: 'image/*', hidden: true });
+  const box = h('div', { class: 'portrait-drop', tabindex: '0', role: 'button', 'aria-label': 'Choose a portrait image' });
+  const remove = h('button', { type: 'button', class: 'btn small ghost', text: 'Remove' });
+  const link = h('input', { type: 'text', placeholder: 'or paste an image link', value: current.startsWith('data:') ? '' : current });
+  const set = (v) => { current = v; hidden.value = v; draw(); };
+  const draw = () => {
+    box.innerHTML = current && safeImg(current) ? `<img src="${esc(current)}" alt="">` : '<span>Click or drop<br>a picture</span>';
+    remove.hidden = !current;
+  };
+  const load = async (f) => {
+    if (!f || !f.type.startsWith('image/')) { toast("That file isn't an image."); return; }
+    box.classList.add('busy');
+    try { set(await shrinkPortrait(f)); link.value = ''; }
+    catch { toast("Couldn't read that image. Try a PNG or JPG."); }
+    box.classList.remove('busy');
+  };
+  box.addEventListener('click', () => file.click());
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
+  box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('over'); });
+  box.addEventListener('dragleave', () => box.classList.remove('over'));
+  box.addEventListener('drop', (e) => { e.preventDefault(); box.classList.remove('over'); load(e.dataTransfer.files[0]); });
+  file.addEventListener('change', () => load(file.files[0]));
+  remove.addEventListener('click', () => { set(''); link.value = ''; });
+  link.addEventListener('change', () => set(link.value.trim()));
+  draw();
+  return field('Portrait', h('div', { class: 'portrait-field' },
+    box,
+    h('div', { class: 'portrait-side' },
+      h('small', { text: 'Any picture works; it is cropped to a square and shrunk to a small portrait.' }),
+      link, remove),
+    file, hidden));
+}
+
 function personEditor() {
   const isNew = S.panel.id === 'new';
   const p = isNew ? { name: '', title: '', group: '', image: '', body: '', hidden: false, places: S.panel.places || [] } : personById(S.panel.id);
@@ -987,7 +1058,7 @@ function personEditor() {
       h('input', { name: 'group', maxlength: 80, value: p.group || '', list: 'group-options', placeholder: 'e.g. Council of Ten, Seven Families of Emmett' }),
       h('datalist', { id: 'group-options' }, groups.map((g) => h('option', { value: g })))),
       'People are listed under their group in the directory.'),
-    field('Portrait (optional)', imageField(p.image)),
+    portraitField(p.image),
     field('Found at', picker, 'Places this person can be found. They show up in each place\'s "People here".'),
     field('Description', body, 'Formatting: **bold**, *italic*, - list items, &gt; quote, [[Link to a place or person]].'),
     secretField(isNew ? null : p.id),
