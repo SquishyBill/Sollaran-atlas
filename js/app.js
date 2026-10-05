@@ -1043,6 +1043,25 @@ function portraitField(value) {
     file, hidden));
 }
 
+// Free-text group with the existing groups offered as one-click buttons.
+// (Not a <label>: clicking a group button must not focus/trigger anything else.)
+function groupField(value, groups) {
+  const input = h('input', { name: 'group', maxlength: 80, value, placeholder: 'Type a new group, e.g. People of Emmett' });
+  const chips = h('div', { class: 'group-chips' });
+  const draw = () => chips.replaceChildren(...groups.map((g) => h('button', {
+    type: 'button', class: `group-chip${input.value.trim() === g ? ' on' : ''}`, text: g,
+    onclick: () => { input.value = input.value.trim() === g ? '' : g; draw(); },
+  })));
+  input.addEventListener('input', draw);
+  draw();
+  return h('div', { class: 'field' },
+    h('span', { text: 'Group' }),
+    input,
+    groups.length ? h('small', { text: 'Or pick an existing group:' }) : null,
+    chips,
+    h('small', { text: 'Typing a name that isn’t listed creates a new group. Leave it blank to list them under "Others".' }));
+}
+
 function personEditor() {
   const isNew = S.panel.id === 'new';
   const p = isNew ? { name: '', title: '', group: '', image: '', body: '', hidden: false, places: S.panel.places || [] } : personById(S.panel.id);
@@ -1054,10 +1073,7 @@ function personEditor() {
     h('h2', { class: 'codex-title', text: isNew ? 'Add a person' : 'Edit person' }),
     field('Name', h('input', { name: 'name', required: true, maxlength: 120, value: p.name })),
     field('Title or role', h('input', { name: 'title', maxlength: 160, value: p.title || '', placeholder: 'e.g. Duke of Harthall, "The Gilded Lion"' })),
-    field('Group', h('div', {},
-      h('input', { name: 'group', maxlength: 80, value: p.group || '', list: 'group-options', placeholder: 'e.g. Council of Ten, Seven Families of Emmett' }),
-      h('datalist', { id: 'group-options' }, groups.map((g) => h('option', { value: g })))),
-      'People are listed under their group in the directory.'),
+    groupField(p.group || '', groups),
     portraitField(p.image),
     field('Found at', picker, 'Places this person can be found. They show up in each place\'s "People here".'),
     field('Description', body, 'Formatting: **bold**, *italic*, - list items, &gt; quote, [[Link to a place or person]].'),
@@ -1208,7 +1224,10 @@ function renderDoc(page) {
 
 // ─── DM editors ─────────────────────────────────────────────────────
 function field(label, input, hint) {
-  return h('label', { class: 'field' }, h('span', { text: label }), input, hint ? h('small', { html: hint }) : null);
+  // A <label> forwards clicks on its text to the first control inside it, which is only
+  // safe when the field is a single input. Composite fields (with buttons) get a plain div.
+  const single = input.matches?.('input, select, textarea');
+  return h(single ? 'label' : 'div', { class: 'field' }, h('span', { text: label }), input, hint ? h('small', { html: hint }) : null);
 }
 
 function imageField(value) {

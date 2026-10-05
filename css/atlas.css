@@ -701,3 +701,12 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
   animation: shimmer 1.4s linear infinite;
 }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }
+
+/* group picker in the person editor */
+.group-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.group-chip {
+  padding: 4px 11px; border-radius: 14px; border: 1px solid rgba(90, 60, 25, .4);
+  background: rgba(255, 250, 235, .5); color: var(--ink); font: 700 12px var(--f-head); letter-spacing: .04em;
+}
+.group-chip:hover { border-color: var(--wax); }
+.group-chip.on { background: var(--wax); border-color: #5a150e; color: #f8e8c4; }
