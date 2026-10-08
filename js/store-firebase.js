@@ -69,6 +69,11 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
       (s) => h.shops?.(list(s)), err);
     onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
+    onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
+      (s) => h.haggles?.(list(s)), err);
+    // players' Persuasion bonuses: the DM sees everyone's, a player only their own
+    if (this.isDM) onSnapshot(this.col('players'), (s) => h.players?.(list(s)), err);
+    else onSnapshot(this.ref('players', this.uid), (s) => h.players?.(s.exists() ? [{ id: s.id, ...s.data() }] : []), err);
 
     onSnapshot(this.isDM ? this.col('people') : query(this.col('people'), where('hidden', '==', false)),
       (s) => h.people?.(list(s)), err);
@@ -203,6 +208,20 @@ export class FirebaseStore {
   addPurchase(p) { return this.F.addDoc(this.col('purchases'), { ...p, buyerUid: this.uid, at: Date.now(), settled: false }); }
   updatePurchase(id, data) { return this.F.updateDoc(this.ref('purchases', id), data); }
   deletePurchase(id) { return this.F.deleteDoc(this.ref('purchases', id)); }
+
+  // one haggle per player, per shop, per week: the fixed id means the rules refuse a second one
+  async addHaggle(x) {
+    const ref = this.ref('haggles', `${x.shopId}__${this.uid}__${x.week}`);
+    if ((await this.F.getDoc(ref)).exists()) throw new Error('You already haggled here this week.');
+    await this.F.setDoc(ref, { ...x, uid: this.uid, at: Date.now() });
+  }
+
+  deleteHaggle(id) { return this.F.deleteDoc(this.ref('haggles', id)); }
+
+  // a player's own record (their Persuasion bonus); players create it once, the DM can change it
+  savePlayer(data, uid = this.uid) {
+    return this.F.setDoc(this.ref('players', uid), data, { merge: this.isDM });
+  }
 
   async getPicture(id) {
     try {

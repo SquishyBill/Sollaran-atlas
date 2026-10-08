@@ -76,6 +76,11 @@ git push
 - **Renown matters:** the nearest tracked standing (the town, then its map, then the dukedom) sets prices (+10 is 25% off, −10 is 60% more). Below 0 the fine goods are held back; from +3 the rare goods appear; at Reviled (−7 or lower) they won’t trade at all.
 - **Buying:** anyone can click **Buy**. Stock goes down and the purchase goes in the **Market → Ledger** (DM) / **My purchases** (players). Tick **Settled** once you’ve taken the gold; **void** undoes a purchase and returns the stock.
 
+- **27 kinds of shop**, from general stores and smiths to temples, inns, shipwrights, vintners, the Quartermaster and the Black Market. **Services** (lodging, healing, passage…) never run out.
+- **Black Market:** hidden from players by default, and renown works in reverse: the less the law likes the party, the better the deals.
+- **Your own touches (Edit on a shop):** *house specials* that are always in stock, and your own price for any generated item.
+- **Haggling:** once per player, per shop, per week. The atlas rolls the d20 and adds the player's Persuasion bonus (they set it once; after that only the DM can change it, under **Market → Ledger → Party Persuasion**). The total decides: 5 or less +20%, 6–9 +10%, 10–14 no change, 15–19 10% off, 20–24 15% off, 25+ 20% off, for the rest of that week. Every attempt shows in the ledger; you can reset one from the shop.
+
 Item names and prices follow the D&D 5e SRD 5.1 (CC BY 4.0); magic item prices are suggestions.
 
 ## Who's signed in, and locking it to your party

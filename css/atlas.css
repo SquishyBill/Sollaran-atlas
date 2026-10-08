@@ -867,3 +867,40 @@ ol.ledger li.settled { opacity: .6; }
   table.stock { font-size: 15px; }
 }
 .shop-keeper a.wiki { color: var(--wax); font-weight: 700; text-decoration: none; border-bottom: 1px solid currentColor; }
+
+/* haggling, house specials, price overrides */
+.haggle { margin: 8px 0; padding: 8px 12px; border-radius: 6px; font-size: 16px; background: rgba(255, 252, 240, .5); border: 1px dashed rgba(90, 60, 25, .35); }
+.haggle small { color: var(--ink-faint); font-style: italic; }
+.haggle.pos { border: 1px solid rgba(111, 138, 60, .5); background: rgba(111, 138, 60, .1); }
+.haggle.neg { border: 1px solid rgba(142, 43, 32, .45); background: rgba(142, 43, 32, .08); }
+.haggle.dm ul { margin: 4px 0 0; padding-left: 18px; }
+.haggle.dm li { font-size: 15px; }
+.grade.house { background: rgba(142, 43, 32, .12); color: var(--wax); }
+.special-row { display: grid; grid-template-columns: 1fr 80px 84px auto; gap: 6px; align-items: center; }
+.special-row input { padding: 5px 8px; font-size: 15px; }
+.override-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 280px; overflow-y: auto; }
+.override-row { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.override-row span { flex: 1; }
+.override-row input { width: 90px; padding: 4px 6px; font-size: 15px; }
+@media (max-width: 760px) { .special-row { grid-template-columns: 1fr 70px; } }
+
+/* the haggling d20 */
+.haggle { display: flex; align-items: center; gap: 12px; }
+.d20 {
+  flex: none; width: 46px; height: 46px; display: grid; place-items: center;
+  font: 700 17px var(--f-head); color: #f8e8c4;
+  background: radial-gradient(circle at 35% 30%, #a3392b, var(--wax) 60%, #5a150e);
+  clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+  filter: drop-shadow(0 2px 3px rgba(60, 20, 10, .4));
+  transition: transform .2s var(--ease);
+}
+.d20.rolling { animation: tumble .18s linear infinite; }
+@keyframes tumble { 0% { transform: rotate(0) scale(1); } 50% { transform: rotate(180deg) scale(.9); } 100% { transform: rotate(360deg) scale(1); } }
+.d20.crit { background: radial-gradient(circle at 35% 30%, #fff3d0, #d6b36a 55%, #8a6420); color: #3a2819; animation: glow 1.2s ease-out; }
+.d20.fumble { background: radial-gradient(circle at 35% 30%, #6b6b6b, #3a3a3a 60%, #1c1c1c); }
+@keyframes glow { 0% { filter: drop-shadow(0 0 0 rgba(240, 200, 100, 0)); } 30% { filter: drop-shadow(0 0 14px rgba(240, 200, 100, .9)); } 100% { filter: drop-shadow(0 2px 3px rgba(60, 20, 10, .4)); } }
+.d20.still { width: 40px; height: 40px; font-size: 15px; }
+.party ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.party li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 16px; }
+.party li span { flex: 1; }
+.party li input { width: 70px; padding: 4px 6px; }

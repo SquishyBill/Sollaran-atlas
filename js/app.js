@@ -1,6 +1,6 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
-import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek } from './shop-data.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult } from './shop-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -59,7 +59,7 @@ const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
   renown: [], renownLog: [], renownTiers: null,
-  shops: [], purchases: [], placeShop: null,
+  shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -118,7 +118,7 @@ async function boot() {
   if (S.store.mode === 'local') $('#demoRibbon').hidden = false;
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, shops: onShops, purchases: onPurchases, ping: onPing, error: onError });
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers, ping: onPing, error: onError });
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -243,6 +243,8 @@ function onShops(list) {
   if (['shop', 'market', 'pin', 'about'].includes(S.panel?.type)) renderPanel();
 }
 function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
+function onHaggles(list) { S.haggles = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
+function onPlayers(list) { S.players = list; if (S.panel?.type === 'market') renderPanel(); }
 function onRenownLog(list) { S.renownLog = list; if (S.panel?.type === 'renownDetail') renderPanel(); }
 function onRenownTiers(tiers) { S.renownTiers = tiers; refreshRenownViews(); }
 
@@ -1498,13 +1500,25 @@ function stockFor(shop) {
   for (const p of S.purchases) if (p.shopId === shop.id && p.week === week) sold.set(p.itemKey, (sold.get(p.itemKey) || 0) + p.qty);
   const rn = renownAt(shop.location);
   const score = rn?.r.score ?? 0;
-  const terms = renownTerms(score);
-  const items = generateStock(shop, week).map((i) => ({
-    ...i, left: Math.max(0, i.qty - (sold.get(i.key) || 0)),
-    cost: nicePrice(i.price * terms.mult),
-    available: !terms.refuses && !!terms.allow[i.grade],
+  const inverse = !!SHOP_TYPES[shop.type]?.inverse; // the black market likes those the law doesn't
+  const terms = renownTerms(inverse ? -score : score);
+  const myHaggle = S.haggles.find((x) => x.shopId === shop.id && x.week === week && x.uid === S.store.uid) || null;
+  const haggleMult = myHaggle?.mult ?? 1;
+  const overrides = shop.priceOverrides || {};
+  const house = (shop.extras || []).filter((x) => x.name).map((x) => ({
+    key: `house:${x.name}`, name: x.name, grade: 'standard', price: Number(x.price) || 0,
+    qty: x.qty === '' || x.qty == null ? null : Number(x.qty), service: x.qty === '' || x.qty == null, house: true,
   }));
-  return { week, nextRestock, items, rn, score, terms };
+  const items = [...house, ...generateStock(shop, week)].map((i) => {
+    const price = overrides[i.key] != null ? Number(overrides[i.key]) : i.price;
+    return {
+      ...i, price,
+      left: i.qty == null ? Infinity : Math.max(0, i.qty - (sold.get(i.key) || 0)),
+      cost: nicePrice(price * terms.mult * haggleMult),
+      available: !terms.refuses && !!terms.allow[i.grade],
+    };
+  });
+  return { week, nextRestock, items, rn, score, terms, inverse, myHaggle };
 }
 
 const daysUntil = (t) => {
@@ -1547,15 +1561,17 @@ function shopView() {
   const sales = S.purchases.filter((p) => p.shopId === shop.id).sort((a, b) => b.at - a.at).slice(0, 8);
 
   const buy = async (item) => {
-    const answer = prompt(`How many "${item.name}"? (${item.left} in stock, ${formatPrice(item.cost)} each)`, '1');
+    const max = Number.isFinite(item.left) ? item.left : 1000;
+    const answer = prompt(`How many "${item.name}"? (${Number.isFinite(item.left) ? `${item.left} in stock, ` : ''}${formatPrice(item.cost)} each)`, '1');
     if (answer == null) return;
     const qty = parseInt(answer, 10);
-    if (!(qty > 0) || qty > item.left) { toast(`Enter a number from 1 to ${item.left}.`); return; }
+    if (!(qty > 0) || qty > max) { toast(`Enter a number from 1 to ${max}.`); return; }
     const total = Math.round(item.cost * qty * 100) / 100;
     if (!confirm(`Buy ${qty} × ${item.name} from ${shop.name} for ${formatPrice(total)}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
     const buyer = myName() || S.store.displayName || 'A party member';
     try {
-      await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer });
+      const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
+      await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer, ...extra });
       toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}. It’s on the ledger.`);
     } catch (e) { toast('Could not buy: ' + e.message); }
   };
@@ -1576,13 +1592,16 @@ function shopView() {
         st.terms.refuses || st.items.some((i) => !i.available) ? st.terms.note : '',
         !st.terms.refuses && pct ? `Prices ${pct}% ${st.terms.mult < 1 ? 'lower' : 'higher'}.` : '',
       ].filter(Boolean).join(' ') || 'Ordinary prices; everything on the shelves is for sale.' })),
+    st.inverse ? h('p', { class: 'muted shop-restock', text: 'A black market: the less the law likes you, the better they treat you.' }) : null,
+    haggleBox(shop, st),
     h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
     st.items.length ? h('table', { class: 'stock' },
       h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
       h('tbody', {}, st.items.map((i) => h('tr', { class: `${i.grade}${i.available ? '' : ' unavailable'}${i.left ? '' : ' sold-out'}` },
         h('td', {}, h('span', { text: i.name }), i.grade !== 'standard' ? h('span', { class: `grade ${i.grade}`, text: i.grade === 'rare' ? 'under the counter' : 'fine' }) : null,
+          i.house ? h('span', { class: 'grade house', text: 'house special' }) : null,
           !i.available && !st.terms.refuses ? h('small', { text: 'Not for you, not yet' }) : null),
-        h('td', { class: 'num', text: i.left || '—' }),
+        h('td', { class: 'num', text: !Number.isFinite(i.left) ? (i.service ? 'service' : '\u221e') : i.left || '\u2014' }),
         h('td', { class: 'num' },
           i.cost !== i.price ? h('s', { text: formatPrice(i.price) }) : null,
           h('span', { text: formatPrice(i.cost) })),
@@ -1599,6 +1618,155 @@ function shopView() {
       h('ul', { class: 'sales' }, sales.map((p) => h('li', { text: `${p.buyer}: ${p.qty} × ${p.itemName}, ${formatPrice(p.total)} · ${ago(p.at)}` })))) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
     notesSection('shop', shop.id));
+}
+
+// Haggling: once per player, per shop, per week. Good rolls knock prices down, bad ones push them up.
+function haggleBox(shop, st) {
+  if (st.terms.refuses) return null;
+  if (isDM()) {
+    const tries = S.haggles.filter((x) => x.shopId === shop.id && x.week === st.week).sort((a, b) => b.at - a.at);
+    return tries.length ? h('div', { class: 'haggle dm' },
+      h('strong', { text: 'Haggling this week' }),
+      h('ul', {}, tries.map((x) => h('li', {},
+        `${x.buyer}: ${rollText(x)}. ${haggleResult(x.roll).text} `,
+        h('button', { class: 'linklike', text: 'reset', title: 'Let them try again', onclick: () => S.store.deleteHaggle(x.id).catch((e) => toast(e.message)) }))))) : null;
+  }
+  if (st.myHaggle) {
+    const x = st.myHaggle, res = haggleResult(x.roll);
+    return h('div', { class: `haggle ${res.mult < 1 ? 'pos' : res.mult > 1 ? 'neg' : 'neu'}` },
+      h('span', { class: `d20 still${x.die === 20 ? ' crit' : x.die === 1 ? ' fumble' : ''}`, text: x.die ?? '?' }),
+      h('div', {},
+        h('strong', { text: `You haggled: ${rollText(x)}.` }), ' ', res.text,
+        h('small', { text: ' Applies to your purchases here until the stock refreshes.' })));
+  }
+  const me = S.players.find((p) => p.id === S.store.uid);
+  const die = h('span', { class: 'd20', text: '20', 'aria-hidden': 'true' });
+  const box = h('div', { class: 'haggle' },
+    die,
+    h('div', {},
+      h('button', { class: 'btn small ghost', type: 'button', text: '\u2696 Haggle (once this week)', onclick: (e) => haggle(e.currentTarget) }),
+      h('small', { text: me
+        ? ` Rolls a d20 + your Persuasion (${signed(me.persuasion)}). Good rolls lower your prices here this week; bad ones raise them.`
+        : ' Rolls a d20 + your Persuasion. Good rolls lower your prices here this week; bad ones raise them.' })));
+  async function haggle(btn) {
+    let bonus = me?.persuasion;
+    if (bonus == null) {
+      const answer = prompt('What is your character\u2019s Persuasion bonus? (e.g. 3, or -1)\n\nYou only set this once; after that your DM keeps it up to date.');
+      if (answer == null) return;
+      bonus = parseInt(String(answer).replace('+', ''), 10);
+      if (!Number.isFinite(bonus) || bonus < -5 || bonus > 20) { toast('Enter your Persuasion bonus as a number, e.g. 3.'); return; }
+      try { await S.store.savePlayer({ name: myName() || S.store.displayName || 'A party member', persuasion: bonus, setAt: Date.now() }); }
+      catch (err) { toast('Could not save your bonus: ' + err.message); return; }
+    }
+    btn.disabled = true;
+    const roll = await tumble(die); // the atlas rolls the d20
+    const total = roll + bonus, res = haggleResult(total);
+    try {
+      await S.store.addHaggle({ shopId: shop.id, week: st.week, die: roll, bonus, roll: total, mult: res.mult, buyer: myName() || S.store.displayName || 'A party member' });
+      const said = rollText({ die: roll, bonus, roll: total });
+      toast(`${said[0].toUpperCase()}${said.slice(1)}. ${res.text}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message.includes('already') ? err.message : 'Could not haggle: ' + err.message);
+    }
+  }
+  return box;
+}
+
+// "rolled 13 + 4 = 17" (or just the total for haggles from before the atlas did the rolling)
+function rollText(x) {
+  if (x.die == null) return `rolled ${x.roll}`;
+  const nat = x.die === 20 ? ' (natural 20!)' : x.die === 1 ? ' (natural 1)' : '';
+  return `rolled ${x.die} ${x.bonus < 0 ? '\u2212' : '+'} ${Math.abs(x.bonus)} = ${x.roll}${nat}`;
+}
+
+// A fair d20, shown tumbling for a moment before it lands.
+function tumble(el) {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  const result = (buf[0] % 20) + 1;
+  return new Promise((resolve) => {
+    if (reduced) { el.textContent = result; resolve(result); return; }
+    el.classList.add('rolling');
+    let n = 0;
+    const spin = setInterval(() => {
+      el.textContent = 1 + Math.floor(Math.random() * 20);
+      if (++n >= 14) {
+        clearInterval(spin);
+        el.textContent = result;
+        el.classList.remove('rolling');
+        el.classList.toggle('crit', result === 20);
+        el.classList.toggle('fumble', result === 1);
+        setTimeout(() => resolve(result), 350);
+      }
+    }, 60);
+  });
+}
+
+// DM: items this shop always stocks, on top of the generated stock.
+function houseSpecialsEditor(extras) {
+  const rows = h('div', { class: 'tier-rows' });
+  const add = (x = { name: '', price: '', qty: '' }) => {
+    const row = h('div', { class: 'special-row' },
+      h('input', { type: 'text', class: 'sp-name', placeholder: 'Item or service, e.g. Crow’s house ale (mug)', value: x.name, maxlength: 80 }),
+      h('input', { type: 'number', class: 'sp-price', placeholder: 'gp', step: '0.01', min: '0', value: x.price }),
+      h('input', { type: 'number', class: 'sp-qty', placeholder: 'per week', step: '1', min: '0', value: x.qty ?? '' }),
+      h('button', { type: 'button', class: 'linklike', text: 'remove', onclick: () => row.remove() }));
+    rows.append(row);
+  };
+  extras.forEach(add);
+  const wrap = h('div', { class: 'field' },
+    h('span', { text: 'House specials' }),
+    h('small', { text: 'Always in stock, every week. Price in gold (0.1 = 1 sp). Leave "per week" blank for a service that never runs out.' }),
+    rows,
+    h('button', { type: 'button', class: 'btn small ghost', text: '+ Add a house special', onclick: () => add() }));
+  wrap.value = () => [...rows.querySelectorAll('.special-row')].map((r) => ({
+    name: r.querySelector('.sp-name').value.trim(),
+    price: Math.max(0, parseFloat(r.querySelector('.sp-price').value) || 0),
+    qty: r.querySelector('.sp-qty').value === '' ? '' : Math.max(0, parseInt(r.querySelector('.sp-qty').value, 10) || 0),
+  })).filter((x) => x.name);
+  return wrap;
+}
+
+// DM: set your own price for anything the generator stocks (sticks whenever that item comes back).
+function priceOverridesEditor(shop) {
+  const current = { ...(shop.priceOverrides || {}) };
+  const items = generateStock(shop, shopWeek(shop).week);
+  const list = h('div', { class: 'override-list' }, items.map((i) => {
+    const input = h('input', { type: 'number', step: '0.01', min: '0', placeholder: String(i.price), value: current[i.key] ?? '', 'data-key': i.key });
+    return h('label', { class: 'override-row' }, h('span', { text: i.name }), input);
+  }));
+  const wrap = h('details', { class: 'legend' },
+    h('summary', { text: 'Set your own prices (this week’s items)' }),
+    h('small', { class: 'muted', text: 'In gold, before renown and haggling. Leave blank to use the generated price. A price you set sticks whenever that item is back in stock.' }),
+    list);
+  wrap.value = () => {
+    const out = { ...current };
+    for (const input of list.querySelectorAll('input')) {
+      if (input.value === '') delete out[input.dataset.key];
+      else out[input.dataset.key] = Math.max(0, parseFloat(input.value) || 0);
+    }
+    return out;
+  };
+  return wrap;
+}
+
+// DM: each player's Persuasion bonus, as used for haggling. Players set it once; you keep it current.
+function partyBonuses() {
+  const players = [...S.players].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return h('details', { class: 'legend party' },
+    h('summary', { text: `Party Persuasion (${players.length})` }),
+    players.length ? h('ul', {}, players.map((p) => {
+      const input = h('input', { type: 'number', min: -5, max: 20, step: 1, value: p.persuasion, 'aria-label': `${p.name} Persuasion bonus` });
+      return h('li', {},
+        h('span', { text: p.name || 'A party member' }),
+        input,
+        h('button', { class: 'btn small ghost', type: 'button', text: 'Save', onclick: async () => {
+          const v = parseInt(input.value, 10);
+          if (!Number.isFinite(v)) return;
+          await S.store.savePlayer({ persuasion: v }, p.id).then(() => toast(`${p.name}: Persuasion ${signed(v)}.`)).catch((e) => toast(e.message));
+        } }));
+    })) : h('p', { class: 'muted', text: 'Players appear here the first time they haggle.' }));
 }
 
 // ─── shop generator (DM) ────────────────────────────────────────────
@@ -1620,7 +1788,7 @@ function shopGenView() {
   const desc = h('textarea', { rows: 2 }); desc.value = d.description;
   const addPerson = h('input', { type: 'checkbox', checked: true });
   const addPin = h('input', { type: 'checkbox', checked: ref.startsWith('page:') });
-  const hidden = h('input', { type: 'checkbox' });
+  const hidden = h('input', { type: 'checkbox', checked: !!SHOP_TYPES[d.type]?.hiddenByDefault });
   const preview = stockFor({ ...d, id: '__preview', createdAt: Date.now(), restockOffset: 0, location: ref });
   return h('div', { class: 'codex editor' },
     h('h2', { class: 'codex-title', text: 'Generate a shop' }),
@@ -1668,16 +1836,21 @@ function shopEditView() {
   const desc = h('textarea', { rows: 3 }); desc.value = shop.description || '';
   const size = h('select', {}, SIZES.map((s) => h('option', { value: s.id, selected: s.id === shop.size, text: s.name })));
   const hidden = h('input', { type: 'checkbox', checked: !!shop.hidden });
+  const specials = houseSpecialsEditor(shop.extras || []);
+  const overrides = priceOverridesEditor(shop);
   return h('div', { class: 'codex editor' },
     h('h2', { class: 'codex-title', text: 'Edit shop' }),
     field('Shop name', name),
     field('Description', desc),
     field('Settlement size', size, 'Changing the size changes what the shop stocks from now on.'),
+    specials,
+    overrides,
     h('label', { class: 'check' }, hidden, ' Hidden from players'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
         try {
-          await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked }, shop.id);
+          await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked,
+            extras: specials.value(), priceOverrides: overrides.value() }, shop.id);
           const pin = shop.pinId && pinById(shop.pinId);
           if (pin && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
           openShop(shop.id);
@@ -1749,6 +1922,7 @@ function marketView() {
     const onlyOpen = S.panel.onlyOpen ?? true;
     const mine = (p) => p.buyerUid === S.store.uid;
     const list = S.purchases.filter((p) => (isDM() ? (!onlyOpen || !p.settled) : mine(p))).sort((a, b) => b.at - a.at);
+    const haggles = S.haggles.filter((x) => isDM() || x.uid === S.store.uid).sort((a, b) => b.at - a.at).slice(0, 20);
     const owed = list.filter((p) => !p.settled).reduce((n, p) => n + p.total, 0);
     body = [
       isDM() ? h('div', { class: 'ledger-bar' },
@@ -1762,7 +1936,7 @@ function marketView() {
         const shop = shopById(p.shopId);
         return h('li', { class: p.settled ? 'settled' : '' },
           h('div', { class: 'ledger-main' },
-            h('strong', { text: `${p.qty} × ${p.itemName}` }),
+            h('strong', { text: `${p.qty} \u00d7 ${p.itemName}${p.haggle ? ` (haggled ${p.haggle < 1 ? '\u2212' : '+'}${Math.round(Math.abs(1 - p.haggle) * 100)}%)` : ''}` }),
             h('span', { class: 'ledger-total', text: formatPrice(p.total) })),
           h('div', { class: 'ledger-meta' },
             h('span', { text: isDM() ? p.buyer : 'You' }), ' · ',
@@ -1774,7 +1948,13 @@ function marketView() {
             h('button', { class: 'linklike', text: 'void', title: 'Undo this purchase (returns the stock)', onclick: async () => {
               if (confirm(`Void ${p.buyer}'s purchase of ${p.qty} × ${p.itemName}? The items go back on the shelf.`)) await S.store.deletePurchase(p.id).catch((e) => toast(e.message));
             } })) : null);
-      })) : h('p', { class: 'muted', text: isDM() ? 'Nothing to settle.' : 'You haven’t bought anything yet.' }),
+      })) : h('p', { class: 'muted', text: isDM() ? 'Nothing to settle.' : 'You haven\u2019t bought anything yet.' }),
+      haggles.length ? h('details', { class: 'legend' },
+        h('summary', { text: `Haggling (${haggles.length})` }),
+        h('ul', { class: 'sales' }, haggles.map((x) => h('li', {
+          text: `${isDM() ? x.buyer : 'You'} at ${shopById(x.shopId)?.name || '(closed shop)'}: ${rollText(x)}. ${haggleResult(x.roll).text} \u00b7 ${ago(x.at)}`,
+        })))) : null,
+      isDM() ? partyBonuses() : null,
     ];
   }
   return h('div', { class: 'codex' },

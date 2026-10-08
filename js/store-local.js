@@ -37,6 +37,8 @@ export class LocalStore {
     this.db.config ||= {};
     this.db.shops ||= {};
     this.db.purchases ||= {};
+    this.db.haggles ||= {};
+    this.db.players ||= {};
   }
 
   persist() {
@@ -56,6 +58,8 @@ export class LocalStore {
     this.handlers.renownTiers?.(this.db.config.renown?.tiers || null);
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
+    this.handlers.haggles?.(rows(this.db.haggles).filter((x) => dm || x.uid === this.uid));
+    this.handlers.players?.(rows(this.db.players).filter((x) => dm || x.id === this.uid));
     if (dm) this.handlers.secrets?.(rows(this.db.secrets));
   }
 
@@ -151,6 +155,23 @@ export class LocalStore {
   async addPurchase(p) { this.db.purchases[rid()] = { ...p, buyerUid: this.uid, at: Date.now(), settled: false }; this.persist(); }
   async updatePurchase(id, data) { Object.assign(this.db.purchases[id], data); this.persist(); }
   async deletePurchase(id) { delete this.db.purchases[id]; this.persist(); }
+
+  // one haggle per player, per shop, per week (the id makes a second attempt impossible)
+  async addHaggle(x) {
+    const id = `${x.shopId}__${this.uid}__${x.week}`;
+    if (this.db.haggles[id]) throw new Error('You already haggled here this week.');
+    this.db.haggles[id] = { ...x, uid: this.uid, at: Date.now() };
+    this.persist();
+  }
+
+  async deleteHaggle(id) { delete this.db.haggles[id]; this.persist(); }
+
+  // a player's own record (their Persuasion bonus); players set it once, the DM can change it
+  async savePlayer(data, uid = this.uid) {
+    if (this.db.players[uid] && !this.isDM) throw new Error('Only the DM can change that now.');
+    this.db.players[uid] = { ...this.db.players[uid], ...data };
+    this.persist();
+  }
 
   async getPicture(id) { return this.db.pictures[id]?.data ?? null; }
 

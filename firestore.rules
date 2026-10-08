@@ -86,13 +86,40 @@ service cloud.firestore {
     match /purchases/{id} {
       allow read: if isPlayer();
       allow create: if isPlayer()
-        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemKey', 'itemName', 'qty', 'unitPrice', 'total', 'buyer', 'buyerUid', 'at', 'settled'])
+        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemKey', 'itemName', 'qty', 'unitPrice', 'total', 'buyer', 'buyerUid', 'at', 'settled', 'haggle'])
         && request.resource.data.buyerUid == request.auth.uid
         && request.resource.data.shopId is string
         && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.buyer is string && request.resource.data.buyer.size() <= 60
         && request.resource.data.settled == false;
+      allow update, delete: if isDM();
+    }
+
+    // Haggling: one attempt per player, per shop, per week (the id is shop__player__week, and
+    // there's no update rule, so a second attempt is refused). Only the DM can reset one.
+    match /haggles/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
+      allow create: if isPlayer()
+        && id == request.resource.data.shopId + '__' + request.auth.uid + '__' + string(request.resource.data.week)
+        && request.resource.data.keys().hasOnly(['shopId', 'week', 'uid', 'buyer', 'roll', 'die', 'bonus', 'mult', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        // the atlas rolls the d20; the bonus must be the one on record and the total must add up
+        && request.resource.data.die is int && request.resource.data.die >= 1 && request.resource.data.die <= 20
+        && request.resource.data.bonus == get(/databases/$(database)/documents/players/$(request.auth.uid)).data.persuasion
+        && request.resource.data.roll == request.resource.data.die + request.resource.data.bonus
+        && request.resource.data.mult is number && request.resource.data.mult >= 0.8 && request.resource.data.mult <= 1.2;
+      allow delete: if isDM();
+    }
+
+    // Each player's record: their Persuasion bonus for haggling. A player sets it once;
+    // after that only the DM can change it.
+    match /players/{uid} {
+      allow read: if isDM() || (isPlayer() && request.auth.uid == uid);
+      allow create: if isPlayer() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'persuasion', 'setAt'])
+        && request.resource.data.persuasion is int && request.resource.data.persuasion >= -5 && request.resource.data.persuasion <= 20
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60;
       allow update, delete: if isDM();
     }
 
