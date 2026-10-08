@@ -65,6 +65,11 @@ export class FirebaseStore {
       (s) => h.renownLog?.(list(s)), err);
     onSnapshot(this.ref('config', 'renown'), (s) => h.renownTiers?.(s.exists() ? s.data().tiers : null), err);
 
+    // Shops (hidden ones are the DM's) and every purchase made in them.
+    onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
+      (s) => h.shops?.(list(s)), err);
+    onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
+
     onSnapshot(this.isDM ? this.col('people') : query(this.col('people'), where('hidden', '==', false)),
       (s) => h.people?.(list(s)), err);
 
@@ -185,6 +190,19 @@ export class FirebaseStore {
   }
 
   saveRenownTiers(tiers) { return this.F.setDoc(this.ref('config', 'renown'), { tiers }); }
+
+  // ── shops and their purchase ledger
+  async saveShop(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('shops'), { hidden: false, createdAt: Date.now(), ...data })).id;
+    await setDoc(this.ref('shops', id), data, { merge: true });
+    return id;
+  }
+
+  deleteShop(id) { return this.F.deleteDoc(this.ref('shops', id)); }
+  addPurchase(p) { return this.F.addDoc(this.col('purchases'), { ...p, buyerUid: this.uid, at: Date.now(), settled: false }); }
+  updatePurchase(id, data) { return this.F.updateDoc(this.ref('purchases', id), data); }
+  deletePurchase(id) { return this.F.deleteDoc(this.ref('purchases', id)); }
 
   async getPicture(id) {
     try {

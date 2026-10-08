@@ -809,3 +809,61 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
   .icon-btn { width: 34px; height: 34px; }
   .icon-btn svg { width: 17px; height: 17px; }
 }
+
+/* ─── shops ──────────────────────────────────────────────────────── */
+.shop-seal { background: radial-gradient(circle at 38% 32%, #f0d596, #c9a24a 60%, #7a5a1a) !important; }
+.shop-seal svg { fill: #3a2819 !important; }
+.shop-keeper { margin: 8px 0; font-size: 17px; }
+.shop-keeper em { color: var(--ink-soft); }
+.shop-terms {
+  display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; padding: 8px 12px; border-radius: 6px; font-size: 16px;
+  background: rgba(255, 252, 240, .55); border: 1px solid rgba(90, 60, 25, .25); border-left: 4px solid var(--parch-edge);
+}
+.shop-terms.pos { border-left-color: #7a9440; }
+.shop-terms.neg { border-left-color: #a33a22; }
+.shop-restock { margin: 4px 0 8px; font-size: 15px; }
+
+table.stock { width: 100%; border-collapse: collapse; font-size: 16px; margin: 4px 0 12px; }
+table.stock th { text-align: left; font: 700 11px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); padding: 4px 4px; border-bottom: 1px solid rgba(90, 60, 25, .35); }
+table.stock td { padding: 6px 4px; border-bottom: 1px solid rgba(90, 60, 25, .14); vertical-align: middle; }
+table.stock td:first-child { line-height: 1.25; }
+table.stock td small { display: block; font-size: 13px; color: var(--wax); font-style: italic; }
+table.stock .num { text-align: right; white-space: nowrap; }
+table.stock .num s { display: block; font-size: 12px; color: var(--ink-faint); }
+table.stock td:last-child { text-align: right; width: 1%; }
+table.stock tr.unavailable td:not(:last-child), table.stock tr.sold-out td:not(:last-child) { opacity: .5; }
+table.stock tr.rare td:first-child > span:first-child { font-weight: 700; }
+.grade { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font: 700 10px var(--f-head); letter-spacing: .08em; text-transform: uppercase; vertical-align: 1px; }
+.grade.fine { background: rgba(75, 95, 134, .15); color: #3d4f73; }
+.grade.rare { background: rgba(201, 164, 92, .3); color: #6d5020; }
+ul.sales { list-style: none; padding: 0; margin: 6px 0 0; columns: 1 !important; }
+ul.sales li { padding: 3px 0; font-size: 15px; border-bottom: 1px dashed rgba(90, 60, 25, .15); }
+
+.gen-pickers { align-items: flex-start; }
+.gen-pickers .field { flex: 1; min-width: 140px; }
+
+.tabs { display: flex; gap: 4px; margin: 6px 0 12px; border-bottom: 1px solid rgba(90, 60, 25, .3); }
+.tabs button { padding: 7px 14px; border: 0; border-bottom: 3px solid transparent; background: none; font: 700 13px var(--f-head); letter-spacing: .06em; color: var(--ink-soft); }
+.tabs button.on { color: var(--wax); border-bottom-color: var(--wax); }
+.market-place { margin: 12px 0 4px; font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); border-bottom: 1px solid rgba(90, 60, 25, .25); padding-bottom: 3px; }
+
+.ledger-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ledger-sum { margin: 6px 0; font: 700 14px var(--f-head); color: var(--ink-soft); }
+ol.ledger { list-style: none; padding: 0; margin: 0; }
+ol.ledger li { padding: 8px 4px; border-bottom: 1px solid rgba(90, 60, 25, .18); }
+ol.ledger li.settled { opacity: .6; }
+.ledger-main { display: flex; justify-content: space-between; gap: 10px; font-size: 16px; }
+.ledger-total { font: 700 15px var(--f-head); white-space: nowrap; }
+.ledger-meta { font-size: 14px; color: var(--ink-faint); }
+.ledger-meta .linklike { font-size: 14px; }
+.ledger-actions { display: flex; gap: 14px; align-items: center; margin-top: 4px; font-size: 14px; }
+.ledger-actions .check { font-size: 14px; }
+.settled-tag { margin-left: 6px; background: #6f8a3c !important; }
+
+@media (max-width: 760px) {
+  .tools { gap: 2px; }
+  .icon-btn { width: 32px; height: 32px; }
+  .icon-btn svg { width: 16px; height: 16px; }
+  table.stock { font-size: 15px; }
+}
+.shop-keeper a.wiki { color: var(--wax); font-weight: 700; text-decoration: none; border-bottom: 1px solid currentColor; }

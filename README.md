@@ -67,6 +67,17 @@ git commit -m "Describe the change"
 git push
 ```
 
+## Shops
+
+**Generate one (DM):** open a town pin or a map's About panel, click **+ Generate a shop here**, pick the kind of shop and the settlement size, reroll until you like it, then **Save shop**. You can add the proprietor to People and drop a pin for the shop on the map.
+
+- **Size sets the stock:** hamlets carry a few plain goods; cities carry more, finer goods (“fine”) and rare finds (“under the counter”).
+- **Weekly restock:** stock refreshes every 7 days from when the shop was created, by itself. **Restock now** forces it.
+- **Renown matters:** the nearest tracked standing (the town, then its map, then the dukedom) sets prices (+10 is 25% off, −10 is 60% more). Below 0 the fine goods are held back; from +3 the rare goods appear; at Reviled (−7 or lower) they won’t trade at all.
+- **Buying:** anyone can click **Buy**. Stock goes down and the purchase goes in the **Market → Ledger** (DM) / **My purchases** (players). Tick **Settled** once you’ve taken the gold; **void** undoes a purchase and returns the stock.
+
+Item names and prices follow the D&D 5e SRD 5.1 (CC BY 4.0); magic item prices are suggestions.
+
 ## Who's signed in, and locking it to your party
 
 Firebase keeps the list for you: **Authentication → Users** shows every Google account that has signed in, with first and last sign-in dates.

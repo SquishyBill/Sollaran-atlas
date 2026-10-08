@@ -35,6 +35,8 @@ export class LocalStore {
     this.db.renown ||= {};
     this.db.renownLog ||= {};
     this.db.config ||= {};
+    this.db.shops ||= {};
+    this.db.purchases ||= {};
   }
 
   persist() {
@@ -52,6 +54,8 @@ export class LocalStore {
     this.handlers.renown?.(rows(this.db.renown).filter((r) => dm || !r.hidden));
     this.handlers.renownLog?.(rows(this.db.renownLog).filter((l) => dm || !l.hidden));
     this.handlers.renownTiers?.(this.db.config.renown?.tiers || null);
+    this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
+    this.handlers.purchases?.(rows(this.db.purchases));
     if (dm) this.handlers.secrets?.(rows(this.db.secrets));
   }
 
@@ -134,6 +138,19 @@ export class LocalStore {
   }
 
   async saveRenownTiers(tiers) { this.db.config.renown = { tiers }; this.persist(); }
+
+  // ── shops and their purchase ledger
+  async saveShop(data, id) {
+    if (!id) { id = 'shop-' + rid(); this.db.shops[id] = { hidden: false, createdAt: Date.now() }; }
+    Object.assign(this.db.shops[id], data);
+    this.persist();
+    return id;
+  }
+
+  async deleteShop(id) { delete this.db.shops[id]; this.persist(); }
+  async addPurchase(p) { this.db.purchases[rid()] = { ...p, buyerUid: this.uid, at: Date.now(), settled: false }; this.persist(); }
+  async updatePurchase(id, data) { Object.assign(this.db.purchases[id], data); this.persist(); }
+  async deletePurchase(id) { delete this.db.purchases[id]; this.persist(); }
 
   async getPicture(id) { return this.db.pictures[id]?.data ?? null; }
 

@@ -1,5 +1,6 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek } from './shop-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -47,6 +48,7 @@ const KINDS = {
   quest: { label: 'Quest', color: '#b8862b', icon: '<path d="M12 2.5l2.9 6 6.6.8-4.9 4.5 1.3 6.5L12 17l-5.9 3.3 1.3-6.5-4.9-4.5 6.6-.8z"/>' },
   camp: { label: 'Camp & Hideout', color: '#6b4f2a', icon: '<path d="M12 3L2 21h7.5L12 15l2.5 6H22z"/>' },
   place: { label: 'Landmark', color: '#6d3b4f', icon: '<circle cx="12" cy="12" r="5.5"/>' },
+  shop: { label: 'Shop', color: '#8a5d14', icon: '<path d="M9 3h6l-1.5 3h-3zM6.5 7.5h11c2 2.4 3 5 3 7.8C20.5 19 17 21 12 21s-8.5-2-8.5-5.7c0-2.8 1-5.4 3-7.8zM12 10v8M14.3 11.6c-.6-.6-1.4-.9-2.3-.9-1.3 0-2.3.7-2.3 1.7 0 2.3 4.6 1.2 4.6 3.4 0 1-1 1.7-2.3 1.7-1 0-1.9-.4-2.5-1" fill-rule="evenodd"/>' },
 };
 const kindOf = (p) => KINDS[p.kind] || KINDS.place;
 const glyph = (k, size = 16) =>
@@ -57,6 +59,7 @@ const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
   renown: [], renownLog: [], renownTiers: null,
+  shops: [], purchases: [], placeShop: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -115,7 +118,7 @@ async function boot() {
   if (S.store.mode === 'local') $('#demoRibbon').hidden = false;
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, ping: onPing, error: onError });
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, shops: onShops, purchases: onPurchases, ping: onPing, error: onError });
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -234,7 +237,12 @@ function onPins(list) {
 function refreshRenownViews() {
   if (['renown', 'renownDetail', 'about', 'people'].includes(S.panel?.type)) renderPanel();
 }
-function onRenown(list) { S.renown = list; refreshRenownViews(); }
+function onRenown(list) { S.renown = list; refreshRenownViews(); if (['shop', 'shopGen'].includes(S.panel?.type)) renderPanel(); }
+function onShops(list) {
+  S.shops = list;
+  if (['shop', 'market', 'pin', 'about'].includes(S.panel?.type)) renderPanel();
+}
+function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
 function onRenownLog(list) { S.renownLog = list; if (S.panel?.type === 'renownDetail') renderPanel(); }
 function onRenownTiers(tiers) { S.renownTiers = tiers; refreshRenownViews(); }
 
@@ -478,6 +486,7 @@ function setupMap() {
   S.map.on('click', (e) => {
     if (!S.imgSize) return;
     if (S.pingMode) { ping(e.latlng); return; }
+    if (S.placeShop && isDM()) { placeShopPin(fromLatLng(e.latlng)); return; }
     if (S.edit && isDM()) { openPinEditor(null, fromLatLng(e.latlng)); return; }
     if (S.panel?.type === 'pin') closePanel();
   });
@@ -680,10 +689,11 @@ function setEdit(on) {
 function modeHint() {
   const hint = $('#modeHint');
   const text = S.pingMode ? 'Click the map to ping that spot for everyone. Press Esc to cancel.'
+    : S.placeShop ? `Click the map where ${shopById(S.placeShop)?.name || 'the shop'} stands. Press Esc to skip.`
     : S.edit ? 'Edit mode: click the map to add a location. Drag pins to move them.' : '';
   hint.textContent = text;
   hint.classList.toggle('show', !!text);
-  $('#mapWrap').classList.toggle('crosshair', S.pingMode || S.edit);
+  $('#mapWrap').classList.toggle('crosshair', S.pingMode || S.edit || !!S.placeShop);
 }
 
 // ─── the codex panel ────────────────────────────────────────────────
@@ -696,7 +706,7 @@ function openPin(id, { fly } = {}) {
     return;
   }
   S.pinId = id;
-  S.panel = { type: 'pin', id };
+  S.panel = pin.shopId && shopById(pin.shopId) ? { type: 'shop', id: pin.shopId } : { type: 'pin', id };
   renderPanel();
   highlightPin();
   updateHash();
@@ -737,7 +747,8 @@ function renderPanel() {
   body.replaceChildren();
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
-    renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView };
+    renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -775,7 +786,9 @@ function pinView() {
       h('button', { class: 'btn ghost', text: 'Copy link', onclick: () => copyLink(p) }),
       isDM() ? h('button', { class: 'btn ghost', text: 'Edit', onclick: () => openPinEditor(p.id) }) : null),
     h('div', { class: 'prose', html: md(p.body) || '<p class="muted">Nothing is known of this place… yet.</p>' }),
+    SETTLEMENT_KINDS.includes(p.kind) ? renownCard(`pin:${p.id}`) : null,
     peopleHere(peopleAt('pin', p.id), `pin:${p.id}`),
+    shopsHere(shopsAt('pin', p.id), `pin:${p.id}`),
     secretBox(p.id),
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
     notesSection('pin', p.id));
@@ -792,6 +805,7 @@ function aboutView() {
       h('button', { class: 'btn ghost', text: 'Edit page', onclick: () => openPageEditor(page.id) })) : null,
     page.type === 'map' ? h('div', { class: 'prose', html: md(page.body) }) : null,
     peopleHere(peopleAt('page', page.id), `page:${page.id}`),
+    shopsHere(shopsAt('page', page.id), `page:${page.id}`),
     secretBox(page.id),
     page.type === 'map' && pinsOn(page.id).length ? legend(page) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
@@ -1193,7 +1207,8 @@ const RENOWN_MIN = -10, RENOWN_MAX = 10;
 const DEFAULT_TIERS = [
   { name: 'Reviled', min: -10, text: 'Guards may arrest you on sight, no one will trade with you, and there may be a price on your heads.' },
   { name: 'Distrusted', min: -6, text: 'Prices are higher, doors close in your faces, and the Watch keeps an eye on you.' },
-  { name: 'Unknown', min: -2, text: 'Nobody knows your names. Ordinary prices and ordinary treatment.' },
+  { name: 'Disliked', min: -2, text: 'Folk are cool toward you: the worse price, the slower service, and never the benefit of the doubt.' },
+  { name: 'Unknown', min: 0, text: 'Nobody knows your names. Ordinary prices and ordinary treatment.' },
   { name: 'Respected', min: 3, text: 'Locals share rumors and lend a hand; small favors come easily.' },
   { name: 'Honored', min: 7, text: 'Discounts, free lodging, and an audience with the local leaders when you ask.' },
   { name: 'Exalted', min: 10, text: 'Heroes here. People will take real risks on your behalf.' },
@@ -1219,6 +1234,10 @@ function renownTarget(key) {
   if (type === 'page') {
     const page = pageById(id);
     return page && { label: page.title, sub: page._parent ? `in ${pageById(page._parent)?.title.replace(/^Dukedom of /, '')}` : 'Place', go: () => { goToPage(id); setTimeout(openAbout, 600); } };
+  }
+  if (type === 'pin') {
+    const pin = pinById(id), page = pin && pageById(pin.pageId);
+    return page && { label: pin.title, sub: `in ${page.title.replace(/^Dukedom of /, '')}`, go: () => openPin(id, { fly: true }) };
   }
   const exists = S.people.some((p) => { const g = normGroup(p.group); return g === id || g.startsWith(id + GROUP_SEP); });
   return exists && { label: groupLabel(id), sub: 'Group', go: openPeople };
@@ -1288,6 +1307,10 @@ function renownView() {
       h('option', { value: '', text: 'Choose a place or group…' }),
       h('optgroup', { label: 'Places' }, S.pages.filter((p) => !tracked.has(`page:${p.id}`)).map((p) =>
         h('option', { value: `page:${p.id}`, text: `${' '.repeat(p._depth)}${p.title}` }))),
+      h('optgroup', { label: 'Towns & cities on maps' }, S.pins
+        .filter((p) => SETTLEMENT_KINDS.includes(p.kind) && pageById(p.pageId) && !tracked.has(`pin:${p.id}`))
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map((p) => h('option', { value: `pin:${p.id}`, text: `${p.title} (${pageById(p.pageId).title.replace(/^Dukedom of /, '')})` }))),
       groups.length ? h('optgroup', { label: 'Groups' }, groups.filter((g) => !tracked.has(`group:${g}`)).map((g) =>
         h('option', { value: `group:${g}`, text: groupLabel(g) }))) : null);
     picker = h('div', { class: 'renown-start' }, sel,
@@ -1421,6 +1444,344 @@ function renownTiersView() {
         catch (e) { toast('Could not save: ' + e.message); }
       } }),
       h('button', { class: 'linklike', type: 'button', text: 'Reset to defaults', onclick: () => { rows.replaceChildren(); DEFAULT_TIERS.forEach(addRow); } })));
+}
+
+// ─── shops ──────────────────────────────────────────────────────────
+// Generated shops live at a place ("pin:<id>" or "page:<id>"). Their stock is generated from
+// the shop's seed and the current week (see shop-data.js), so it restocks itself every 7 days
+// on every device. Purchases are recorded in a ledger and subtracted from that week's stock.
+// The party's renown where the shop is changes its prices and what it will sell.
+const shopById = (id) => S.shops.find((s) => s.id === id);
+const SETTLEMENT_KINDS = ['city', 'town'];
+const shortTitle = (t) => t.replace(/^Dukedom of /, '');
+// The great cities: shops here start out as Metropolis (the size can still be changed when generating).
+const METROPOLISES = ['Solvarig', 'Saubantch'];
+
+// A place's name, the map it's on, and a sensible settlement size for a new shop there.
+function placeOf(ref) {
+  if (!ref) return null;
+  if (ref.startsWith('pin:')) {
+    const pin = pinById(ref.slice(4)), page = pin && pageById(pin.pageId);
+    if (!pin || !page) return null;
+    const size = METROPOLISES.includes(pin.title) ? 5 : pin.kind === 'city' ? 4 : pin.kind === 'town' ? 2 : 1;
+    return { label: pin.title, sub: shortTitle(page.title), pageId: page.id, group: `${shortTitle(page.title)}${GROUP_SEP}${pin.title}`, size, go: () => openPin(pin.id, { fly: true }) };
+  }
+  const page = pageById(ref.slice(5));
+  return page && { label: page.title, sub: page._parent ? shortTitle(pageById(page._parent)?.title || '') : 'Map', pageId: page.id, group: shortTitle(page.title),
+    size: METROPOLISES.includes(shortTitle(page.title)) ? 5 : 3, go: () => goToPage(page.id) };
+}
+
+// The nearest tracked standing: the place itself, then the map it's on, then that map's parents.
+// (Hidden standings aren't sent to players, so they don't affect prices.)
+function renownAt(ref) {
+  const chain = [ref];
+  const pageId = ref.startsWith('pin:') ? pinById(ref.slice(4))?.pageId : ref.slice(5);
+  if (pageId) {
+    if (ref.startsWith('pin:')) chain.push(`page:${pageId}`);
+    chain.push(...ancestorsOf(pageId).map((id) => `page:${id}`));
+  }
+  for (const key of chain) {
+    const r = renownFor(key);
+    if (r && (!r.hidden || isDM())) return { r, key };
+  }
+  return null;
+}
+
+function shopsAt(type, id) {
+  return S.shops.filter((s) => s.location === `${type}:${id}`
+    || (type === 'page' && s.location.startsWith('pin:') && pinById(s.location.slice(4))?.pageId === id));
+}
+
+function stockFor(shop) {
+  const { week, nextRestock } = shopWeek(shop);
+  const sold = new Map();
+  for (const p of S.purchases) if (p.shopId === shop.id && p.week === week) sold.set(p.itemKey, (sold.get(p.itemKey) || 0) + p.qty);
+  const rn = renownAt(shop.location);
+  const score = rn?.r.score ?? 0;
+  const terms = renownTerms(score);
+  const items = generateStock(shop, week).map((i) => ({
+    ...i, left: Math.max(0, i.qty - (sold.get(i.key) || 0)),
+    cost: nicePrice(i.price * terms.mult),
+    available: !terms.refuses && !!terms.allow[i.grade],
+  }));
+  return { week, nextRestock, items, rn, score, terms };
+}
+
+const daysUntil = (t) => {
+  const d = (t - Date.now()) / 86400000;
+  return d < 1 ? `in ${Math.max(1, Math.round(d * 24))} hours` : `in ${Math.round(d)} day${Math.round(d) === 1 ? '' : 's'}`;
+};
+
+function shopRow(shop) {
+  const place = placeOf(shop.location);
+  return h('button', { class: `person-row shop-row${shop.hidden ? ' is-hidden' : ''}`, onclick: () => openShop(shop.id) },
+    h('span', { class: 'avatar seal shop-seal', html: glyph(KINDS.shop, 20) }),
+    h('span', { class: 'person-text' },
+      h('strong', { text: shop.name }),
+      h('small', { text: [shop.hidden ? 'Hidden' : '', SHOP_TYPES[shop.type]?.label, place?.label].filter(Boolean).join(' · ') })));
+}
+
+function shopsHere(list, ref) {
+  if (!list.length && !isDM()) return null;
+  return h('section', { class: 'people-here' },
+    h('h3', { class: 'notes-title', text: `Shops here${list.length ? ` (${list.length})` : ''}` }),
+    list.map(shopRow),
+    isDM() ? h('button', { class: 'btn small ghost', text: '+ Generate a shop here', onclick: () => openShopGen(ref) }) : null);
+}
+
+function openShop(id) {
+  const shop = shopById(id);
+  if (!shop) return;
+  S.pinId = shop.pinId && pinById(shop.pinId)?.pageId === S.pageId ? shop.pinId : null;
+  highlightPin();
+  S.panel = { type: 'shop', id };
+  renderPanel();
+}
+
+function shopView() {
+  const shop = shopById(S.panel.id);
+  if (!shop) return h('p', { class: 'muted', text: 'This shop has closed its doors.' });
+  const t = SHOP_TYPES[shop.type], place = placeOf(shop.location), st = stockFor(shop);
+  const person = shop.personId && personById(shop.personId);
+  const pct = Math.round(Math.abs(1 - st.terms.mult) * 1000) / 10;
+  const sales = S.purchases.filter((p) => p.shopId === shop.id).sort((a, b) => b.at - a.at).slice(0, 8);
+
+  const buy = async (item) => {
+    const answer = prompt(`How many "${item.name}"? (${item.left} in stock, ${formatPrice(item.cost)} each)`, '1');
+    if (answer == null) return;
+    const qty = parseInt(answer, 10);
+    if (!(qty > 0) || qty > item.left) { toast(`Enter a number from 1 to ${item.left}.`); return; }
+    const total = Math.round(item.cost * qty * 100) / 100;
+    if (!confirm(`Buy ${qty} × ${item.name} from ${shop.name} for ${formatPrice(total)}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+    const buyer = myName() || S.store.displayName || 'A party member';
+    try {
+      await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer });
+      toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}. It’s on the ledger.`);
+    } catch (e) { toast('Could not buy: ' + e.message); }
+  };
+
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: `${glyph(KINDS.shop, 18)}<span>${esc(t?.label || 'Shop')} · ${esc(sizeById(shop.size).name)}${shop.hidden ? ' · Hidden from players' : ''}</span>` }),
+    h('h2', { class: 'codex-title', text: shop.name }),
+    place ? h('button', { class: 'linklike', text: `${place.label}${place.sub ? `, ${place.sub}` : ''} →`, onclick: place.go }) : null,
+    h('p', { class: 'shop-keeper' },
+      'Proprietor: ',
+      person ? h('a', { href: '#', class: 'wiki', 'data-kind': 'person', 'data-id': person.id, text: shop.proprietor.name }) : h('strong', { text: shop.proprietor.name }),
+      ` (${shop.proprietor.race}). `, h('em', { text: shop.proprietor.quirk })),
+    shop.description ? h('div', { class: 'prose', html: md(shop.description) }) : null,
+    h('div', { class: `shop-terms ${st.terms.refuses ? 'neg' : st.score > 0 ? 'pos' : st.score < 0 ? 'neg' : 'neu'}` },
+      st.rn ? h('span', { html: `Your standing${st.rn.key !== shop.location ? ` in ${esc(renownTarget(st.rn.key)?.label || '')}` : ''}: ${renownBadge(st.rn.r)}` }) : h('span', { text: 'They don’t know you here yet.' }),
+      h('span', { text: [
+        // only mention held-back goods if something on the shelf is actually held back
+        st.terms.refuses || st.items.some((i) => !i.available) ? st.terms.note : '',
+        !st.terms.refuses && pct ? `Prices ${pct}% ${st.terms.mult < 1 ? 'lower' : 'higher'}.` : '',
+      ].filter(Boolean).join(' ') || 'Ordinary prices; everything on the shelves is for sale.' })),
+    h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
+    st.items.length ? h('table', { class: 'stock' },
+      h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
+      h('tbody', {}, st.items.map((i) => h('tr', { class: `${i.grade}${i.available ? '' : ' unavailable'}${i.left ? '' : ' sold-out'}` },
+        h('td', {}, h('span', { text: i.name }), i.grade !== 'standard' ? h('span', { class: `grade ${i.grade}`, text: i.grade === 'rare' ? 'under the counter' : 'fine' }) : null,
+          !i.available && !st.terms.refuses ? h('small', { text: 'Not for you, not yet' }) : null),
+        h('td', { class: 'num', text: i.left || '—' }),
+        h('td', { class: 'num' },
+          i.cost !== i.price ? h('s', { text: formatPrice(i.price) }) : null,
+          h('span', { text: formatPrice(i.cost) })),
+        h('td', {}, h('button', { class: 'btn small', type: 'button', text: 'Buy', disabled: !i.available || !i.left, onclick: () => buy(i) })))))) : h('p', { class: 'muted', text: 'The shelves are bare this week.' }),
+    isDM() ? h('div', { class: 'codex-actions' },
+      h('button', { class: 'btn ghost', type: 'button', text: 'Restock now', onclick: async () => {
+        await S.store.saveShop({ restockOffset: (shop.restockOffset || 0) + 1 }, shop.id).catch((e) => toast(e.message));
+        toast('Fresh stock is on the shelves.');
+      } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Edit', onclick: () => { S.panel = { type: 'shopEdit', id: shop.id }; renderPanel(); } }),
+      !shop.pinId || !pinById(shop.pinId) ? h('button', { class: 'btn ghost', type: 'button', text: 'Place on map', onclick: () => startPlacingShop(shop.id) }) : null) : null,
+    sales.length ? h('details', { class: 'legend' },
+      h('summary', { text: 'Recent purchases' }),
+      h('ul', { class: 'sales' }, sales.map((p) => h('li', { text: `${p.buyer}: ${p.qty} × ${p.itemName}, ${formatPrice(p.total)} · ${ago(p.at)}` })))) : null,
+    h('div', { class: 'ornament', 'aria-hidden': 'true' }),
+    notesSection('shop', shop.id));
+}
+
+// ─── shop generator (DM) ────────────────────────────────────────────
+function openShopGen(ref) {
+  const place = placeOf(ref);
+  S.panel = { type: 'shopGen', id: ref, draft: generateShop('general', place?.size || 2) };
+  renderPanel();
+}
+
+function shopGenView() {
+  const ref = S.panel.id, place = placeOf(ref), d = S.panel.draft;
+  const regenerate = (type, size) => { S.panel.draft = generateShop(type, size); renderPanel(); };
+  const typeSel = h('select', { onchange: (e) => regenerate(e.target.value, d.size) },
+    Object.entries(SHOP_TYPES).map(([k, v]) => h('option', { value: k, selected: k === d.type, text: v.label })));
+  const sizeSel = h('select', { onchange: (e) => regenerate(d.type, e.target.value) },
+    SIZES.map((s) => h('option', { value: s.id, selected: s.id === d.size, text: s.name })));
+  const name = h('input', { type: 'text', maxlength: 80, value: d.name });
+  const keeper = h('input', { type: 'text', maxlength: 60, value: d.proprietor.name });
+  const desc = h('textarea', { rows: 2 }); desc.value = d.description;
+  const addPerson = h('input', { type: 'checkbox', checked: true });
+  const addPin = h('input', { type: 'checkbox', checked: ref.startsWith('page:') });
+  const hidden = h('input', { type: 'checkbox' });
+  const preview = stockFor({ ...d, id: '__preview', createdAt: Date.now(), restockOffset: 0, location: ref });
+  return h('div', { class: 'codex editor' },
+    h('h2', { class: 'codex-title', text: 'Generate a shop' }),
+    h('p', { class: 'codex-sub', text: `at ${place ? `${place.label}${place.sub ? `, ${place.sub}` : ''}` : 'this place'}` }),
+    h('div', { class: 'row gen-pickers' }, field('Kind of shop', typeSel), field('Settlement size', sizeSel)),
+    h('small', { class: 'muted', text: 'Bigger settlements stock more items, finer goods and rarer finds.' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', text: '↻ Reroll', onclick: () => regenerate(d.type, d.size) })),
+    field('Shop name', name),
+    field('Proprietor', keeper, `${esc(d.proprietor.race)}. ${esc(d.proprietor.quirk)}`),
+    field('Description', desc),
+    h('details', { class: 'legend', open: true },
+      h('summary', { text: `This week’s stock (${preview.items.length} items)` }),
+      h('ul', { class: 'sales' }, preview.items.map((i) => h('li', { text: `${i.name} ×${i.qty} — ${formatPrice(i.cost)}${i.grade === 'rare' ? ' (under the counter)' : ''}` })))),
+    h('label', { class: 'check' }, addPerson, ' Add the proprietor to People'),
+    h('label', { class: 'check' }, addPin, ' Place a pin for it on the map'),
+    h('label', { class: 'check' }, hidden, ' Hidden from players for now'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', text: 'Save shop', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        const data = {
+          ...d, name: name.value.trim() || d.name, description: desc.value.trim(),
+          proprietor: { ...d.proprietor, name: keeper.value.trim() || d.proprietor.name },
+          location: ref, createdAt: Date.now(), restockOffset: 0, hidden: hidden.checked,
+        };
+        try {
+          const id = await S.store.saveShop(data);
+          if (addPerson.checked) {
+            const personId = await S.store.savePerson({
+              name: data.proprietor.name, title: `${SHOP_TYPES[data.type].label}, ${data.name}`,
+              group: `${place?.group || 'Merchants'}${GROUP_SEP}Merchants`, places: [ref],
+              body: `${data.proprietor.race}. ${data.proprietor.quirk}`, image: '', hidden: data.hidden,
+            });
+            await S.store.saveShop({ personId }, id);
+          }
+          if (addPin.checked) startPlacingShop(id); else openShop(id);
+        } catch (err) { toast('Could not save the shop: ' + err.message); }
+      } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => closePanel() })));
+}
+
+function shopEditView() {
+  const shop = shopById(S.panel.id);
+  if (!shop) return h('p', { text: 'This shop no longer exists.' });
+  const name = h('input', { type: 'text', maxlength: 80, value: shop.name });
+  const desc = h('textarea', { rows: 3 }); desc.value = shop.description || '';
+  const size = h('select', {}, SIZES.map((s) => h('option', { value: s.id, selected: s.id === shop.size, text: s.name })));
+  const hidden = h('input', { type: 'checkbox', checked: !!shop.hidden });
+  return h('div', { class: 'codex editor' },
+    h('h2', { class: 'codex-title', text: 'Edit shop' }),
+    field('Shop name', name),
+    field('Description', desc),
+    field('Settlement size', size, 'Changing the size changes what the shop stocks from now on.'),
+    h('label', { class: 'check' }, hidden, ' Hidden from players'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
+        try {
+          await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked }, shop.id);
+          const pin = shop.pinId && pinById(shop.pinId);
+          if (pin && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
+          openShop(shop.id);
+        } catch (e) { toast('Could not save: ' + e.message); }
+      } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => openShop(shop.id) }),
+      h('button', { class: 'btn danger', type: 'button', text: 'Close the shop', onclick: async () => {
+        if (!confirm(`Close "${shop.name}" for good? Its pin is removed; its ledger entries and proprietor stay.`)) return;
+        if (shop.pinId && pinById(shop.pinId)) await S.store.deletePin(shop.pinId).catch(() => {});
+        await S.store.deleteShop(shop.id).catch((e) => toast(e.message));
+        openMarket();
+      } })));
+}
+
+// Put a shop's pin on the map: turn to the map its place is on, then the next click places it.
+function startPlacingShop(id) {
+  const shop = shopById(id), place = shop && placeOf(shop.location);
+  if (!shop || !place) { openShop(id); return; }
+  S.placeShop = id;
+  closePanel(true);
+  if (S.pageId !== place.pageId) goToPage(place.pageId);
+  setEdit(false);
+  modeHint();
+}
+
+async function placeShopPin(pos) {
+  const shop = shopById(S.placeShop);
+  S.placeShop = null;
+  modeHint();
+  if (!shop) return;
+  const page = currentPage();
+  try {
+    const pinId = await S.store.savePin({ title: shop.name, kind: 'shop', body: '', x: pos.x, y: pos.y, pageId: page.id,
+      pageHidden: !!page.hidden, hidden: !!shop.hidden, shopId: shop.id, linkPage: '' });
+    await S.store.saveShop({ pinId }, shop.id);
+    const person = shop.personId && personById(shop.personId);
+    if (person && !(person.places || []).includes(`pin:${pinId}`)) await S.store.savePerson({ places: [...(person.places || []), `pin:${pinId}`] }, person.id);
+    openShop(shop.id);
+  } catch (e) { toast('Could not place the shop: ' + e.message); }
+}
+
+// ─── market & ledger ────────────────────────────────────────────────
+function openMarket(tab) {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'market', id: 'all', tab: tab || S.panel?.tab || 'shops' };
+  renderPanel();
+}
+
+function marketView() {
+  const tab = S.panel.tab || 'shops';
+  const setTab = (t) => { if (S.panel?.type !== 'market') return; S.panel.tab = t; renderPanel(); };
+  const tabs = h('div', { class: 'tabs' },
+    h('button', { class: tab === 'shops' ? 'on' : '', text: 'Shops', onclick: () => setTab('shops') }),
+    h('button', { class: tab === 'ledger' ? 'on' : '', text: isDM() ? 'Ledger' : 'My purchases', onclick: () => setTab('ledger') }));
+  let body;
+  if (tab === 'shops') {
+    const byPlace = new Map();
+    for (const s of S.shops) {
+      const label = placeOf(s.location) ? `${placeOf(s.location).label}${placeOf(s.location).sub ? `, ${placeOf(s.location).sub}` : ''}` : 'Elsewhere';
+      if (!byPlace.has(label)) byPlace.set(label, []);
+      byPlace.get(label).push(s);
+    }
+    body = byPlace.size
+      ? [...byPlace.keys()].sort().map((label) => h('section', { class: 'people-group open' },
+        h('h4', { class: 'market-place', text: label }),
+        byPlace.get(label).sort((a, b) => a.name.localeCompare(b.name)).map(shopRow)))
+      : [h('p', { class: 'muted', text: isDM() ? 'No shops yet. Open a town or map’s panel and use "+ Generate a shop here".' : 'No shops have been found yet.' })];
+  } else {
+    const onlyOpen = S.panel.onlyOpen ?? true;
+    const mine = (p) => p.buyerUid === S.store.uid;
+    const list = S.purchases.filter((p) => (isDM() ? (!onlyOpen || !p.settled) : mine(p))).sort((a, b) => b.at - a.at);
+    const owed = list.filter((p) => !p.settled).reduce((n, p) => n + p.total, 0);
+    body = [
+      isDM() ? h('div', { class: 'ledger-bar' },
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: onlyOpen, onchange: (e) => { if (S.panel?.type !== 'market') return; S.panel.onlyOpen = e.target.checked; renderPanel(); } }), ' Unsettled only'),
+        list.some((p) => !p.settled) ? h('button', { class: 'btn small ghost', text: 'Settle all shown', onclick: async () => {
+          if (!confirm(`Mark ${list.filter((p) => !p.settled).length} purchases as settled?`)) return;
+          await Promise.all(list.filter((p) => !p.settled).map((p) => S.store.updatePurchase(p.id, { settled: true }))).catch((e) => toast(e.message));
+        } }) : null) : null,
+      h('p', { class: 'ledger-sum', text: `${list.length} purchase${list.length === 1 ? '' : 's'}${owed ? ` · ${formatPrice(owed)} unsettled` : ''}` }),
+      list.length ? h('ol', { class: 'ledger' }, list.map((p) => {
+        const shop = shopById(p.shopId);
+        return h('li', { class: p.settled ? 'settled' : '' },
+          h('div', { class: 'ledger-main' },
+            h('strong', { text: `${p.qty} × ${p.itemName}` }),
+            h('span', { class: 'ledger-total', text: formatPrice(p.total) })),
+          h('div', { class: 'ledger-meta' },
+            h('span', { text: isDM() ? p.buyer : 'You' }), ' · ',
+            shop ? h('button', { class: 'linklike', text: shop.name, onclick: () => openShop(shop.id) }) : h('span', { text: '(closed shop)' }),
+            ' · ', h('time', { text: ago(p.at), title: new Date(p.at).toLocaleString() }),
+            p.settled ? h('span', { class: 'tag settled-tag', text: 'settled' }) : null),
+          isDM() ? h('div', { class: 'ledger-actions' },
+            h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!p.settled, onchange: (e) => S.store.updatePurchase(p.id, { settled: e.target.checked }).catch((err) => toast(err.message)) }), ' Settled'),
+            h('button', { class: 'linklike', text: 'void', title: 'Undo this purchase (returns the stock)', onclick: async () => {
+              if (confirm(`Void ${p.buyer}'s purchase of ${p.qty} × ${p.itemName}? The items go back on the shelf.`)) await S.store.deletePurchase(p.id).catch((e) => toast(e.message));
+            } })) : null);
+      })) : h('p', { class: 'muted', text: isDM() ? 'Nothing to settle.' : 'You haven’t bought anything yet.' }),
+    ];
+  }
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>Trade & coin</span>' }),
+    h('h2', { class: 'codex-title', text: 'Market' }),
+    tabs,
+    body);
 }
 
 // ─── notes ──────────────────────────────────────────────────────────
@@ -1903,6 +2264,7 @@ function setupChrome() {
   $('#searchBtn').onclick = openSearch;
   $('#peopleBtn').onclick = () => (S.panel?.type === 'people' ? closePanel() : openPeople());
   $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
+  $('#marketBtn').onclick = () => (S.panel?.type === 'market' ? closePanel() : openMarket());
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);
   $('#torchBtn').onclick = () => {
@@ -1959,6 +2321,7 @@ function setupChrome() {
     if (e.key === 'Escape') {
       if (!$('#search').hidden) closeSearch();
       else if (S.pingMode) setPingMode(false);
+      else if (S.placeShop) { const id = S.placeShop; S.placeShop = null; modeHint(); openShop(id); }
       else if (document.body.classList.contains('toc-open')) closeTOC();
       else if (S.panel && !typing) closePanel();
       return;
