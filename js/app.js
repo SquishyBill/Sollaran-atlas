@@ -1,6 +1,7 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
-import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult } from './shop-data.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng } from './shop-data.js';
+import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -60,6 +61,7 @@ const S = {
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
   renown: [], renownLog: [], renownTiers: null,
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
+  loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -118,7 +120,14 @@ async function boot() {
   if (S.store.mode === 'local') $('#demoRibbon').hidden = false;
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers, ping: onPing, error: onError });
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
+    loot: onLoot, lootTruth: onLootTruth,
+    lootLog: (list) => { S.lootLog = list; refreshLootViews(); },
+    partyCoins: (c) => { S.partyCoins = c; refreshLootViews(); },
+    caches: (list) => { S.caches = list; refreshLootViews(); },
+    magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
+    magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
+    ping: onPing, error: onError });
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -750,7 +759,8 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView };
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView,
+    lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -791,6 +801,7 @@ function pinView() {
     SETTLEMENT_KINDS.includes(p.kind) ? renownCard(`pin:${p.id}`) : null,
     peopleHere(peopleAt('pin', p.id), `pin:${p.id}`),
     shopsHere(shopsAt('pin', p.id), `pin:${p.id}`),
+    cachesHere(cachesAt('pin', p.id), `pin:${p.id}`),
     secretBox(p.id),
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
     notesSection('pin', p.id));
@@ -808,6 +819,7 @@ function aboutView() {
     page.type === 'map' ? h('div', { class: 'prose', html: md(page.body) }) : null,
     peopleHere(peopleAt('page', page.id), `page:${page.id}`),
     shopsHere(shopsAt('page', page.id), `page:${page.id}`),
+    cachesHere(cachesAt('page', page.id), `page:${page.id}`),
     secretBox(page.id),
     page.type === 'map' && pinsOn(page.id).length ? legend(page) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
@@ -1509,7 +1521,8 @@ function stockFor(shop) {
     key: `house:${x.name}`, name: x.name, grade: 'standard', price: Number(x.price) || 0,
     qty: x.qty === '' || x.qty == null ? null : Number(x.qty), service: x.qty === '' || x.qty == null, house: true,
   }));
-  const items = [...house, ...generateStock(shop, week)].map((i) => {
+  const homebrew = homebrewStock(shop, week);
+  const items = [...house, ...generateStock(shop, week), ...homebrew].map((i) => {
     const price = overrides[i.key] != null ? Number(overrides[i.key]) : i.price;
     return {
       ...i, price,
@@ -1519,6 +1532,16 @@ function stockFor(shop) {
     };
   });
   return { week, nextRestock, items, rn, score, terms, inverse, myHaggle };
+}
+
+// Homebrew (the DM's items marked "in shops") sometimes appears under the counter in big-city
+// Arcane Curios, Exotic Imports and Black Markets. Seeded by shop and week like the rest of the stock.
+function homebrewStock(shop, week) {
+  if (!['arcane', 'imports', 'blackmarket'].includes(shop.type) || shop.size < 4 || !S.magicPublic.length) return [];
+  const r = rng(`hb:${shop.seed}:${week}`);
+  if (r() > (shop.size >= 5 ? 0.4 : 0.25)) return [];
+  const m = [...S.magicPublic].sort((a, b) => a.id.localeCompare(b.id))[Math.floor(r() * S.magicPublic.length)];
+  return [{ key: `hb:${m.id}|rare`, name: m.name, grade: 'rare', price: nicePrice((Number(m.value) || 100) * (shop.priceMod || 1)), qty: 1 }];
 }
 
 const daysUntil = (t) => {
@@ -1561,6 +1584,7 @@ function shopView() {
   const sales = S.purchases.filter((p) => p.shopId === shop.id).sort((a, b) => b.at - a.at).slice(0, 8);
 
   const buy = async (item) => {
+    if (item.name === 'Identify an item') { await buyIdentification(shop, st, item); return; }
     const max = Number.isFinite(item.left) ? item.left : 1000;
     const answer = prompt(`How many "${item.name}"? (${Number.isFinite(item.left) ? `${item.left} in stock, ` : ''}${formatPrice(item.cost)} each)`, '1');
     if (answer == null) return;
@@ -1904,6 +1928,7 @@ function marketView() {
   const setTab = (t) => { if (S.panel?.type !== 'market') return; S.panel.tab = t; renderPanel(); };
   const tabs = h('div', { class: 'tabs' },
     h('button', { class: tab === 'shops' ? 'on' : '', text: 'Shops', onclick: () => setTab('shops') }),
+    h('button', { class: tab === 'loot' ? 'on' : '', text: 'Loot', onclick: () => setTab('loot') }),
     h('button', { class: tab === 'ledger' ? 'on' : '', text: isDM() ? 'Ledger' : 'My purchases', onclick: () => setTab('ledger') }));
   let body;
   if (tab === 'shops') {
@@ -1918,6 +1943,8 @@ function marketView() {
         h('h4', { class: 'market-place', text: label }),
         byPlace.get(label).sort((a, b) => a.name.localeCompare(b.name)).map(shopRow)))
       : [h('p', { class: 'muted', text: isDM() ? 'No shops yet. Open a town or map’s panel and use "+ Generate a shop here".' : 'No shops have been found yet.' })];
+  } else if (tab === 'loot') {
+    body = lootTab();
   } else {
     const onlyOpen = S.panel.onlyOpen ?? true;
     const mine = (p) => p.buyerUid === S.store.uid;
@@ -1962,6 +1989,388 @@ function marketView() {
     h('h2', { class: 'codex-title', text: 'Market' }),
     tabs,
     body);
+}
+
+// ─── loot ───────────────────────────────────────────────────────────
+// The party's shared stash ("Loot"), coins, hidden caches at places, a homebrew magic item library,
+// and unidentified magic items. Players see an unidentified item only by its description; what it
+// really is lives in lootTruth (DM only). When a player pays a shop to identify something, the item
+// is marked "being studied" and the DM's browser reveals it the next time the DM opens the atlas.
+const COIN_KEYS = ['pp', 'gp', 'sp', 'cp'];
+const coinText = (c) => COIN_KEYS.filter((k) => c?.[k]).map((k) => `${Number(c[k]).toLocaleString()} ${k}`).join(', ') || 'No coins';
+const addCoins = (a, b, sign = 1) => Object.fromEntries(COIN_KEYS.map((k) => [k, Math.max(0, (Number(a?.[k]) || 0) + sign * (Number(b?.[k]) || 0))]));
+function parseCoins(text) {
+  const out = { cp: 0, sp: 0, gp: 0, pp: 0 };
+  let found = false;
+  for (const m of String(text || '').toLowerCase().matchAll(/(\d[\d,]*)\s*(pp|gp|sp|cp)/g)) { out[m[2]] += parseInt(m[1].replace(/,/g, ''), 10); found = true; }
+  return found ? out : null;
+}
+const lootById = (id) => S.loot.find((x) => x.id === id);
+const partyNames = () => [...new Set([...S.players.map((p) => p.name), ...S.loot.map((x) => x.claimedBy)].filter(Boolean))].sort();
+
+function onLoot(list) { S.loot = list; processIdentifications(); refreshLootViews(); }
+function onLootTruth(list) { S.lootTruth = Object.fromEntries(list.map((x) => [x.id, x])); processIdentifications(); refreshLootViews(); }
+function refreshLootViews() {
+  if (S.panel?.type === 'market' && S.panel.tab === 'loot') renderPanel();
+  else if (['pin', 'about'].includes(S.panel?.type)) renderPanel();
+}
+
+// DM's browser only: reveal anything a player has paid to identify.
+const identifying = new Set();
+async function processIdentifications() {
+  if (!isDM()) return;
+  const waiting = S.loot.filter((x) => x.status === 'pending' && S.lootTruth[x.id] && !identifying.has(x.id));
+  if (!waiting.length) return;
+  waiting.forEach((x) => identifying.add(x.id));
+  try {
+    for (const x of waiting) await revealItem(x, x.pendingIn ? `Identified in ${x.pendingIn}` : 'Identified');
+    toast(`${waiting.length} item${waiting.length === 1 ? '' : 's'} identified for the party.`);
+  } catch (e) { toast('Could not identify: ' + e.message); }
+  waiting.forEach((x) => identifying.delete(x.id));
+}
+
+async function revealItem(item, how) {
+  const t = S.lootTruth[item.id];
+  if (!t) return;
+  await S.store.saveLoot({ name: t.name, detail: t.detail || '', value: t.value ?? null, rarity: t.rarity || '', status: 'identified', identifiedAt: Date.now() }, item.id);
+  await S.store.addLootLog(`${how}: “${item.name}” turned out to be ${t.name}${t.rarity ? ` (${t.rarity})` : ''}.`);
+}
+
+// Put a pile of generated loot into the party's stash.
+async function giveLoot(pile, source) {
+  if (COIN_KEYS.some((k) => pile.coins?.[k])) await S.store.savePartyCoins(addCoins(S.partyCoins, pile.coins));
+  for (const line of pile.lines) {
+    if (line.kind === 'magic' && line.magic) {
+      const m = line.magic;
+      const id = await S.store.saveLoot({ kind: 'magic', name: m.label || 'A curious item', detail: m.unidentified || '', value: null, qty: line.qty || 1, status: 'unidentified', source });
+      await S.store.saveLootTruth(id, { name: m.name, detail: m.detail || '', rarity: m.rarity || '', value: m.value ?? null, type: m.type || '', homebrewId: m.homebrewId || '' });
+    } else {
+      await S.store.saveLoot({ kind: line.kind, name: line.name, detail: line.detail || '', value: line.value || null, qty: line.qty || 1, status: 'identified', source });
+    }
+  }
+  const things = [
+    COIN_KEYS.some((k) => pile.coins?.[k]) ? coinText(pile.coins) : '',
+    ...pile.lines.map((l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.kind === 'magic' ? (l.magic?.label || 'a curious item').replace(/^A /, 'a ') : l.name}`),
+  ].filter(Boolean);
+  await S.store.addLootLog(`Found${source ? ` at ${source}` : ''}: ${things.join('; ') || 'nothing of value'}.`);
+}
+
+// ── the Loot tab ────────────────────────────────────────────────────
+function lootTab() {
+  const unclaimed = S.loot.filter((x) => !x.claimedBy).sort((a, b) => (b.foundAt || 0) - (a.foundAt || 0));
+  const claimed = S.loot.filter((x) => x.claimedBy).sort((a, b) => (b.claimedAt || 0) - (a.claimedAt || 0));
+  const log = [...S.lootLog].sort((a, b) => b.at - a.at);
+  const pendingCount = S.loot.filter((x) => x.status === 'pending').length;
+  return [
+    h('div', { class: 'loot-coins' },
+      h('span', { class: 'coin-icon', 'aria-hidden': 'true', html: glyph(KINDS.shop, 22) }),
+      h('div', {},
+        h('strong', { text: coinText(S.partyCoins) }),
+        coinValue(S.partyCoins) ? h('small', { text: `about ${formatPrice(coinValue(S.partyCoins))} in all` }) : h('small', { text: 'The party purse is empty.' })),
+      isDM() ? h('div', { class: 'row coin-actions' },
+        h('button', { class: 'btn small ghost', text: 'Split evenly', onclick: splitCoins }),
+        h('button', { class: 'btn small ghost', text: 'Take coins', onclick: takeCoins }),
+        h('button', { class: 'btn small ghost', text: 'Add coins', onclick: addCoinsPrompt })) : null),
+    isDM() ? h('div', { class: 'row loot-dm' },
+      h('button', { class: 'btn', text: '+ Generate loot', onclick: () => openLootGen(S.pageId ? `page:${S.pageId}` : '') }),
+      h('button', { class: 'btn ghost', text: `Magic items (${S.magicItems.length})`, onclick: () => { S.panel = { type: 'magicLib', id: 'all' }; renderPanel(); } }),
+      pendingCount ? h('span', { class: 'tag', text: `${pendingCount} being identified` }) : null) : null,
+    isDM() && S.caches.length ? h('details', { class: 'legend caches' },
+      h('summary', { text: `Hidden caches (${S.caches.length})` }),
+      h('ul', {}, S.caches.map(cacheRow))) : null,
+    h('h3', { class: 'notes-title', text: `In the party’s Loot${unclaimed.length ? ` (${unclaimed.length})` : ''}` }),
+    unclaimed.length ? h('ol', { class: 'loot-list' }, unclaimed.map(lootRow)) : h('p', { class: 'muted', text: 'Nothing unclaimed. The party’s pockets are light.' }),
+    claimed.length ? h('details', { class: 'legend' },
+      h('summary', { text: `Claimed (${claimed.length})` }),
+      h('ol', { class: 'loot-list' }, claimed.map(lootRow))) : null,
+    log.length ? h('details', { class: 'legend' },
+      h('summary', { text: 'History' }),
+      h('ul', { class: 'sales' }, log.slice(0, 60).map((l) => h('li', { text: `${l.text} · ${ago(l.at)}` })))) : null,
+  ];
+}
+
+function lootRow(x) {
+  const truth = isDM() && S.lootTruth[x.id];
+  const status = x.status === 'unidentified' ? 'Unidentified' : x.status === 'pending' ? 'Being studied by the sage…' : '';
+  return h('li', { class: `loot-item ${x.kind || ''} ${x.status || ''}` },
+    h('div', { class: 'loot-main' },
+      h('strong', { text: `${x.qty > 1 ? `${x.qty} × ` : ''}${x.name}` }),
+      x.rarity ? h('span', { class: 'grade rare', text: x.rarity }) : null,
+      status ? h('span', { class: `grade ${x.status === 'pending' ? 'fine' : 'house'}`, text: status }) : null,
+      h('span', { class: 'loot-value', text: x.status !== 'identified' ? 'value unknown' : x.value ? formatPrice(x.value * (x.qty || 1)) : '' })),
+    x.detail ? h('div', { class: 'loot-detail', text: x.detail }) : null,
+    truth && x.status !== 'identified' ? h('div', { class: 'loot-truth', text: `DM: really ${truth.name}${truth.rarity ? ` (${truth.rarity})` : ''}${truth.value ? `, ${formatPrice(truth.value)}` : ''}. ${truth.detail || ''}` }) : null,
+    h('div', { class: 'loot-meta' },
+      [x.source ? `Found at ${x.source}` : '', x.claimedBy ? `Claimed by ${x.claimedBy}` : '', x.pendingBy ? (x.status === 'identified' ? `identified in ${x.pendingIn || 'town'} (paid by ${x.pendingBy})` : `sent to be identified by ${x.pendingBy}${x.pendingIn ? ` in ${x.pendingIn}` : ''}`) : ''].filter(Boolean).join(' · ')),
+    isDM() ? h('div', { class: 'loot-actions' },
+      !x.claimedBy ? h('button', { class: 'linklike', text: 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
+      x.status !== 'identified' ? h('button', { class: 'linklike', text: 'reveal', title: 'Identify it now, for free', onclick: () => revealItem(x, 'Identified').catch((e) => toast(e.message)) }) : null,
+      h('button', { class: 'linklike', text: 'remove', onclick: async () => {
+        if (!confirm(`Remove "${x.name}" from Loot for good?`)) return;
+        await S.store.deleteLoot(x.id).catch((e) => toast(e.message));
+        await S.store.addLootLog(`Removed from Loot: ${x.name}.`).catch(() => {});
+      } })) : null);
+}
+
+async function claimItem(x) {
+  const names = partyNames();
+  const who = prompt(`Who claims "${x.name}"?${names.length ? `\n\nKnown party members: ${names.join(', ')}` : ''}`, names[0] || '');
+  if (!who?.trim()) return;
+  let qty = x.qty || 1;
+  if (qty > 1) {
+    const n = parseInt(prompt(`How many of the ${qty}?`, String(qty)), 10);
+    if (!(n > 0) || n > qty) { toast(`Enter a number from 1 to ${qty}.`); return; }
+    qty = n;
+  }
+  try {
+    if (qty === (x.qty || 1)) {
+      await S.store.saveLoot({ claimedBy: who.trim(), claimedAt: Date.now() }, x.id);
+    } else {
+      // split the stack: the claimed part becomes its own entry (with its secret identity copied)
+      await S.store.saveLoot({ qty: x.qty - qty }, x.id);
+      const { id, ...rest } = x;
+      const newId = await S.store.saveLoot({ ...rest, qty, claimedBy: who.trim(), claimedAt: Date.now() });
+      if (S.lootTruth[x.id]) { const { id: _t, ...truth } = S.lootTruth[x.id]; await S.store.saveLootTruth(newId, truth); }
+    }
+    await S.store.addLootLog(`${who.trim()} claimed ${qty > 1 ? `${qty} × ` : ''}${x.name}.`);
+  } catch (e) { toast('Could not claim: ' + e.message); }
+}
+
+async function unclaimItem(x) {
+  await S.store.saveLoot({ claimedBy: null, claimedAt: null }, x.id).catch((e) => toast(e.message));
+  await S.store.addLootLog(`${x.name} went back into Loot (was ${x.claimedBy}’s).`).catch(() => {});
+}
+
+async function takeCoins() {
+  const who = prompt(`Who is taking coins?${partyNames().length ? `\n\nKnown party members: ${partyNames().join(', ')}` : ''}`);
+  if (!who?.trim()) return;
+  const amount = parseCoins(prompt(`How much does ${who.trim()} take? e.g. "50 gp" or "2 pp 15 gp 4 sp"\n\nIn Loot: ${coinText(S.partyCoins)}`));
+  if (!amount) return;
+  if (COIN_KEYS.some((k) => amount[k] > (S.partyCoins[k] || 0))) { toast('There isn’t that much in Loot.'); return; }
+  await S.store.savePartyCoins(addCoins(S.partyCoins, amount, -1)).catch((e) => toast(e.message));
+  await S.store.addLootLog(`${who.trim()} took ${coinText(amount)}.`).catch(() => {});
+}
+
+async function addCoinsPrompt() {
+  const amount = parseCoins(prompt('Add how much to Loot? e.g. "120 gp 40 sp"'));
+  if (!amount) return;
+  const why = prompt('Where did it come from? (optional)', '') || '';
+  await S.store.savePartyCoins(addCoins(S.partyCoins, amount)).catch((e) => toast(e.message));
+  await S.store.addLootLog(`Added to Loot${why ? ` (${why})` : ''}: ${coinText(amount)}.`).catch(() => {});
+}
+
+async function splitCoins() {
+  const names = (prompt('Split the coins evenly between who? (comma-separated)', partyNames().join(', ')) || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (!names.length) return;
+  const share = Object.fromEntries(COIN_KEYS.map((k) => [k, Math.floor((S.partyCoins[k] || 0) / names.length)]));
+  if (!COIN_KEYS.some((k) => share[k])) { toast('Not enough coins to split.'); return; }
+  const total = Object.fromEntries(COIN_KEYS.map((k) => [k, share[k] * names.length]));
+  const left = addCoins(S.partyCoins, total, -1);
+  if (!confirm(`Each of ${names.join(', ')} gets ${coinText(share)}.${COIN_KEYS.some((k) => left[k]) ? `\n${coinText(left)} stays in Loot (it doesn’t divide evenly).` : ''}`)) return;
+  await S.store.savePartyCoins(left).catch((e) => toast(e.message));
+  await S.store.addLootLog(`Coins split ${names.length} ways: ${names.join(', ')} each took ${coinText(share)}.`).catch(() => {});
+}
+
+// ── hidden caches ───────────────────────────────────────────────────
+const cachesAt = (type, id) => S.caches.filter((c) => c.place === `${type}:${id}`
+  || (type === 'page' && c.place?.startsWith('pin:') && pinById(c.place.slice(4))?.pageId === id));
+
+function cacheRow(c) {
+  const place = placeOf(c.place);
+  return h('li', { class: 'cache-row' },
+    h('div', {},
+      h('strong', { text: c.title || 'Hidden loot' }),
+      h('small', { text: ` ${place ? `at ${place.label}` : ''} · ${coinText(c.coins)}${c.lines?.length ? ` + ${c.lines.length} item${c.lines.length === 1 ? '' : 's'}` : ''}` })),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small', text: 'Reveal to party', onclick: async () => {
+        if (!confirm(`The party found "${c.title || 'the hidden loot'}"? It goes into Loot.`)) return;
+        try { await giveLoot(c, placeOf(c.place)?.label || c.title || ''); await S.store.deleteCache(c.id); toast('Added to the party’s Loot.'); }
+        catch (e) { toast('Could not reveal: ' + e.message); }
+      } }),
+      h('button', { class: 'linklike', text: 'view', onclick: () => { S.panel = { type: 'lootGen', id: c.place, draft: { ...c.draftOpts, seed: c.seed, coins: c.coins, lines: c.lines }, cacheId: c.id, title: c.title }; renderPanel(); } }),
+      h('button', { class: 'linklike', text: 'discard', onclick: () => confirm('Throw this cache away?') && S.store.deleteCache(c.id).catch((e) => toast(e.message)) })));
+}
+
+function cachesHere(list, ref) {
+  if (!isDM()) return null;
+  return h('section', { class: 'people-here dm-cache' },
+    h('h3', { class: 'notes-title', text: `Hidden loot here${list.length ? ` (${list.length})` : ''} · DM only` }),
+    list.length ? h('ul', { class: 'cache-list' }, list.map(cacheRow)) : null,
+    h('button', { class: 'btn small ghost', text: '+ Generate loot here', onclick: () => openLootGen(ref) }));
+}
+
+// ── the generator (DM) ──────────────────────────────────────────────
+function openLootGen(ref) {
+  const opts = { level: Number(lsGet('atlas-loot-level')) || 3, mode: 'individual', setting: 'lair', homebrewMode: 'mix' };
+  S.panel = { type: 'lootGen', id: ref || '', draft: { ...opts, ...generateLoot({ ...opts, homebrew: S.magicItems }) } };
+  renderPanel();
+}
+
+function lootGenView() {
+  const d = S.panel.draft, ref = S.panel.id;
+  const optsOf = () => ({ level: d.level, mode: d.mode, setting: d.setting, homebrewMode: d.homebrewMode, homebrew: S.magicItems });
+  const reroll = () => { Object.assign(d, generateLoot(optsOf())); renderPanel(); };
+  const setOpt = (k, v) => { d[k] = v; if (k === 'level') lsSet('atlas-loot-level', String(v)); reroll(); };
+  const level = h('input', { type: 'number', min: 1, max: 20, value: d.level, onchange: (e) => setOpt('level', Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1))) });
+  const mode = h('select', { onchange: (e) => setOpt('mode', e.target.value) }, Object.entries(MODES).map(([k, v]) => h('option', { value: k, selected: k === d.mode, text: v })));
+  const setting = h('select', { onchange: (e) => setOpt('setting', e.target.value) }, Object.entries(SETTINGS).map(([k, v]) => h('option', { value: k, selected: k === d.setting, text: v.label })));
+  const hb = S.magicItems.length ? h('select', { onchange: (e) => setOpt('homebrewMode', e.target.value) },
+    [['mix', 'Mix in my homebrew'], ['prefer', 'Prefer my homebrew'], ['only', 'Only my homebrew']].map(([k, v]) => h('option', { value: k, selected: k === d.homebrewMode, text: v }))) : null;
+  const coinInputs = COIN_KEYS.map((k) => h('label', { class: 'coin-input' }, h('input', { type: 'number', min: 0, value: d.coins[k] || 0, onchange: (e) => { d.coins[k] = Math.max(0, parseInt(e.target.value, 10) || 0); } }), ` ${k}`));
+  const kindLabel = { gem: 'gem', art: 'art', gear: 'gear', hook: 'story hook', magic: 'magic' };
+  const lines = h('ol', { class: 'gen-lines' }, d.lines.map((l, i) => h('li', { class: `gen-line ${l.kind}` },
+    h('span', { class: `grade ${l.kind === 'magic' ? 'rare' : l.kind === 'hook' ? 'house' : 'fine'}`, text: kindLabel[l.kind] || l.kind }),
+    h('input', { type: 'number', class: 'gl-qty', min: 1, value: l.qty || 1, title: 'How many', onchange: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }),
+    h('div', { class: 'gl-main' },
+      l.kind === 'magic'
+        ? h('div', {},
+          h('strong', { text: l.magic.name }), ` (${l.magic.rarity}${l.magic.homebrewId ? ', homebrew' : ''}, ${formatPrice(l.magic.value || 0)})`,
+          h('small', { text: `Players will see: “${l.magic.label}. ${l.magic.unidentified}”` }))
+        : h('input', { type: 'text', value: l.name, onchange: (e) => { l.name = e.target.value; } }),
+      l.kind !== 'magic' && l.kind !== 'hook' && l.kind !== 'gear' ? h('small', { text: `${formatPrice(l.value || 0)} each` }) : null),
+    h('button', { class: 'linklike', type: 'button', text: '↻', title: 'Reroll this line', onclick: () => { d.lines[i] = rerollLine(l, optsOf()); renderPanel(); } }),
+    h('button', { class: 'linklike', type: 'button', text: '×', title: 'Remove', onclick: () => { d.lines.splice(i, 1); renderPanel(); } }))));
+  const addMagic = h('select', { onchange: (e) => {
+    const [src, key] = e.target.value.split(':');
+    if (!key) return;
+    const m = src === 'hb' ? S.magicItems.find((x) => x.id === key) : SRD_MAGIC.find((x) => x.name === key);
+    if (m) d.lines.push({ id: `add-${Date.now()}`, kind: 'magic', qty: 1, name: m.name, value: Number(m.value) || 0,
+      magic: { name: m.name, rarity: m.rarity, type: m.type || 'wondrous', label: m.label || 'A curious item', unidentified: m.unidentified || '', detail: m.detail || '', value: Number(m.value) || 0, homebrewId: src === 'hb' ? m.id : '' } });
+    renderPanel();
+  } },
+  h('option', { value: '', text: '+ Add a specific magic item…' }),
+  S.magicItems.length ? h('optgroup', { label: 'My homebrew' }, S.magicItems.map((m) => h('option', { value: `hb:${m.id}`, text: `${m.name} (${m.rarity})` }))) : null,
+  h('optgroup', { label: 'SRD' }, SRD_MAGIC.map((m) => h('option', { value: `srd:${m.name}`, text: `${m.name} (${m.rarity})` }))));
+  // where it can be hidden: the current map and its pins, or anywhere else
+  const places = [
+    ...S.pages.map((p) => [`page:${p.id}`, `${' '.repeat(p._depth)}${p.title}`]),
+    ...S.pins.filter((p) => p.pageId === S.pageId && p.kind !== 'shop').map((p) => [`pin:${p.id}`, ` • ${p.title} (on this map)`]),
+  ];
+  const placeSel = h('select', {}, places.map(([v, t]) => h('option', { value: v, selected: v === ref, text: t })));
+  const title = h('input', { type: 'text', maxlength: 80, value: S.panel.title || '', placeholder: 'e.g. The bandit captain’s strongbox' });
+  const total = coinValue(d.coins) + d.lines.reduce((n, l) => n + (Number(l.value) || 0) * (l.qty || 1), 0);
+  const pile = () => ({ coins: { ...d.coins }, lines: d.lines.map((l) => ({ ...l })) });
+  return h('div', { class: 'codex editor' },
+    h('button', { class: 'linklike back', text: '← Loot', onclick: () => openMarket('loot') }),
+    h('h2', { class: 'codex-title', text: S.panel.cacheId ? 'Hidden cache' : 'Generate loot' }),
+    h('div', { class: 'row gen-pickers' }, field('Party level', level), field('How much', mode)),
+    h('div', { class: 'row gen-pickers' }, field('Where it’s found', setting), hb ? field('Magic items', hb) : null),
+    h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', text: '↻ Reroll everything', onclick: reroll })),
+    h('div', { class: 'field' }, h('span', { text: 'Coins' }), h('div', { class: 'row coin-row' }, coinInputs)),
+    h('div', { class: 'field' }, h('span', { text: `Items (${d.lines.length})` }), lines,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a line', onclick: () => { d.lines.push({ id: `add-${Date.now()}`, kind: 'gear', qty: 1, name: '', value: 0 }); renderPanel(); } }),
+        addMagic)),
+    h('p', { class: 'muted', text: `Worth about ${formatPrice(total)} (magic items at their listed value).` }),
+    h('div', { class: 'gen-actions' },
+      h('button', { class: 'btn', type: 'button', text: 'Give to the party now', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try {
+          await giveLoot(pile(), placeOf(placeSel.value)?.label || title.value.trim() || '');
+          if (S.panel.cacheId) await S.store.deleteCache(S.panel.cacheId);
+          toast('Added to the party’s Loot.');
+          openMarket('loot');
+        } catch (err) { toast('Could not add it: ' + err.message); e.currentTarget.disabled = false; }
+      } }),
+      h('div', { class: 'row' },
+        placeSel, title,
+        h('button', { class: 'btn ghost', type: 'button', text: S.panel.cacheId ? 'Save cache' : 'Hide it here', onclick: async () => {
+          try {
+            await S.store.saveCache({ place: placeSel.value, title: title.value.trim(), seed: d.seed, ...pile(),
+              draftOpts: { level: d.level, mode: d.mode, setting: d.setting, homebrewMode: d.homebrewMode }, createdAt: Date.now() }, S.panel.cacheId);
+            toast('Hidden. Reveal it from that place (or Loot) when the party finds it.');
+            openMarket('loot');
+          } catch (err) { toast('Could not hide it: ' + err.message); }
+        } })),
+      h('small', { class: 'muted', text: 'A hidden cache is only visible to you until you Reveal it.' })));
+}
+
+// ── homebrew magic items (DM) ───────────────────────────────────────
+function magicLibView() {
+  const items = [...S.magicItems].sort((a, b) => RARITIES.indexOf(a.rarity) - RARITIES.indexOf(b.rarity) || a.name.localeCompare(b.name));
+  return h('div', { class: 'codex' },
+    h('button', { class: 'linklike back', text: '← Loot', onclick: () => openMarket('loot') }),
+    h('div', { class: 'codex-kind', html: '<span>DM only</span>' }),
+    h('h2', { class: 'codex-title', text: 'My magic items' }),
+    h('p', { class: 'codex-sub', text: 'Your homebrew. They’re mixed into loot by rarity, and can appear under the counter in big-city shops.' }),
+    h('div', { class: 'codex-actions' }, h('button', { class: 'btn', text: '+ New magic item', onclick: () => { S.panel = { type: 'magicEdit', id: 'new' }; renderPanel(); } })),
+    items.length ? h('ol', { class: 'loot-list' }, items.map((m) => h('li', { class: 'loot-item magic' },
+      h('div', { class: 'loot-main' },
+        h('strong', { text: m.name }), h('span', { class: 'grade rare', text: m.rarity }),
+        m.inShops ? h('span', { class: 'grade fine', text: 'in shops' }) : null,
+        h('span', { class: 'loot-value', text: m.value ? formatPrice(m.value) : '' })),
+      m.detail ? h('div', { class: 'loot-detail', text: m.detail }) : null,
+      h('div', { class: 'loot-meta', text: `Unidentified: “${m.label || ''}. ${m.unidentified || ''}”` }),
+      h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'edit', onclick: () => { S.panel = { type: 'magicEdit', id: m.id }; renderPanel(); } })))))
+      : h('p', { class: 'muted', text: 'No homebrew yet.' }));
+}
+
+function magicEditView() {
+  const isNew = S.panel.id === 'new';
+  const m = isNew ? { name: '', rarity: 'uncommon', type: 'wondrous', label: '', unidentified: '', detail: '', value: '', inLoot: true, inShops: false } : S.magicItems.find((x) => x.id === S.panel.id);
+  if (!m) return h('p', { text: 'That item no longer exists.' });
+  const f = {
+    name: h('input', { type: 'text', maxlength: 80, value: m.name, required: true }),
+    rarity: h('select', {}, RARITIES.map((r) => h('option', { value: r, selected: r === m.rarity, text: r }))),
+    type: h('select', {}, ['wondrous', 'weapon', 'armor', 'ring', 'potion', 'scroll', 'wand', 'staff', 'rod'].map((t) => h('option', { value: t, selected: t === m.type, text: t }))),
+    value: h('input', { type: 'number', min: 0, step: 1, value: m.value ?? '' }),
+    label: h('input', { type: 'text', maxlength: 80, value: m.label || '', placeholder: 'e.g. A silver ring shaped like a coiled serpent' }),
+    unidentified: h('textarea', { rows: 2, placeholder: 'What players notice before it’s identified' }),
+    detail: h('textarea', { rows: 4, placeholder: 'What it actually does' }),
+    inLoot: h('input', { type: 'checkbox', checked: m.inLoot !== false }),
+    inShops: h('input', { type: 'checkbox', checked: !!m.inShops }),
+  };
+  f.unidentified.value = m.unidentified || '';
+  f.detail.value = m.detail || '';
+  return h('div', { class: 'codex editor' },
+    h('button', { class: 'linklike back', text: '← My magic items', onclick: () => { S.panel = { type: 'magicLib', id: 'all' }; renderPanel(); } }),
+    h('h2', { class: 'codex-title', text: isNew ? 'New magic item' : 'Edit magic item' }),
+    field('Name', f.name),
+    h('div', { class: 'row gen-pickers' }, field('Rarity', f.rarity), field('Type', f.type), field('Value (gp)', f.value)),
+    field('What it does', f.detail),
+    field('Unidentified: what it looks like', f.label, 'A short name players see, e.g. “A silver ring shaped like a coiled serpent”.'),
+    field('Unidentified: what they notice', f.unidentified),
+    h('label', { class: 'check' }, f.inLoot, ' Can turn up in generated loot'),
+    h('label', { class: 'check' }, f.inShops, ' Can appear under the counter in big-city Arcane Curios, Exotic Imports and Black Markets'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
+        if (!f.name.value.trim()) { f.name.focus(); return; }
+        const data = { name: f.name.value.trim(), rarity: f.rarity.value, type: f.type.value, value: Math.max(0, parseFloat(f.value.value) || 0),
+          label: f.label.value.trim() || `A curious ${f.type.value === 'wondrous' ? 'item' : f.type.value}`, unidentified: f.unidentified.value.trim(),
+          detail: f.detail.value.trim(), inLoot: f.inLoot.checked, inShops: f.inShops.checked };
+        try { await S.store.saveMagicItem(data, isNew ? null : m.id); S.panel = { type: 'magicLib', id: 'all' }; renderPanel(); }
+        catch (e) { toast('Could not save: ' + e.message); }
+      } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => { S.panel = { type: 'magicLib', id: 'all' }; renderPanel(); } }),
+      !isNew ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Delete "${m.name}" from your library? Copies already in Loot stay.`)) return;
+        await S.store.deleteMagicItem(m.id).catch((e) => toast(e.message));
+        S.panel = { type: 'magicLib', id: 'all' }; renderPanel();
+      } }) : null));
+}
+
+// ── identification, bought at a shop ────────────────────────────────
+async function buyIdentification(shop, st, item) {
+  // same order as the Loot list: unclaimed first, newest first
+  const candidates = S.loot.filter((x) => x.status === 'unidentified')
+    .sort((a, b) => !!a.claimedBy - !!b.claimedBy || (b.foundAt || 0) - (a.foundAt || 0));
+  if (!candidates.length) { toast('Nothing in the party’s Loot needs identifying.'); return; }
+  const answer = prompt(`Which item should ${shop.proprietor?.name || 'the shopkeeper'} identify? (${formatPrice(item.cost)})\n\n`
+    + candidates.map((x, i) => `${i + 1}. ${x.name}${x.claimedBy ? ` (${x.claimedBy}’s)` : ''}`).join('\n'), '1');
+  if (answer == null) return;
+  const chosen = candidates[parseInt(answer, 10) - 1];
+  if (!chosen) { toast(`Enter a number from 1 to ${candidates.length}.`); return; }
+  if (!confirm(`Pay ${formatPrice(item.cost)} to have "${chosen.name}" identified at ${shop.name}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+  const buyer = myName() || S.store.displayName || 'A party member';
+  const where = placeOf(shop.location)?.label || shop.name;
+  try {
+    const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
+    await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: `Identify: ${chosen.name}`, qty: 1, unitPrice: item.cost, total: item.cost, buyer, ...extra });
+    await S.store.requestIdentify(chosen.id, { pendingBy: buyer, pendingAt: Date.now(), pendingIn: where });
+    if (isDM()) await processIdentifications();
+    toast(isDM() ? 'Identified.' : `${shop.proprietor?.name || 'The sage'} takes it away to study. It’ll be identified soon.`);
+  } catch (e) { toast('Could not arrange it: ' + e.message); }
 }
 
 // ─── notes ──────────────────────────────────────────────────────────

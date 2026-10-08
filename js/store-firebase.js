@@ -71,6 +71,18 @@ export class FirebaseStore {
     onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
     onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
       (s) => h.haggles?.(list(s)), err);
+    // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
+    // The truth about unidentified items, hidden caches and the homebrew library are the DM's alone.
+    onSnapshot(this.col('loot'), (s) => h.loot?.(list(s)), err);
+    onSnapshot(this.col('lootLog'), (s) => h.lootLog?.(list(s)), err);
+    onSnapshot(this.ref('party', 'coins'), (s) => h.partyCoins?.(s.exists() ? s.data() : { cp: 0, sp: 0, gp: 0, pp: 0 }), err);
+    onSnapshot(this.col('magicPublic'), (s) => h.magicPublic?.(list(s)), err);
+    if (this.isDM) {
+      onSnapshot(this.col('lootTruth'), (s) => h.lootTruth?.(list(s)), err);
+      onSnapshot(this.col('caches'), (s) => h.caches?.(list(s)), err);
+      onSnapshot(this.col('magicItems'), (s) => h.magicItems?.(list(s)), err);
+    }
+
     // players' Persuasion bonuses: the DM sees everyone's, a player only their own
     if (this.isDM) onSnapshot(this.col('players'), (s) => h.players?.(list(s)), err);
     else onSnapshot(this.ref('players', this.uid), (s) => h.players?.(s.exists() ? [{ id: s.id, ...s.data() }] : []), err);
@@ -217,6 +229,49 @@ export class FirebaseStore {
   }
 
   deleteHaggle(id) { return this.F.deleteDoc(this.ref('haggles', id)); }
+
+  // ── loot
+  async saveLoot(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('loot'), { foundAt: Date.now(), ...data })).id;
+    await setDoc(this.ref('loot', id), data, { merge: true });
+    return id;
+  }
+
+  async deleteLoot(id) {
+    await this.F.deleteDoc(this.ref('loot', id));
+    await this.F.deleteDoc(this.ref('lootTruth', id)).catch(() => {});
+  }
+
+  saveLootTruth(id, data) { return this.F.setDoc(this.ref('lootTruth', id), data); }
+  addLootLog(text) { return this.F.addDoc(this.col('lootLog'), { text, at: Date.now() }); }
+  savePartyCoins(coins) { return this.F.setDoc(this.ref('party', 'coins'), coins); }
+  // a player may only move an unidentified item to "being studied" (see firestore.rules)
+  requestIdentify(id, data) { return this.F.updateDoc(this.ref('loot', id), { status: 'pending', ...data }); }
+
+  async saveCache(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('caches'), data)).id;
+    await setDoc(this.ref('caches', id), data, { merge: true });
+    return id;
+  }
+
+  deleteCache(id) { return this.F.deleteDoc(this.ref('caches', id)); }
+
+  async saveMagicItem(data, id) {
+    const { addDoc, setDoc, deleteDoc } = this.F;
+    if (!id) id = (await addDoc(this.col('magicItems'), data)).id;
+    else await setDoc(this.ref('magicItems', id), data, { merge: true });
+    // items allowed in shops get a public copy (name, rarity, price) so players' stock matches yours
+    if (data.inShops) await setDoc(this.ref('magicPublic', id), { name: data.name, rarity: data.rarity, type: data.type || '', value: Number(data.value) || 0, detail: data.detail || '' });
+    else await deleteDoc(this.ref('magicPublic', id)).catch(() => {});
+    return id;
+  }
+
+  async deleteMagicItem(id) {
+    await this.F.deleteDoc(this.ref('magicItems', id));
+    await this.F.deleteDoc(this.ref('magicPublic', id)).catch(() => {});
+  }
 
   // a player's own record (their Persuasion bonus); players create it once, the DM can change it
   savePlayer(data, uid = this.uid) {

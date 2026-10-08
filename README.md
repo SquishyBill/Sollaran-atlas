@@ -83,6 +83,15 @@ git push
 
 Item names and prices follow the D&D 5e SRD 5.1 (CC BY 4.0); magic item prices are suggestions.
 
+## Loot
+
+Everything lives under **Market → Loot**.
+
+- **Generate loot (DM):** pick party level, one creature or a hoard, and where it’s found (bandit camp, sunken ship, crypt…). Reroll the whole thing or any line, edit names, quantities and coins, add a specific magic item. Then **Give to the party now** or **Hide it here** as a secret cache at a place (reveal it from that place, or from Loot, when they find it).
+- **Loot** is the party’s shared stash: coins, items and a history. Players can see it; only the DM changes it. **Claim…** gives an item (or part of a stack) to someone; **Split evenly** / **Take coins** / **Add coins** handle the purse.
+- **Unidentified magic items** show players only a description. A player can pay **Identify an item** (20 gp, at Arcane Curios and Temples). The item shows “being studied”, and the DM’s browser reveals it the next time the DM opens the atlas. The DM can **reveal** anything for free (e.g. an *identify* spell at the table).
+- **My magic items (DM):** your homebrew, mixed into loot by rarity (mix / prefer / only). Tick “in shops” to let one appear under the counter in big-city Arcane Curios, Exotic Imports and Black Markets.
+
 ## Who's signed in, and locking it to your party
 
 Firebase keeps the list for you: **Authentication → Users** shows every Google account that has signed in, with first and last sign-in dates.

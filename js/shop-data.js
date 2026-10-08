@@ -77,7 +77,7 @@ const JEWELER = [
   ['Ring of Warmth', 600, 4, 'r'], ['Ring of Jumping', 500, 4, 'r'], ['Ring of Swimming', 500, 4, 'r'], ['Ring of Protection', 2000, 5, 'r'],
 ];
 const ARCANE = [
-  ['Arcane focus, crystal', 10], ['Arcane focus, orb', 20], ['Arcane focus, rod', 10], ['Arcane focus, staff', 5],
+  ['Identify an item', 20, 1, 's'], ['Arcane focus, crystal', 10], ['Arcane focus, orb', 20], ['Arcane focus, rod', 10], ['Arcane focus, staff', 5],
   ['Arcane focus, wand', 10], ['Component pouch', 25], ['Spellbook (blank)', 50], ['Ink (1 ounce bottle)', 10, 1, 'cn'],
   ['Ink pen', 0.02, 1, 'n'], ['Parchment (one sheet)', 0.1, 1, 'cn'], ['Druidic focus, yew wand', 10],
   ['Holy symbol, amulet', 5], ['Spell scroll (cantrip)', 30, 3, 'cn'], ['Spell scroll (1st level)', 60, 3, 'cn'],
@@ -113,7 +113,7 @@ const TINKER = [
 const TEMPLE = [
   ['Holy water (flask)', 25, 1, 'cn'], ['Holy symbol, amulet', 5], ['Holy symbol, emblem', 5], ['Holy symbol, reliquary', 5],
   ['Candles, blessed (10)', 0.5, 1, 'cn'], ['Prayer book', 25, 2], ['Incense (block)', 0.1, 1, 'cn'],
-  ['Blessing for the road', 5, 1, 's'], ['Healing: cure wounds', 10, 1, 's'], ['Healing: lesser restoration', 40, 2, 's'],
+  ['Identify an item', 20, 2, 's'], ['Blessing for the road', 5, 1, 's'], ['Healing: cure wounds', 10, 1, 's'], ['Healing: lesser restoration', 40, 2, 's'],
   ['Healing: prayer of healing', 40, 3, 's'], ['Remove curse', 90, 3, 's'], ['Funeral rites', 5, 1, 's'],
   ['Greater restoration', 450, 4, 'rs'], ['Raise dead (diamond not included)', 1250, 5, 'rs'], ['Potion of Healing', 50, 2, 'rcn'],
 ];

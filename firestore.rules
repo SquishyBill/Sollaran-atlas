@@ -123,6 +123,33 @@ service cloud.firestore {
       allow update, delete: if isDM();
     }
 
+    // Loot: the party's shared stash. Everyone can see it; only the DM changes it, except that a
+    // player may send an unidentified item off to be identified (after paying a shop for it).
+    match /loot/{id} {
+      allow read: if isPlayer();
+      allow create, delete: if isDM();
+      allow update: if isDM() || (isPlayer()
+        && resource.data.status == 'unidentified' && request.resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'pendingBy', 'pendingAt', 'pendingIn']));
+    }
+    match /lootLog/{id} {
+      allow read: if isPlayer();
+      allow write: if isDM();
+    }
+    match /party/{id} {
+      allow read: if isPlayer();
+      allow write: if isDM();
+    }
+    // What unidentified items really are, hidden caches, and the homebrew library: DM only.
+    match /lootTruth/{id} { allow read, write: if isDM(); }
+    match /caches/{id} { allow read, write: if isDM(); }
+    match /magicItems/{id} { allow read, write: if isDM(); }
+    // Homebrew items the DM allows in shops: name, rarity and price only.
+    match /magicPublic/{id} {
+      allow read: if isPlayer();
+      allow write: if isDM();
+    }
+
     // DM-only secrets for pins, pages and people (keyed by their id). Never readable by players.
     match /secrets/{id} {
       allow read, write: if isDM();

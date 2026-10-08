@@ -39,6 +39,8 @@ export class LocalStore {
     this.db.purchases ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic']) this.db[k] ||= {};
+    this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
   persist() {
@@ -60,6 +62,15 @@ export class LocalStore {
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.haggles?.(rows(this.db.haggles).filter((x) => dm || x.uid === this.uid));
     this.handlers.players?.(rows(this.db.players).filter((x) => dm || x.id === this.uid));
+    this.handlers.loot?.(rows(this.db.loot));
+    this.handlers.lootLog?.(rows(this.db.lootLog));
+    this.handlers.partyCoins?.(this.db.party.coins);
+    this.handlers.magicPublic?.(rows(this.db.magicPublic));
+    if (dm) {
+      this.handlers.lootTruth?.(rows(this.db.lootTruth));
+      this.handlers.caches?.(rows(this.db.caches));
+      this.handlers.magicItems?.(rows(this.db.magicItems));
+    }
     if (dm) this.handlers.secrets?.(rows(this.db.secrets));
   }
 
@@ -165,6 +176,47 @@ export class LocalStore {
   }
 
   async deleteHaggle(id) { delete this.db.haggles[id]; this.persist(); }
+
+  // ── loot: the party's stash, the hidden truth about unidentified items, caches, homebrew
+  async saveLoot(data, id) {
+    if (!id) { id = 'loot-' + rid(); this.db.loot[id] = { foundAt: Date.now() }; }
+    Object.assign(this.db.loot[id], data);
+    this.persist();
+    return id;
+  }
+
+  async deleteLoot(id) { delete this.db.loot[id]; delete this.db.lootTruth[id]; this.persist(); }
+  async saveLootTruth(id, data) { this.db.lootTruth[id] = data; this.persist(); }
+  async addLootLog(text) { this.db.lootLog[rid()] = { text, at: Date.now() }; this.persist(); }
+  async savePartyCoins(coins) { this.db.party.coins = coins; this.persist(); }
+
+  async requestIdentify(id, data) {
+    const item = this.db.loot[id];
+    if (!item || item.status !== 'unidentified') throw new Error('That item isn\u2019t waiting to be identified.');
+    Object.assign(item, { status: 'pending', ...data });
+    this.persist();
+  }
+
+  async saveCache(data, id) {
+    if (!id) id = 'cache-' + rid();
+    this.db.caches[id] = { ...this.db.caches[id], ...data };
+    this.persist();
+    return id;
+  }
+
+  async deleteCache(id) { delete this.db.caches[id]; this.persist(); }
+
+  async saveMagicItem(data, id) {
+    if (!id) id = 'magic-' + rid();
+    this.db.magicItems[id] = { ...this.db.magicItems[id], ...data };
+    const m = this.db.magicItems[id];
+    if (m.inShops) this.db.magicPublic[id] = { name: m.name, rarity: m.rarity, type: m.type || '', value: Number(m.value) || 0, detail: m.detail || '' };
+    else delete this.db.magicPublic[id];
+    this.persist();
+    return id;
+  }
+
+  async deleteMagicItem(id) { delete this.db.magicItems[id]; delete this.db.magicPublic[id]; this.persist(); }
 
   // a player's own record (their Persuasion bonus); players set it once, the DM can change it
   async savePlayer(data, uid = this.uid) {
