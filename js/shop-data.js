@@ -17,7 +17,8 @@ export const sizeById = (id) => SIZES.find((s) => s.id === Number(id)) || SIZES[
 
 // ─── catalogs ───────────────────────────────────────────────────────
 // [name, price in gp, smallest settlement size that stocks it, flags]
-// flags: c = consumable (stocked in quantity), n = no "fine" version, r = rare/special stock
+// flags: c = consumable (stocked in quantity), n = no "fine" version, r = rare/special stock,
+//        s = a service (never runs out: lodging, healing, passage…)
 const GENERAL = [
   ['Backpack', 2], ['Bedroll', 1], ['Blanket', 0.5], ['Candle', 0.01, 1, 'cn'], ['Chalk (1 piece)', 0.01, 1, 'cn'],
   ['Crowbar', 2], ['Flask', 0.02, 1, 'n'], ['Hammer', 1], ['Lamp', 0.5], ['Lantern, hooded', 5],
@@ -108,6 +109,114 @@ const TINKER = [
   ['Magnifying glass', 100, 3, 'r'], ['Alchemy Jug', 600, 4, 'r'], ['Lantern of Revealing', 600, 4, 'r'],
 ];
 
+// ── shops added 2026-10-08 ──────────────────────────────────────────
+const TEMPLE = [
+  ['Holy water (flask)', 25, 1, 'cn'], ['Holy symbol, amulet', 5], ['Holy symbol, emblem', 5], ['Holy symbol, reliquary', 5],
+  ['Candles, blessed (10)', 0.5, 1, 'cn'], ['Prayer book', 25, 2], ['Incense (block)', 0.1, 1, 'cn'],
+  ['Blessing for the road', 5, 1, 's'], ['Healing: cure wounds', 10, 1, 's'], ['Healing: lesser restoration', 40, 2, 's'],
+  ['Healing: prayer of healing', 40, 3, 's'], ['Remove curse', 90, 3, 's'], ['Funeral rites', 5, 1, 's'],
+  ['Greater restoration', 450, 4, 'rs'], ['Raise dead (diamond not included)', 1250, 5, 'rs'], ['Potion of Healing', 50, 2, 'rcn'],
+];
+const INN = [
+  ['Lodging, poor (per night)', 0.1, 1, 's'], ['Lodging, modest (per night)', 0.5, 1, 's'], ['Lodging, comfortable (per night)', 0.8, 2, 's'],
+  ['Lodging, wealthy (per night)', 2, 3, 's'], ['Lodging, aristocratic (per night)', 4, 4, 's'],
+  ['Meal, poor', 0.06, 1, 's'], ['Meal, modest', 0.3, 1, 's'], ['Meal, comfortable', 0.5, 2, 's'], ['Meal, wealthy', 0.8, 3, 's'],
+  ['Ale (mug)', 0.04, 1, 's'], ['Wine, common (pitcher)', 0.2, 1, 's'], ['Wine, fine (bottle)', 10, 2, 'cn'],
+  ['Hot bath', 0.1, 1, 's'], ['Stabling (per night)', 0.5, 1, 's'], ['A round for the house (and the local gossip)', 0.5, 1, 's'],
+  ['Private room for a meeting', 1, 2, 's'], ['Feast for the party', 10, 3, 's'],
+  ['The house\u2019s best bottle', 25, 3, 'rcn'],
+];
+const SHIPWRIGHT = [
+  ['Rowboat', 50, 1, 'n'], ['Oars (pair)', 2], ['Sail canvas (bolt)', 5, 1, 'cn'], ['Rope, hempen (50 ft)', 1, 1, 'c'],
+  ['Pitch & tar (barrel)', 2, 1, 'cn'], ['Anchor', 10], ['Fishing net', 1], ['Navigator\u2019s tools', 25, 2],
+  ['Keelboat', 3000, 3, 'n'], ['Sailing ship', 10000, 4, 'n'], ['Longship', 10000, 5, 'n'],
+  ['Passage (per mile)', 0.1, 1, 's'], ['Ship repairs (per day)', 10, 2, 's'], ['Hire a crew (per day)', 2, 2, 's'],
+  ['Spyglass', 1000, 4, 'r'], ['Folding Boat', 600, 4, 'r'], ['Galley', 30000, 5, 'rn'], ['Warship', 25000, 5, 'rn'],
+];
+const VINTNER = [
+  ['Wine, common (pitcher)', 0.2, 1, 'cn'], ['Wine, fine (bottle)', 10, 1, 'cn'], ['Lynport red (bottle)', 15, 2, 'cn'],
+  ['Lynport white (bottle)', 12, 2, 'cn'], ['Sparkling wine (bottle)', 20, 3, 'cn'], ['Brandy (bottle)', 20, 3, 'cn'],
+  ['Cask of table wine', 8, 1, 'n'], ['Empty bottles (dozen)', 0.2, 1, 'cn'], ['Corks & wax (dozen)', 0.1, 1, 'cn'], ['Wine skin', 0.2],
+  ['Tasting (a flight of five)', 1, 2, 's'],
+  ['Ashglass reserve, pre-flood vintage', 75, 3, 'rcn'], ['The Duchess\u2019s private label', 150, 4, 'rcn'],
+];
+const BREWER = [
+  ['Ale (gallon)', 0.2, 1, 'cn'], ['Rye ale (gallon)', 0.25, 1, 'cn'], ['Stout (gallon)', 0.3, 1, 'cn'], ['Mead (bottle)', 2, 1, 'cn'],
+  ['Keg of rye ale', 4, 1, 'n'], ['Empty keg', 2, 1, 'n'], ['Hops (sack)', 1, 1, 'cn'], ['Barley (sack)', 0.5, 1, 'cn'],
+  ['Brewer\u2019s supplies', 20, 2], ['Tankard, pewter', 0.5], ['A pint and a seat by the vats', 0.04, 1, 's'],
+  ['Betram\u2019s Rye Ale, prizewinning keg', 30, 2, 'rn'], ['Dwarven stout (keg)', 25, 3, 'rn'],
+];
+const SALT = [
+  ['Salt (1 lb)', 0.05, 1, 'cn'], ['Salt (50 lb sack)', 2, 1, 'cn'], ['Salt (barrel)', 8, 2, 'cn'], ['Salt pork (1 lb)', 0.2, 1, 'cn'],
+  ['Salted fish (1 lb)', 0.1, 1, 'cn'], ['Pickled vegetables (jar)', 0.1, 1, 'cn'], ['Preserved rations (1 week)', 3.5, 1, 'cn'],
+  ['Smoked sausage', 0.3, 1, 'cn'], ['Brine (barrel)', 3, 1, 'n'], ['Sea salt, fine (jar)', 1, 3, 'cn'],
+  ['Saltyard white salt (crate)', 50, 4, 'rn'], ['Salt-cured ham, aged a year', 15, 3, 'rcn'],
+];
+const QUARTERMASTER = [
+  ['Spear', 1], ['Shortsword', 10], ['Longsword', 15], ['Shield', 10], ['Crossbow, light', 25], ['Crossbow bolts (20)', 1, 1, 'c'],
+  ['Ring mail', 30], ['Chain shirt', 50], ['Chain mail', 75, 2], ['Tent, two-person', 2], ['Rations (1 day)', 0.5, 1, 'cn'],
+  ['Mess kit', 0.2], ['Bedroll', 1], ['Signal whistle', 0.05, 1, 'n'], ['Caltrops (bag of 20)', 1, 1, 'cn'], ['Manacles', 2],
+  ['Healer\u2019s kit', 5], ['Saddle, military', 20, 2], ['Waterskin', 0.2],
+  ['Officer\u2019s breastplate', 400, 3, 'r'], ['Harthall regimental shield +1', 600, 4, 'r'], ['Longsword +1', 600, 4, 'r'],
+];
+const SCRIBE = [
+  ['Paper (one sheet)', 0.2, 1, 'cn'], ['Parchment (one sheet)', 0.1, 1, 'cn'], ['Ink (1 ounce bottle)', 10, 1, 'cn'],
+  ['Ink pen', 0.02, 1, 'n'], ['Book, blank', 25], ['Case, map or scroll', 1], ['Sealing wax', 0.5, 1, 'cn'],
+  ['Calligrapher\u2019s supplies', 10, 2], ['Spellbook (blank)', 50, 3], ['Map of the dukedom', 10, 2],
+  ['A letter written for you', 0.2, 1, 's'], ['A contract drafted', 2, 1, 's'], ['A book copied (per page)', 0.1, 2, 's'],
+  ['A message sent by courier (per mile)', 0.02, 2, 's'],
+  ['Spell scroll (1st level)', 60, 3, 'rcn'], ['Tome of local history', 25, 3, 'r'],
+];
+const HERBALIST = [
+  ['Healing herbs (bundle)', 1, 1, 'cn'], ['Poultice', 2, 1, 'cn'], ['Antitoxin (vial)', 50, 2, 'cn'], ['Herbalism kit', 5],
+  ['Sleeping draught', 5, 1, 'cn'], ['Calming tea', 0.5, 1, 'cn'], ['Insect-repelling salve', 1, 1, 'cn'], ['Smelling salts', 1, 1, 'cn'],
+  ['Moonpetal (rare reagent)', 10, 3, 'cn'], ['Potion of Healing', 50, 2, 'cn'],
+  ['Potion of Greater Healing', 150, 3, 'rcn'], ['Keoghtom\u2019s Ointment', 120, 4, 'rcn'],
+];
+const BUTCHER = [
+  ['Meat, chunk', 0.3, 1, 'cn'], ['Sausage', 0.2, 1, 'cn'], ['Salt pork (1 lb)', 0.2, 1, 'cn'], ['Fish, fresh', 0.1, 1, 'cn'],
+  ['Smoked fish', 0.2, 1, 'cn'], ['Eel', 0.3, 1, 'cn'], ['Fowl, plucked', 0.4, 1, 'cn'], ['Ham, whole', 2, 1, 'cn'],
+  ['Lard (1 lb)', 0.1, 1, 'cn'], ['Lake Dorath trout', 0.5, 2, 'cn'], ['Oysters (dozen)', 1, 3, 'cn'],
+  ['Venison haunch', 3, 2, 'cn'], ['A whole roast for a feast', 10, 3, 'rcn'],
+];
+const CARPENTER = [
+  ['Barrel', 2, 1, 'n'], ['Chest', 5], ['Crate', 0.5, 1, 'n'], ['Ladder (10 ft)', 0.1], ['Pole (10 ft)', 0.05, 1, 'n'],
+  ['Wagon wheel', 5], ['Carpenter\u2019s tools', 8], ['Woodcarver\u2019s tools', 1], ['Firewood (bundle)', 0.01, 1, 'cn'],
+  ['Bucket', 0.05, 1, 'n'], ['Coffin', 10, 1, 'n'], ['Repairs (per day)', 1, 1, 's'], ['Build to order (per day)', 2, 2, 's'],
+  ['Folding Boat', 600, 4, 'r'],
+];
+const MUSIC = [
+  ['Flute', 2], ['Horn', 3], ['Shawm', 2], ['Drum', 6], ['Pan flute', 12], ['Dulcimer', 25], ['Lyre', 30], ['Viol', 30, 2],
+  ['Bagpipes', 30, 2], ['Lute', 35], ['Strings & reeds', 0.5, 1, 'cn'], ['Songbook', 5, 2], ['Lessons (per week)', 2, 1, 's'],
+  ['Pipes of the Sewers', 400, 4, 'r'], ['Pipes of Haunting', 400, 4, 'r'], ['Instrument of the Bards (Doss lute)', 2000, 5, 'r'],
+];
+const MONEYCHANGER = [
+  ['Coin exchange (per 100 gp)', 2, 1, 's'], ['Letter of credit (per 100 gp)', 1, 2, 's'], ['Strongbox rental (per week)', 1, 2, 's'],
+  ['Notarized contract', 5, 2, 's'], ['Appraisal of gems or art', 2, 2, 's'], ['Safe passage bond (per 100 gp)', 5, 3, 's'],
+  ['Chest', 5], ['Lock', 10], ['Scale, merchant\u2019s', 5], ['Coin purse', 0.5],
+  ['A sealed letter of introduction', 50, 4, 'rs'],
+];
+const CARTOGRAPHER = [
+  ['Map of the dukedom', 10, 1, 'n'], ['Map of Sollara', 25, 3, 'n'], ['Road map with inns marked', 5, 2, 'n'],
+  ['Chart of the Emerald Sea', 50, 4, 'n'], ['Cartographer\u2019s tools', 15], ['Navigator\u2019s tools', 25, 2],
+  ['Case, map or scroll', 1], ['Compass', 25, 2], ['A survey of your route', 5, 2, 's'],
+  ['Map of the Wilds (unreliable)', 100, 4, 'rn'], ['Old map of Tal\u2019Alor', 250, 5, 'rn'],
+];
+const BLACKMARKET = [
+  ['Thieves\u2019 tools', 25], ['Forgery kit', 15], ['Disguise kit', 25], ['Poison, basic (vial)', 100, 1, 'cn'],
+  ['Caltrops (bag of 20)', 1, 1, 'cn'], ['Ball bearings (bag of 1,000)', 1, 1, 'cn'], ['Crowbar', 2], ['Lantern, hooded', 5],
+  ['Manacles', 2], ['Stolen goods (no questions)', 10, 1, 'cn'], ['Forged travel papers', 25, 2, 's'],
+  ['A name, and where to find them', 10, 2, 's'], ['Assassin\u2019s blood (poison)', 150, 3, 'cn'],
+  ['Serpent venom (poison)', 200, 4, 'cn'], ['Dust of Disappearance', 300, 3, 'rcn'], ['Cloak of Elvenkind', 500, 4, 'r'],
+  ['Boots of Elvenkind', 500, 4, 'r'],
+];
+const IMPORTS = [
+  ['Silk (bolt)', 10, 1, 'n'], ['Spices (1 lb)', 1, 1, 'cn'], ['Saffron (1 oz)', 15, 2, 'cn'], ['Pepper (1 lb)', 2, 1, 'cn'],
+  ['Tea (bundle)', 1, 1, 'cn'], ['Incense (box)', 1, 1, 'cn'], ['Perfume (vial)', 5, 1, 'cn'], ['Porcelain cup', 10, 2],
+  ['Ivory carving', 25, 2], ['Glass beads (string)', 1], ['Rope, silk (50 ft)', 10], ['Exotic songbird', 50, 4, 'n'],
+  ['Robe of Useful Items', 400, 3, 'r'], ['Eversmoking Bottle', 300, 4, 'r'], ['Elemental Gem', 900, 5, 'r'],
+];
+
 export const SHOP_TYPES = {
   general: {
     label: 'General Store', catalog: GENERAL, nouns: ['Goods', 'Sundries', 'Supply', 'Provisions', 'Trading Post', 'Emporium'],
@@ -164,6 +273,87 @@ export const SHOP_TYPES = {
     adj: ['Clockwork', 'Brass', 'Clever', 'Rusty', 'Whirring', 'Odd'],
     flavor: ['Gears, springs and half-built contraptions everywhere.', 'Something on the back shelf is ticking.', 'Locks of every size line one wall; a few are still locked.'],
   },
+
+  temple: {
+    label: 'Temple of the Rising Sun', catalog: TEMPLE, nouns: ['Dawn', 'Sunrise', 'Light', 'Sanctuary', 'Rising Sun', 'Hearth'],
+    adj: ['Golden', 'Radiant', 'Merciful', 'Dawning', 'Holy', 'Gentle'], namePattern: 'temple',
+    flavor: ['Sunlight through the high windows lands on a worn stone altar.', 'Acolytes sweep the steps and greet every visitor by name.', 'The smell of beeswax and the hum of morning prayer.'],
+  },
+  inn: {
+    label: 'Inn & Tavern', catalog: INN, nouns: ['Rest', 'Hearth', 'Tankard', 'Lantern', 'Hound', 'Crow', 'Stag', 'Barrel'],
+    adj: ['Drowsy', 'Laughing', 'Golden', 'Prancing', 'Rusty', 'Jolly', 'Drunken', 'Sleeping'],
+    flavor: ['A fire roars in the hearth and nobody asks your business.', 'Smoke, song, and the clatter of dice from the back tables.', 'Clean sheets, cold ale and a landlord who remembers faces.'],
+  },
+  shipwright: {
+    label: 'Shipwright & Chandler', catalog: SHIPWRIGHT, nouns: ['Slipway', 'Hull', 'Keel', 'Drydock', 'Rigging', 'Mast'],
+    adj: ['Seaworthy', 'Salt-Stained', 'Tarred', 'Windward', 'Steady', 'Barnacled'],
+    flavor: ['A half-built hull rises on the slip like the ribs of a whale.', 'Coils of rope, barrels of pitch and the cry of gulls.', 'The yard rings with mallets; the harbor smells of tar.'],
+  },
+  vintner: {
+    label: 'Vintner', catalog: VINTNER, nouns: ['Cellar', 'Vineyard', 'Cask', 'Grape', 'Vintage', 'Press'],
+    adj: ['Crimson', 'Velvet', 'Sun-Warmed', 'Lynport', 'Old Vine', 'Gentle'],
+    flavor: ['Racks of dusty bottles vanish into a cool stone cellar.', 'A tasting table, a sommelier, and very small glasses.', 'The air is sweet with crushed grapes and old oak.'],
+  },
+  brewer: {
+    label: 'Brewer', catalog: BREWER, nouns: ['Brewhouse', 'Mash Tun', 'Barley', 'Tankard', 'Kettle', 'Hops'],
+    adj: ['Foaming', 'Rye', 'Hoppy', 'Copper', 'Bubbling', 'Thirsty'],
+    flavor: ['Great copper kettles steam behind a counter of kegs.', 'Last year\u2019s prize ribbon hangs proudly above the taps.', 'The whole street smells of malt.'],
+  },
+  salt: {
+    label: 'Salt Merchant', catalog: SALT, nouns: ['Saltworks', 'Brine', 'Salt House', 'Cellar', 'Larder', 'Pan'],
+    adj: ['White', 'Briny', 'Crystal', 'Preserving', 'Grey', 'Sea'],
+    flavor: ['Sacks of white salt are stacked to the rafters.', 'Every price on the board is a little higher than you\u2019d like. Everyone needs salt.', 'Barrels of salt pork and pickles line the walls.'],
+  },
+  quartermaster: {
+    label: 'Quartermaster', catalog: QUARTERMASTER, nouns: ['Stores', 'Armory', 'Supply', 'Barracks Store', 'Quartermaster', 'Depot'],
+    adj: ['Regimental', 'Old Guard', 'Surplus', 'Garrison', 'Iron', 'Field'],
+    flavor: ['Everything is stamped with the Harthall stag and counted twice.', 'A retired sergeant runs it like a parade ground.', 'Crates of army surplus, some of it suspiciously new.'],
+  },
+  scribe: {
+    label: 'Scribe & Bookbinder', catalog: SCRIBE, nouns: ['Quill', 'Inkwell', 'Folio', 'Bindery', 'Scriptorium', 'Letters'],
+    adj: ['Careful', 'Inky', 'Learned', 'Gilded', 'Quiet', 'Patient'],
+    flavor: ['The only sound is the scratch of a dozen quills.', 'Stacks of books, some of them unfinished, all of them dusty.', 'A clerk peers over spectacles and asks what you need written.'],
+  },
+  herbalist: {
+    label: 'Herbalist', catalog: HERBALIST, nouns: ['Garden', 'Root', 'Leaf', 'Thicket', 'Remedy', 'Bloom'],
+    adj: ['Green', 'Wild', 'Gentle', 'Hedge', 'Moonlit', 'Fragrant'],
+    flavor: ['Bundles of drying herbs hang from every beam.', 'A tiny shop that smells of mint, earth and something bitter.', 'The herbalist is out back in the garden; ring the bell.'],
+  },
+  butcher: {
+    label: 'Butcher & Fishmonger', catalog: BUTCHER, nouns: ['Block', 'Cleaver', 'Catch', 'Smokehouse', 'Larder', 'Market'],
+    adj: ['Fresh', 'Smoky', 'Honest', 'Red', 'Salted', 'Lakeside'],
+    flavor: ['Today\u2019s catch lies on ice; hams hang from hooks.', 'The cleaver thunks without pause while you browse.', 'A smokehouse out back gives the street its smell.'],
+  },
+  carpenter: {
+    label: 'Carpenter & Cooper', catalog: CARPENTER, nouns: ['Workshop', 'Joinery', 'Cooperage', 'Lathe', 'Timberyard', 'Bench'],
+    adj: ['Oaken', 'Sturdy', 'Square', 'Sawdust', 'Honest', 'Pine'],
+    flavor: ['Sawdust everywhere and barrels stacked like a wall.', 'The carpenter measures you with their eyes, out of habit.', 'Half-made wheels, chests and coffins line the yard.'],
+  },
+  music: {
+    label: 'Instrument Maker', catalog: MUSIC, nouns: ['Lute', 'Harp', 'Song', 'Ballad', 'Chord', 'Melody'],
+    adj: ['Silver', 'Singing', 'Sweet', 'Merry', 'Golden', 'Lilting'],
+    flavor: ['Someone is always testing an instrument in the back room.', 'Lutes hang on the walls like hams in a smokehouse.', 'The maker hums the same tune every time a customer comes in.'],
+  },
+  moneychanger: {
+    label: 'Moneychanger & Bank', catalog: MONEYCHANGER, nouns: ['Exchange', 'Counting House', 'Vault', 'Ledger', 'Coin', 'Strongroom'],
+    adj: ['Golden', 'Honest', 'Silver', 'Sealed', 'Steady', 'Stone'],
+    flavor: ['Marble floors, brass scales and two guards who never blink.', 'Every coin is weighed, bitten and written down.', 'Clerks at high desks, and a vault door you could drive a cart through.'],
+  },
+  cartographer: {
+    label: 'Cartographer', catalog: CARTOGRAPHER, nouns: ['Compass', 'Chart', 'Atlas', 'Survey', 'Meridian', 'Map Room'],
+    adj: ['Wandering', 'Careful', 'Faraway', 'Inked', 'Northern', 'Brass'],
+    flavor: ['Maps cover the walls, the tables and part of the floor.', 'The cartographer wants to hear where you\u2019ve been more than sell you anything.', 'Globes, rulers and a map of the Wilds marked \u201chere be trouble\u201d.'],
+  },
+  blackmarket: {
+    label: 'Black Market', catalog: BLACKMARKET, inverse: true, hiddenByDefault: true,
+    nouns: ['Back Room', 'Cellar', 'Den', 'Alley', 'Hollow', 'Rat'], adj: ['Quiet', 'Crooked', 'Shadowed', 'Grey', 'Silent', 'Low'],
+    flavor: ['Ask for it by the wrong name and the door stays shut.', 'A back room behind a respectable-looking business.', 'Everything is cash only, and nothing is ever discussed twice.'],
+  },
+  imports: {
+    label: 'Exotic Imports', catalog: IMPORTS, nouns: ['Bazaar', 'Caravan', 'Wonders', 'Silks', 'Spice House', 'Treasures'],
+    adj: ['Far Shore', 'Emerald', 'Gilded', 'Distant', 'Saffron', 'Peacock'],
+    flavor: ['Silks, spices and things you have no names for.', 'Every item comes with a story of a long voyage, some of them true.', 'The air is thick with incense and the sound of a caged bird.'],
+  },
 };
 
 // ─── people ─────────────────────────────────────────────────────────
@@ -210,12 +400,13 @@ const newSeed = () => Math.random().toString(36).slice(2, 10);
 export function generateShop(type, size, seed = newSeed()) {
   const t = SHOP_TYPES[type], r = rng(`shop:${seed}`);
   const first = pick(r, FIRST), last = pick(r, LAST);
-  const name = pick(r, [
+  const name = t.namePattern === 'temple' ? `${pick(r, ['Chapel', 'Shrine', 'Temple', 'House'])} of the ${pick(r, t.adj)} ${pick(r, t.nouns)}` : pick(r, [
     () => `The ${pick(r, t.adj)} ${pick(r, t.nouns)}`,
     () => `${last}’s ${pick(r, t.nouns)}`,
     () => `${first}’s ${pick(r, t.nouns)}`,
     () => `The ${pick(r, t.nouns)} & ${pick(r, t.nouns)}`,
   ])();
+  // (temples name themselves; everyone else picks one of the patterns above)
   return {
     seed, type, size: Number(size), name,
     proprietor: { name: `${first} ${last}`, race: weighted(r, RACES), quirk: pick(r, QUIRKS) },
@@ -228,18 +419,25 @@ export function generateShop(type, size, seed = newSeed()) {
 export function generateStock(shop, week) {
   const t = SHOP_TYPES[shop.type], s = sizeById(shop.size), r = rng(`stock:${shop.seed}:${week}`);
   const items = t.catalog.map(([name, price, min = 1, flags = '']) => ({ name, price, min, flags }));
-  const common = items.filter((i) => !i.flags.includes('r') && i.min <= s.id);
+  const common = items.filter((i) => !i.flags.includes('r') && !i.flags.includes('s') && i.min <= s.id);
+  // everyday services are always on offer (an inn always has rooms); only goods are drawn at random
+  const services = items.filter((i) => !i.flags.includes('r') && i.flags.includes('s') && i.min <= s.id);
   const rare = items.filter((i) => i.flags.includes('r') && i.min <= s.id);
   const shuffle = (list) => list.map((i) => [r(), i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);
   const out = [];
   for (const i of shuffle(common).slice(0, between(r, ...s.items))) {
-    const fine = !i.flags.includes('n') && !i.flags.includes('c') && r() < s.fine;
-    const qty = i.flags.includes('c') ? between(r, 2, 6) * s.qtyBoost : between(r, 1, 1 + Math.floor(s.qtyBoost / 2));
+    const service = i.flags.includes('s');
+    const fine = !service && !i.flags.includes('n') && !i.flags.includes('c') && r() < s.fine;
+    const qty = service ? null : i.flags.includes('c') ? between(r, 2, 6) * s.qtyBoost : between(r, 1, 1 + Math.floor(s.qtyBoost / 2));
     out.push({ key: `${i.name}|${fine ? 'fine' : 'standard'}`, name: fine ? `${i.name} (fine)` : i.name,
-      grade: fine ? 'fine' : 'standard', price: fine ? i.price * 2 : i.price, qty });
+      grade: fine ? 'fine' : 'standard', price: fine ? i.price * 2 : i.price, qty, service });
+  }
+  for (const i of services) {
+    out.push({ key: `${i.name}|standard`, name: i.name, grade: 'standard', price: i.price, qty: null, service: true });
   }
   for (const i of shuffle(rare).slice(0, s.rare)) {
-    out.push({ key: `${i.name}|rare`, name: i.name, grade: 'rare', price: i.price, qty: i.flags.includes('c') ? between(r, 1, 3) : 1 });
+    const service = i.flags.includes('s');
+    out.push({ key: `${i.name}|rare`, name: i.name, grade: 'rare', price: i.price, qty: service ? null : i.flags.includes('c') ? between(r, 1, 3) : 1, service });
   }
   const grades = { standard: 0, fine: 1, rare: 2 };
   return out
@@ -258,12 +456,25 @@ export function renownTerms(score) {
   return { mult, allow: { standard: true, fine: true, rare: true }, note: 'Shows you everything, including what’s under the counter.' };
 }
 
-// Round to amounts a shopkeeper would actually ask: whole gold from 10 gp, silver from 1 gp, copper below.
+// Round to amounts a shopkeeper would actually ask: whole gold from 10 gp, silver from 1 sp, copper below.
 export function nicePrice(gp) {
   if (gp >= 10) return Math.round(gp);
-  if (gp >= 1) return Math.round(gp * 10) / 10;
+  if (gp >= 0.1) return Math.round(gp * 10) / 10; // to the silver piece
   return Math.max(0.01, Math.round(gp * 100) / 100);
 }
+
+// ─── haggling ───────────────────────────────────────────────────────
+// Once per player, per shop, per week: they roll Persuasion and enter the total.
+// The result changes that player's prices at that shop until the stock refreshes.
+export const HAGGLE = [
+  { upTo: 5, mult: 1.2, text: 'Offended! Prices go up 20%.' },
+  { upTo: 9, mult: 1.1, text: 'Unimpressed. Prices go up 10%.' },
+  { upTo: 14, mult: 1, text: 'No deal. Prices stay the same.' },
+  { upTo: 19, mult: 0.9, text: 'A fair bargain: 10% off.' },
+  { upTo: 24, mult: 0.85, text: 'Charmed: 15% off.' },
+  { upTo: Infinity, mult: 0.8, text: 'Won over completely: 20% off.' },
+];
+export const haggleResult = (roll) => HAGGLE.find((x) => roll <= x.upTo);
 
 // 12.5 → "12 gp 5 sp"; 0.04 → "4 cp"
 export function formatPrice(gp) {
