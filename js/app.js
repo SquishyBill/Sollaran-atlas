@@ -1832,7 +1832,7 @@ function shopGenView() {
     field('Description', desc),
     h('details', { class: 'legend', open: true },
       h('summary', { text: `This week’s stock (${preview.items.length} items)` }),
-      h('ul', { class: 'sales' }, preview.items.map((i) => h('li', { text: `${i.name} ×${i.qty} — ${formatPrice(i.cost)}${i.grade === 'rare' ? ' (under the counter)' : ''}` })))),
+      h('ul', { class: 'sales' }, preview.items.map((i) => h('li', { text: `${i.name} ${i.qty == null ? '(service)' : `×${i.qty}`} — ${formatPrice(i.cost)}${i.grade === 'rare' ? ' (under the counter)' : ''}` })))),
     h('label', { class: 'check' }, addPerson, ' Add the proprietor to People'),
     h('label', { class: 'check' }, addPin, ' Place a pin for it on the map'),
     h('label', { class: 'check' }, hidden, ' Hidden from players for now'),
