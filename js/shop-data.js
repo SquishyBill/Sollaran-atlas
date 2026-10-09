@@ -53,6 +53,8 @@ const TAILOR = [
   ['Robes', 1], ['Blanket', 0.5], ['Padded armor', 5], ['Sack', 0.01, 1, 'n'], ['Cloak, wool', 1], ['Hat, wide-brimmed', 0.5],
   ['Gloves, kid leather', 1, 2], ['Weaver’s tools', 1], ['Bolt of linen', 2, 1, 'n'], ['Bolt of silk', 10, 3, 'n'],
   ['Cloak of Protection', 500, 4, 'r'], ['Cloak of Elvenkind', 500, 4, 'r'], ['Robe of Useful Items', 400, 3, 'r'],
+  // from the Archonate document
+  ['Crystal-weave cloth (bolt)', 150, 4, 'rn'], ['Crystal-weave robe', 400, 4, 'rn'],
 ];
 const FLETCHER = [
   ['Arrows (20)', 1, 1, 'c'], ['Crossbow bolts (20)', 1, 1, 'c'], ['Sling bullets (20)', 0.04, 1, 'cn'],
@@ -85,6 +87,8 @@ const ARCANE = [
   ['Spell scroll (3rd level)', 300, 4, 'rcn'], ['Driftglobe', 300, 3, 'r'], ['Wand of Magic Missiles', 500, 4, 'r'],
   ['Pearl of Power', 600, 4, 'r'], ['Decanter of Endless Water', 600, 4, 'r'], ['Sending Stones', 600, 5, 'r'],
   ['Immovable Rod', 1000, 5, 'r'],
+  // from the Archonate document
+  ['Attuned crystal pendant (state-controlled)', 3000, 5, 'r'],
 ];
 const STABLE = [
   ['Riding horse', 75, 1, 'n'], ['Draft horse', 50, 1, 'n'], ['Pony', 30, 1, 'n'], ['Mule', 8, 1, 'n'], ['Donkey', 8, 1, 'n'],
@@ -100,6 +104,8 @@ const PROVISIONER = [
   ['Cook’s utensils', 1], ['Mess kit', 0.2], ['Barrel', 2, 1, 'n'], ['Bucket', 0.05, 1, 'n'], ['Jug', 0.02, 1, 'n'],
   ['Pot, iron', 2], ['Brewer’s supplies', 20, 2],
   ['Keg of dwarven stout', 25, 3, 'rn'], ['Elven wine (bottle)', 50, 4, 'rcn'],
+  // from the Archonate document
+  ['Coffee beans (1 lb)', 3.5, 2, 'cn'], ['Wheat flour, harvest-blessed (sack)', 1, 1, 'cn'], ['Corn meal, harvest-blessed (sack)', 1, 1, 'cn'],
 ];
 const TINKER = [
   ['Thieves’ tools', 25, 2], ['Tinker’s tools', 50], ['Carpenter’s tools', 8], ['Mason’s tools', 10],
@@ -107,6 +113,8 @@ const TINKER = [
   ['Lock', 10], ['Manacles', 2], ['Hourglass', 25, 2], ['Abacus', 2], ['Scale, merchant’s', 5],
   ['Ball bearings (bag of 1,000)', 1, 1, 'cn'], ['Caltrops (bag of 20)', 1, 1, 'cn'], ['Bell', 1], ['Chain (10 ft)', 5],
   ['Magnifying glass', 100, 3, 'r'], ['Alchemy Jug', 600, 4, 'r'], ['Lantern of Revealing', 600, 4, 'r'],
+  // from the Archonate document
+  ['Compass, chrono-calibrated', 150, 3, 'r'], ['Sextant, chrono-calibrated', 300, 4, 'r'], ['Surveying kit, chrono-calibrated', 250, 4, 'r'], ['Clockwork automaton, chrono-calibrated', 2000, 5, 'r'],
 ];
 
 // ── shops added 2026-10-08 ──────────────────────────────────────────
@@ -144,7 +152,7 @@ const BREWER = [
   ['Ale (gallon)', 0.2, 1, 'cn'], ['Rye ale (gallon)', 0.25, 1, 'cn'], ['Stout (gallon)', 0.3, 1, 'cn'], ['Mead (bottle)', 2, 1, 'cn'],
   ['Keg of rye ale', 4, 1, 'n'], ['Empty keg', 2, 1, 'n'], ['Hops (sack)', 1, 1, 'cn'], ['Barley (sack)', 0.5, 1, 'cn'],
   ['Brewer\u2019s supplies', 20, 2], ['Tankard, pewter', 0.5], ['A pint and a seat by the vats', 0.04, 1, 's'],
-  ['Betram\u2019s Rye Ale, prizewinning keg', 30, 2, 'rn'], ['Dwarven stout (keg)', 25, 3, 'rn'],
+  ['Bertram\u2019s Rye Ale, prizewinning keg', 30, 2, 'rn'], ['Dwarven stout (keg)', 25, 3, 'rn'],
 ];
 const SALT = [
   ['Salt (1 lb)', 0.05, 1, 'cn'], ['Salt (50 lb sack)', 2, 1, 'cn'], ['Salt (barrel)', 8, 2, 'cn'], ['Salt pork (1 lb)', 0.2, 1, 'cn'],
@@ -209,12 +217,16 @@ const BLACKMARKET = [
   ['A name, and where to find them', 10, 2, 's'], ['Assassin\u2019s blood (poison)', 150, 3, 'cn'],
   ['Serpent venom (poison)', 200, 4, 'cn'], ['Dust of Disappearance', 300, 3, 'rcn'], ['Cloak of Elvenkind', 500, 4, 'r'],
   ['Boots of Elvenkind', 500, 4, 'r'],
+  // from the Archonate document
+  ['Powdered Residuum (one dose)', 400, 4, 'rcn'], ['Map of the Wilds (authenticity doubtful)', 300, 2, 'n'], ['Map to a ruined city (said to be accurate)', 600, 4, 'rn'], ['Cut gem, “enchanted” (unverified)', 500, 3, 'rn'], ['Icon of the old gods', 250, 2, 'n'], ['Ancient icon recovered from the Wilds', 1200, 4, 'rn'], ['Foreign treasure, smuggled', 350, 3, 'n'], ['Poison, imported (vial)', 300, 3, 'cn'],
 ];
 const IMPORTS = [
   ['Silk (bolt)', 10, 1, 'n'], ['Spices (1 lb)', 1, 1, 'cn'], ['Saffron (1 oz)', 15, 2, 'cn'], ['Pepper (1 lb)', 2, 1, 'cn'],
   ['Tea (bundle)', 1, 1, 'cn'], ['Incense (box)', 1, 1, 'cn'], ['Perfume (vial)', 5, 1, 'cn'], ['Porcelain cup', 10, 2],
   ['Ivory carving', 25, 2], ['Glass beads (string)', 1], ['Rope, silk (50 ft)', 10], ['Exotic songbird', 50, 4, 'n'],
   ['Robe of Useful Items', 400, 3, 'r'], ['Eversmoking Bottle', 300, 4, 'r'], ['Elemental Gem', 900, 5, 'r'],
+  // from the Archonate document
+  ['Coffee beans (1 lb)', 4, 1, 'cn'], ['Silk, bulk (bale)', 80, 3, 'n'], ['Perfume, magical (vial)', 75, 3, 'r'],
 ];
 
 export const SHOP_TYPES = {

@@ -65,6 +65,21 @@ export const SETTINGS = {
   },
 };
 
+// WORLD_PATCH: mundane finds and story hooks from the Sollaran Archonate document
+const WORLD = {
+  bandit: { gear: ['A Night Scale split-coin token', 'Powdered Residuum (a blue-dusted vial)', 'Stolen perfume (magical, a dozen vials)'], hooks: ['A Night Scale contact, with a meeting place and a password', 'A map of the Wilds the bandits bought, and probably should not have'] },
+  noble: { gear: ['Crystal-weave scarf', 'Perfume, magical (vial)', 'Coffee beans (finest, 1 lb)', 'Bertram’s Rye Ale (prizewinning bottle)'], hooks: ['A GEC tariff exemption with a forged signature'] },
+  caravan: { gear: ['Coffee beans (sack)', 'Crystal-weave cloth (bolt)', 'Bertram’s Rye Ale (keg)', 'Harvest-blessed wheat (sack, still fresh)', 'Spices from abroad (pouch)', 'Silk (bale)'], hooks: ['A GEC port-tariff receipt for goods that were never declared'] },
+  wizard: { gear: ['Chrono-calibrated sextant', 'Sacred crystal shard, dull'], hooks: ['A note on how to tell attuned crystal from glass'] },
+  dwarven: { gear: ['Cut gem blanks (a handful)', 'Chrono-calibrated surveying instrument', 'Bertram’s Rye Ale (dwarven-brewed copy)'], hooks: ['A dwarven gem-cutter’s ledger of imbued stones'] },
+  crypt: { gear: ['Icon of one of the old gods, hidden in a hollow book'], hooks: ['A scratched-out icon, and a prayer to a god no one is allowed to name'] },
+  temple: { gear: ['Attuned crystal, small (set in a ring)'], hooks: ['A hidden shrine to the old gods beneath the floor'] },
+  wilds: { gear: ['Fragment of a Time of Mists relic', 'Powdered Residuum (blue dust from a portal)', 'Hunter’s trophy: a monster’s head', 'Icon of the old gods, weathered'], hooks: ['A Hunter’s contract for a relic from the Time of Mists', 'A map to a ruined, cursed city, accuracy doubtful'] },
+  lair: { gear: ['Fragment of a Time of Mists relic'], hooks: ['A Hunter’s notes, and an unfinished map of the Wilds'] },
+};
+for (const [k, w] of Object.entries(WORLD)) { SETTINGS[k].gear.push(...w.gear); SETTINGS[k].hooks.push(...w.hooks); }
+
+
 // mundane bits that turn up anywhere; drawn about a third of the time instead of the setting's own list
 const COMMON_GEAR = ['Torch', 'Rope, hempen (50 ft)', 'Waterskin', 'Rations (1 day)', 'Tinderbox', 'Bedroll', 'Blanket', 'Backpack', 'Belt pouch', 'Mess kit', 'Whetstone', 'Chalk (piece)', 'Candle', 'Soap', 'Hempen sack', 'Wooden bowl and spoon', 'Iron pot', 'Signal whistle', 'Small mirror, steel', 'Dice set', 'Playing cards', 'Flask of oil', 'Bottle of cheap wine', 'Pair of boots', 'Wool cloak', 'Clothes, common', 'Clothes, traveler’s', 'Dagger', 'Sling', 'Club', 'Quarterstaff', 'Crossbow bolts (10)', 'Fishhooks (pouch)', 'Needle and thread', 'A tin whistle', 'A smooth lucky stone', 'A crumpled love letter', 'A wooden holy symbol', 'Comb, bone', 'Spoon, pewter', 'Pipe and tobacco', 'Key to an unknown door', 'A child’s drawing', 'A bundle of sticks and twine', 'Lamp', 'Hammer', 'Pitons (5)', 'Shovel', 'Ink pen', 'Sheets of paper (3)'];
 const pickGear = (r, set) => pick(r, chance(r, 0.35) ? COMMON_GEAR : set.gear);
@@ -101,6 +116,8 @@ const ART = {
   2500: ['A fine gold chain set with a fire opal', 'An old masterpiece painting', 'An embroidered silk and velvet mantle set with moonstones', 'A platinum bracelet set with a sapphire', 'An embroidered glove set with jewel chips', 'A jeweled anklet', 'A gold music box', 'A gold circlet set with four aquamarines', 'An eye patch with a mock eye of blue sapphire and moonstone', 'A necklace string of small pink pearls'],
   7500: ['A jeweled gold crown', 'A jeweled platinum ring', 'A small gold statuette set with rubies', 'A gold cup set with emeralds', 'A gold jewelry box with platinum filigree', 'A painted gold child’s sarcophagus', 'A jade game board with solid gold playing pieces', 'A bejeweled ivory drinking horn with gold filigree'],
 };
+ART[250].push('An icon of one of the old gods, in gilded wood', 'A tiny silver idol of a forbidden god');
+ART[750].push('A bronze icon of an old god, recovered from the Wilds');
 const GEM_TIERS = { individual: { 1: [10], 2: [50], 3: [100, 500], 4: [500, 1000] }, hoard: { 1: [10, 50], 2: [50, 100], 3: [100, 500, 1000], 4: [1000, 5000] } };
 const ART_TIERS = { 1: [25], 2: [25, 250], 3: [250, 750], 4: [750, 2500, 7500] };
 
@@ -175,6 +192,12 @@ const M = [
   ['Staff of the Magi', 'legendary', 'staff', 'A tall staff carved with a hundred symbols', 'The air around it smells like a thunderstorm.', 'A legendary staff of many spells, spell absorption and a devastating retributive strike (requires attunement).', 150000],
   ['Vorpal Sword', 'legendary', 'weapon', 'A long, thin blade', 'It cuts the air with no sound at all.', '+3 weapon that ignores slashing resistance; a natural 20 can sever a head (requires attunement).', 120000],
   ['Holy Avenger', 'legendary', 'weapon', 'A sword with a sunburst on the crossguard', 'It feels warm in the hand of anyone who prays.', '+3 weapon, +2d10 radiant against fiends and undead, and an aura of protection (requires attunement by a paladin).', 165000],
+  ['Attuned Crystal Pendant', 'rare', 'wondrous', 'A crystal set in a plain pendant', 'It hums faintly, and magic seems to shy away from it.', 'Worn: advantage on saving throws against spells and effects from fey, fiends and celestials, and they cannot charm or frighten you (requires attunement). A sacred crystal of the Archonate.', 3000],
+  ['Crystal-Weave Robe', 'uncommon', 'wondrous', 'A pale, shimmering robe', 'It is oddly light, and it glows faintly under starlight.', 'Cool in summer and warm in winter: you suffer no ill effects from ordinary natural heat or cold. Extremely durable.', 750],
+  ['Dwarven Cut Ruby', 'uncommon', 'wondrous', 'A flawlessly cut red gem', 'It is warm to the touch, and never cools.', 'Worn as jewelry: resistance to fire damage (requires attunement). Dwarven cut gems are sold for export only.', 1500],
+  ['Chrono-Calibrated Compass', 'uncommon', 'wondrous', 'A brass compass with fine gears showing through the case', 'Its needle never so much as trembles.', 'Works perfectly near magical interference and always points true north. Advantage on checks to avoid getting lost.', 400],
+  ['Perfume of Many Scents', 'common', 'wondrous', 'A stoppered perfume vial', 'The scent seems different each time you smell it.', 'Dab it on and think of a scent; the perfume becomes it, lasting about a day. Twelve applications.', 75],
+  ['Relic of the Time of Mists', 'rare', 'wondrous', 'An ancient object of unknown make', 'Mist curls from it when no one is looking.', 'A relic recovered from the Wilds. DM: decide what it does (edit this item in the Magic items library).', 1500],
 ];
 // +N weapons and armor, built from a base item
 const WEAPONS = ['Longsword', 'Shortsword', 'Battleaxe', 'Warhammer', 'Mace', 'Rapier', 'Dagger', 'Greatsword', 'Spear', 'Longbow', 'Shortbow', 'Crossbow, light'];
