@@ -2225,7 +2225,7 @@ function lootGenView() {
   const hb = S.magicItems.length ? h('select', { onchange: (e) => setOpt('homebrewMode', e.target.value) },
     [['mix', 'Mix in my homebrew'], ['prefer', 'Prefer my homebrew'], ['only', 'Only my homebrew']].map(([k, v]) => h('option', { value: k, selected: k === d.homebrewMode, text: v }))) : null;
   const coinInputs = COIN_KEYS.map((k) => h('label', { class: 'coin-input' }, h('input', { type: 'number', min: 0, value: d.coins[k] || 0, onchange: (e) => { d.coins[k] = Math.max(0, parseInt(e.target.value, 10) || 0); } }), ` ${k}`));
-  const kindLabel = { gem: 'gem', art: 'art', gear: 'gear', hook: 'story hook', magic: 'magic' };
+  const kindLabel = { gem: 'gem', art: 'art', gear: 'item', hook: 'story hook', magic: 'magic' };
   const lines = h('ol', { class: 'gen-lines' }, d.lines.map((l, i) => h('li', { class: `gen-line ${l.kind}` },
     h('span', { class: `grade ${l.kind === 'magic' ? 'rare' : l.kind === 'hook' ? 'house' : 'fine'}`, text: kindLabel[l.kind] || l.kind }),
     h('input', { type: 'number', class: 'gl-qty', min: 1, value: l.qty || 1, title: 'How many', onchange: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }),

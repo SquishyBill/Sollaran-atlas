@@ -15,55 +15,59 @@ export const MODES = { individual: 'One creature’s pockets', hoard: 'A hoard o
 export const SETTINGS = {
   bandit: {
     label: 'Bandit camp', coin: 1, art: 0.5, magic: 0.8,
-    gear: ['Loaded dice', 'Crowbar', 'Manacles', 'Rations (3 days)', 'Shortbow', 'Arrows (20)', 'A stolen merchant’s ledger', 'Rope, hempen (50 ft)', 'Wanted poster with the leader’s face'],
+    gear: ['Loaded dice', 'Crowbar', 'Manacles', 'Rations (3 days)', 'Shortbow', 'Arrows (20)', 'A stolen merchant’s ledger', 'Rope, hempen (50 ft)', 'Wanted poster with the leader’s face', 'Thieves’ tools', 'A blackjack wrapped in leather', 'Caltrops (bag of 20)', 'A stolen holy symbol', 'Half-eaten wheel of cheese', 'Wineskin, nearly empty', 'Hooded cloak with a hidden pocket', 'Marked deck of cards', 'A tinderbox and flint', 'Crossbow bolts (12)', 'A pair of mismatched boots', 'Burlap sacks (5)', 'Grappling hook', 'A whetstone worn thin', 'Lock with no key', 'A child’s wooden toy, taken from a wagon', 'Shackle key on a leather cord', 'Hand axe, nicked', 'Torches (5)', 'A forged travel pass'],
     hooks: ['A crude map marking another hideout', 'A ransom note that was never delivered', 'A merchant’s seal, recently stolen', 'A list of caravans and their departure dates'],
   },
   lair: {
     label: 'Monster lair', coin: 1.2, art: 1, magic: 1,
-    gear: ['Rusted chain shirt', 'A dented helmet', 'A torn backpack with a waterskin', 'Gnawed bones of an adventurer', 'A broken longsword hilt', 'Bedroll, mildewed'],
+    gear: ['Rusted chain shirt', 'A dented helmet', 'A torn backpack with a waterskin', 'Gnawed bones of an adventurer', 'A broken longsword hilt', 'Bedroll, mildewed', 'A cracked shield bearing a family crest', 'Tattered banner of a forgotten company', 'An adventurer’s boot, still laced', 'Spearhead, bent', 'Rusted lantern', 'A gnawed leather belt pouch', 'Torn cloak caught on a bone', 'Pitons (6), bent', 'A shattered spyglass', 'Scorched quiver', 'Broken manacles', 'A dented cooking pot', 'Half a map, chewed', 'Iron helm with claw marks', 'A dwarf’s braid clasp', 'A rotting rope ladder', 'A whistle carved from bone', 'A soggy rations pack', 'Chipped greataxe head'],
     hooks: ['A previous adventurer’s journal', 'A tooth-marked locket with a portrait inside', 'A half-burned letter home'],
   },
   noble: {
     label: 'Noble’s study', coin: 1.5, art: 1.6, magic: 0.9,
-    gear: ['Clothes, fine', 'Signet ring', 'Ink and quill', 'A leather-bound book of poetry', 'Perfume (vial)', 'Wine, fine (bottle)', 'Sealing wax'],
+    gear: ['Clothes, fine', 'Signet ring', 'Ink and quill', 'A leather-bound book of poetry', 'Perfume (vial)', 'Wine, fine (bottle)', 'Sealing wax', 'Silver-backed hairbrush', 'Embroidered gloves', 'A box of fine cigars', 'Letter opener with a pearl handle', 'Silk handkerchiefs (6)', 'A tin of imported tea', 'A music box that plays a court dance', 'Reading spectacles', 'Lace-trimmed cravat', 'Monogrammed silver cutlery', 'A small portrait miniature', 'A chessboard with ivory pieces', 'Velvet slippers', 'Scented candles (4)', 'A walking cane with a brass head', 'Bottle of brandy, aged', 'A dance card with three names circled', 'Pomander of dried oranges and cloves', 'Writing desk set'],
     hooks: ['Sealed letters to a member of the Council of Ten', 'A ledger recording bribes', 'A deed to a property in another dukedom', 'A key to a box at the Moneychanger'],
   },
   temple: {
     label: 'Temple vault', coin: 1.1, art: 1.5, magic: 1.1,
-    gear: ['Holy water (flask)', 'Candles, blessed (10)', 'Holy symbol, reliquary', 'Prayer book', 'Incense (block)', 'Vestments'],
+    gear: ['Holy water (flask)', 'Candles, blessed (10)', 'Holy symbol, reliquary', 'Prayer book', 'Incense (block)', 'Vestments', 'Censer, brass', 'Alms box (empty)', 'Prayer beads', 'Embroidered altar cloth', 'Hymnal with pressed flowers', 'Oil lamp, ornate', 'Healer’s kit', 'Bandages (bundle)', 'Anointing oil (vial)', 'Wooden saint’s icon', 'A pilgrim’s staff', 'Bell, small silver', 'Sacramental wine (bottle)', 'A list of the faithful and their tithes', 'Monk’s robes', 'Votive offerings (a bowl of trinkets)', 'Chalk for warding circles', 'Blessed salt (pouch)', 'Pilgrim’s badges (handful)'],
     hooks: ['A record of a relic’s hiding place', 'A confession written and never given', 'The name of a saint scratched out of a list'],
   },
   ship: {
     label: 'Sunken ship', coin: 1.2, art: 0.8, magic: 1,
-    gear: ['Navigator’s tools', 'Spyglass (cracked)', 'Waterlogged chest', 'Rope, hempen (50 ft)', 'Barnacled cutlass', 'Bottle of rum, still sealed'],
+    gear: ['Navigator’s tools', 'Spyglass (cracked)', 'Waterlogged chest', 'Rope, hempen (50 ft)', 'Barnacled cutlass', 'Bottle of rum, still sealed', 'Sextant', 'Sailcloth (bolt)', 'Ship’s bell, green with age', 'A sea chest’s brass lock', 'Fishing net', 'Harpoon', 'Oilskin coat', 'Hardtack (tin)', 'Belaying pin', 'Lantern, storm', 'Compass, needle stuck', 'Tar (bucket)', 'A sailor’s ditty bag', 'Scrimshaw whale tooth', 'Boarding axe', 'A message in a bottle', 'Hammock', 'Salt pork (barrel, half full)', 'Cask of fresh water (empty)', 'Captain’s tricorn hat'],
     hooks: ['The captain’s log', 'A sea chart with a route to somewhere unmarked', 'A sealed oilskin packet addressed to Saubantch'],
   },
   dwarven: {
     label: 'Dwarven ruin', coin: 1.1, art: 1.3, magic: 1,
-    gear: ['Miner’s pick', 'Smith’s tools', 'Lantern, hooded', 'An iron-bound chest', 'Ale keg (empty)', 'Dwarven war horn'],
+    gear: ['Miner’s pick', 'Smith’s tools', 'Lantern, hooded', 'An iron-bound chest', 'Ale keg (empty)', 'Dwarven war horn', 'Mason’s tools', 'Mining helmet with a candle holder', 'Iron spikes (10)', 'Stone tankard, carved', 'Forge tongs', 'A crate of iron ingots', 'Beard comb, bone', 'Chisel set', 'Coal (sack)', 'Pickaxe head, unused', 'Brewer’s supplies', 'Chain (10 ft)', 'A dwarven ale-horn', 'Stonecutter’s level', 'Iron rations (dwarven, rock-hard)', 'A small anvil', 'Lamp oil (flasks, 3)', 'Rune-etched hammer, common', 'Leather apron, scorched'],
     hooks: ['A rune-key to a sealed door', 'A tablet in old Dumrak-Karazdun script', 'A clan genealogy with one name chiselled out'],
   },
   wizard: {
     label: 'Wizard’s tower', coin: 0.9, art: 1, magic: 1.6,
-    gear: ['Component pouch', 'Spellbook (water-damaged)', 'Ink (1 ounce bottle)', 'Arcane focus, crystal', 'Vials of strange reagents', 'Hourglass'],
+    gear: ['Component pouch', 'Spellbook (water-damaged)', 'Ink (1 ounce bottle)', 'Arcane focus, crystal', 'Vials of strange reagents', 'Hourglass', 'Alchemist’s supplies', 'Crystal ball (cracked, nonmagical)', 'Star chart', 'Glass vials (10)', 'Beaker and stand', 'Scroll case (empty)', 'Blank parchment (10 sheets)', 'A jar of preserved eyes', 'Bat guano (pouch)', 'A stuffed owl', 'Chalk (box)', 'Mortar and pestle', 'Wand, carved but ordinary', 'Magnifying glass', 'A dried mandrake root', 'Brass astrolabe', 'Robes embroidered with stars', 'Candles, black (6)', 'Notebook of failed experiments', 'Lodestone'],
     hooks: ['Notes on an unfinished ritual', 'A letter from a rival mage', 'A summoning circle sketch with one rune wrong'],
   },
   caravan: {
     label: 'Merchant caravan', coin: 1.3, art: 0.8, magic: 0.7,
-    gear: ['Bolt of silk', 'Spices (5 lb)', 'Salt (50 lb sack)', 'Barrel of Lynport wine', 'Trade goods crate', 'Saddlebags'],
+    gear: ['Bolt of silk', 'Spices (5 lb)', 'Salt (50 lb sack)', 'Barrel of Lynport wine', 'Trade goods crate', 'Saddlebags', 'Wagon wheel (spare)', 'Lamp oil (cask)', 'Dried fruit (crate)', 'Wool blankets (6)', 'Bolt of dyed cotton', 'Iron pots (set)', 'Tea bricks (5)', 'Tobacco (bale)', 'Horseshoes (dozen)', 'Mule harness', 'A merchant’s scales and weights', 'Furs (bundle)', 'Glass beads (bag)', 'Copper wire (coil)', 'Pottery, packed in straw', 'Rope (100 ft)', 'Ledger of debts', 'Tent, two-person', 'Cheese wheels (3)', 'Dyes (box of jars)'],
     hooks: ['A shipping manifest with one crate unaccounted for', 'A Teamsters’ Guild writ', 'A letter of credit on a Saubantch bank'],
   },
   crypt: {
     label: 'Crypt or tomb', coin: 1, art: 1.6, magic: 1.1,
-    gear: ['Burial shroud', 'Funeral mask', 'Gold teeth (a handful)', 'Ceremonial dagger', 'Candles (10)', 'Urn of ashes'],
+    gear: ['Burial shroud', 'Funeral mask', 'Gold teeth (a handful)', 'Ceremonial dagger', 'Candles (10)', 'Urn of ashes', 'Embalming tools', 'Grave goods: a clay bowl', 'A tarnished circlet', 'Bones of a pet buried with its master', 'Shovel, rusted', 'Coffin nails (handful)', 'Pall cloth', 'A sealed canopic jar', 'Lantern with a cracked pane', 'Prayer scrolls, crumbling', 'Silver burial coins (on the eyes)', 'Mourning veil', 'Tomb rubbing on parchment', 'A death mask of a stranger', 'Ceremonial wine (dried to crust)', 'Lock of hair in a locket', 'Iron grave bell', 'Rotted wooden shield', 'Funeral incense'],
     hooks: ['A name carved over and over inside a coffin lid', 'A will that disinherits someone still living', 'A map of the catacombs, part missing'],
   },
   wilds: {
     label: 'The Wilds', coin: 0.6, art: 0.6, magic: 1,
-    gear: ['Hunting trap', 'Bedroll', 'Arrows (20)', 'A carved bone talisman', 'Waterskin', 'Herbs (bundle)'],
+    gear: ['Hunting trap', 'Bedroll', 'Arrows (20)', 'A carved bone talisman', 'Waterskin', 'Herbs (bundle)', 'Snare wire', 'Fishing tackle', 'Antlers', 'Pelts (3)', 'Flint arrowheads (handful)', 'Climber’s kit', 'Smoked meat (pouch)', 'Hide tent', 'A whittled flute', 'Wild honey (jar)', 'Hunting knife', 'Mushrooms (basket, some edible)', 'Feathers for fletching', 'Firewood (bundle)', 'A beast’s claw on a cord', 'Tracker’s notes', 'Sling and stones', 'Berries (pouch)', 'Moss-covered helmet'],
     hooks: ['A trail map of the Wilds, with warnings', 'An Arcadian prayer token', 'A Vendrix’s Wall rune-stone fragment'],
   },
 };
+
+// mundane bits that turn up anywhere; drawn about a third of the time instead of the setting's own list
+const COMMON_GEAR = ['Torch', 'Rope, hempen (50 ft)', 'Waterskin', 'Rations (1 day)', 'Tinderbox', 'Bedroll', 'Blanket', 'Backpack', 'Belt pouch', 'Mess kit', 'Whetstone', 'Chalk (piece)', 'Candle', 'Soap', 'Hempen sack', 'Wooden bowl and spoon', 'Iron pot', 'Signal whistle', 'Small mirror, steel', 'Dice set', 'Playing cards', 'Flask of oil', 'Bottle of cheap wine', 'Pair of boots', 'Wool cloak', 'Clothes, common', 'Clothes, traveler’s', 'Dagger', 'Sling', 'Club', 'Quarterstaff', 'Crossbow bolts (10)', 'Fishhooks (pouch)', 'Needle and thread', 'A tin whistle', 'A smooth lucky stone', 'A crumpled love letter', 'A wooden holy symbol', 'Comb, bone', 'Spoon, pewter', 'Pipe and tobacco', 'Key to an unknown door', 'A child’s drawing', 'A bundle of sticks and twine', 'Lamp', 'Hammer', 'Pitons (5)', 'Shovel', 'Ink pen', 'Sheets of paper (3)'];
+const pickGear = (r, set) => pick(r, chance(r, 0.35) ? COMMON_GEAR : set.gear);
 
 // ─── coins (dice × multiplier) per tier ─────────────────────────────
 const COINS = {
@@ -232,7 +236,7 @@ export function generateLoot(opts) {
   let n = 0;
   const add = (line) => lines.push({ id: `${seed}-${n++}`, qty: 1, ...line });
   // gems
-  const gemCount = mode === 'hoard' ? (chance(r, 0.6) ? roll(r, 1, 6) : 0) : (chance(r, 0.25) ? 1 : 0);
+  const gemCount = mode === 'hoard' ? (chance(r, 0.6) ? roll(r, 1, 6) : 0) : (chance(r, 0.4) ? 1 : 0);
   if (gemCount) { const value = pick(r, GEM_TIERS[mode][tier]); add({ kind: 'gem', name: pick(r, GEMS[value]), value, qty: gemCount }); }
   // art
   if (mode === 'hoard' && chance(r, Math.min(0.9, 0.45 * set.art))) {
@@ -241,7 +245,7 @@ export function generateLoot(opts) {
     add({ kind: 'art', name: pick(r, ART[ART_TIERS[tier][0]]), value: ART_TIERS[tier][0] });
   }
   // gear from the setting
-  for (let i = 0, k = mode === 'hoard' ? roll(r, 1, 3) : (chance(r, 0.5) ? 1 : 0); i < k; i++) add({ kind: 'gear', name: pick(r, set.gear), value: 0 });
+  for (let i = 0, k = mode === 'hoard' ? roll(r, 1, 3) : (chance(r, 0.5) ? 1 : 0); i < k; i++) add({ kind: 'gear', name: pickGear(r, set), value: 0 });
   // a story hook now and then
   if (chance(r, mode === 'hoard' ? 0.45 : 0.15)) add({ kind: 'hook', name: pick(r, set.hooks), value: 0 });
   // magic
@@ -268,7 +272,7 @@ export function rerollLine(line, opts) {
   const tier = tierOf(opts.level), set = SETTINGS[opts.setting] || SETTINGS.lair, mode = opts.mode === 'hoard' ? 'hoard' : 'individual';
   if (line.kind === 'gem') { const value = pick(r, GEM_TIERS[mode][tier]); return { ...line, name: pick(r, GEMS[value]), value }; }
   if (line.kind === 'art') { const value = pick(r, ART_TIERS[tier]); return { ...line, name: pick(r, ART[value]), value }; }
-  if (line.kind === 'gear') return { ...line, name: pick(r, set.gear) };
+  if (line.kind === 'gear') return { ...line, name: pickGear(r, set) };
   if (line.kind === 'hook') return { ...line, name: pick(r, set.hooks) };
   if (line.kind === 'magic') { const item = magicItem(r, line.magic?.rarity || pick(r, MAGIC[tier].rarities), opts); return { ...line, name: item.name, value: item.value, magic: item }; }
   return line;
