@@ -1,6 +1,6 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
-import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng } from './shop-data.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -1618,6 +1618,7 @@ function shopView() {
       ].filter(Boolean).join(' ') || 'Ordinary prices; everything on the shelves is for sale.' })),
     st.inverse ? h('p', { class: 'muted shop-restock', text: 'A black market: the less the law likes you, the better they treat you.' }) : null,
     haggleBox(shop, st),
+    repairBox(shop, st),
     h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
     st.items.length ? h('table', { class: 'stock' },
       h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
@@ -1642,6 +1643,59 @@ function shopView() {
       h('ul', { class: 'sales' }, sales.map((p) => h('li', { text: `${p.buyer}: ${p.qty} × ${p.itemName}, ${formatPrice(p.total)} · ${ago(p.at)}` })))) : null,
     h('div', { class: 'ornament', 'aria-hidden': 'true' }),
     notesSection('shop', shop.id));
+}
+
+// Repairs: a price calculator for damaged weapons and armor (three damage slots each).
+// The player says what kind of item, how fine it is (look its rarity up on D&D Beyond) and how many
+// slots are used; the smith's size decides whether they can do it, and renown and haggling apply.
+function repairBox(shop, st) {
+  if (!REPAIR_TYPES.includes(shop.type) || st.terms.refuses) return null;
+  const R = (S.panel.repair ||= { kind: 'weapon', rarity: 'common', slots: 1, item: '', renown: true });
+  const out = h('div', { class: 'repair-quote' });
+  const haggleMult = st.myHaggle?.mult ?? 1;
+
+  const pay = async (q, cost) => {
+    const rar = REPAIR_RARITIES.find((x) => x.id === R.rarity);
+    const what = `${R.item.trim() ? R.item.trim() + ' \u2014 ' : ''}${rar.label.toLowerCase()} ${R.kind}, ${R.slots} slot${R.slots > 1 ? 's' : ''}${R.slots === 3 ? ' (broken)' : ''}`;
+    if (!confirm(`Pay ${formatPrice(cost)} to have ${what} repaired at ${shop.name}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+    const buyer = myName() || S.store.displayName || 'A party member';
+    try {
+      const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
+      await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: `repair|${R.rarity}|${R.slots}`, itemName: `Repair: ${what}`.slice(0, 160), qty: 1, unitPrice: cost, total: cost, buyer, ...extra });
+      toast(`Repaired. ${formatPrice(cost)} is on the ledger.`);
+    } catch (e) { toast('Could not arrange it: ' + e.message); }
+  };
+
+  const update = () => {
+    const rar = REPAIR_RARITIES.find((x) => x.id === R.rarity) || REPAIR_RARITIES[0];
+    const q = repairQuote(R.rarity, R.slots, shop.size);
+    if (!q.ok) { out.replaceChildren(h('p', { class: 'repair-no', text: q.reason })); return; }
+    const mult = (R.renown ? st.terms.mult : 1) * haggleMult;
+    const cost = nicePrice(q.gp * mult);
+    out.replaceChildren(...[
+      h('p', {},
+        h('strong', { class: 'repair-price', text: formatPrice(cost) }),
+        mult !== 1 ? h('s', { text: ` ${formatPrice(nicePrice(q.gp))}` }) : null),
+      h('small', { class: 'muted', text: `${formatPrice(rar.slot)} for the first slot, rising for each one${R.slots === 3 ? ', plus a bit extra to rebuild a broken piece' : ''}. Done on the spot.${mult !== 1 ? ' Includes your standing and haggling here.' : ''}` }),
+      isDM() ? null : h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Pay for the repair', onclick: () => pay(q, cost) }))].filter(Boolean));
+  };
+
+  const on = (key, num) => (e) => { R[key] = num ? Number(e.target.value) : e.target.value; update(); };
+  const kind = h('select', { onchange: on('kind') },
+    [['weapon', 'Weapon'], ['armor', 'Armor or shield']].map(([v, t]) => h('option', { value: v, selected: v === R.kind, text: t })));
+  const rarity = h('select', { onchange: on('rarity') },
+    REPAIR_RARITIES.map((r) => h('option', { value: r.id, selected: r.id === R.rarity, text: `${r.label} \u2014 ${r.hint}` })));
+  const slots = h('select', { onchange: on('slots', true) },
+    [[1, '1 slot used'], [2, '2 slots used'], [3, '3 slots (broken)']].map(([v, t]) => h('option', { value: v, selected: v === R.slots, text: t })));
+  const item = h('input', { type: 'text', maxlength: 60, placeholder: 'Which item? (optional, for the ledger)', value: R.item, oninput: (e) => { R.item = e.target.value; } });
+  update();
+  return h('details', { class: 'legend repair', open: true },
+    h('summary', { text: 'Repairs \u2014 weapons & armor' }),
+    h('p', { class: 'muted', text: 'Look up your item\u2019s rarity on D&D Beyond. Finer gear needs a bigger smith.' }),
+    h('div', { class: 'row gen-pickers' }, field('Kind', kind), field('Rarity', rarity), field('Damage', slots)),
+    item,
+    isDM() ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: R.renown, onchange: (e) => { R.renown = e.target.checked; update(); } }), ' Apply the party\u2019s standing here to this quote') : null,
+    out);
 }
 
 // Haggling: once per player, per shop, per week. Good rolls knock prices down, bad ones push them up.

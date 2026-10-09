@@ -943,3 +943,9 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .gen-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid rgba(90, 60, 25, .25); }
 .gen-actions .row select, .gen-actions .row input { flex: 1; min-width: 140px; }
 @media (max-width: 760px) { .gen-line { grid-template-columns: auto 46px 1fr auto auto; } .coin-actions { margin-left: 0; } }
+
+/* repairs */
+.repair-quote { margin: 8px 0 4px; }
+.repair-price { font: 700 22px var(--f-head); color: var(--ink); }
+.repair-no { color: var(--wax); font-style: italic; }
+.repair input[type=text] { width: 100%; margin: 6px 0; }

@@ -475,6 +475,36 @@ export function nicePrice(gp) {
   return Math.max(0.01, Math.round(gp * 100) / 100);
 }
 
+// ─── repairs ────────────────────────────────────────────────────────
+// Weapons and armor have three damage slots; all three used means broken. A smith mends them
+// for a price per slot (the document: 2 gp a slot for regular gear), and the finer the item, the
+// bigger the smith has to be. Each extra slot costs more than the last, and rebuilding a fully
+// broken piece costs a little extra.
+export const REPAIR_TYPES = ['smith'];
+export const REPAIR_RARITIES = [
+  { id: 'common', label: 'Common', hint: 'mundane gear, common magic', slot: 2, minSize: 1 },
+  { id: 'uncommon', label: 'Uncommon', hint: 'e.g. a +1 weapon or shield', slot: 25, minSize: 3 },
+  { id: 'rare', label: 'Rare', hint: 'e.g. a +2 weapon, +1 body armor', slot: 150, minSize: 4 },
+  { id: 'very rare', label: 'Very rare', hint: 'e.g. a +3 weapon, +2 body armor', slot: 800, minSize: 5 },
+  { id: 'legendary', label: 'Legendary', hint: 'artifacts and the like', slot: 4000, minSize: 99 },
+];
+const SLOT_STEPS = [1, 1.25, 1.5];
+const BROKEN_SURCHARGE = 1.2;
+
+// -> { ok: true, gp } or { ok: false, reason }
+export function repairQuote(rarityId, slots, size) {
+  const r = REPAIR_RARITIES.find((x) => x.id === rarityId) || REPAIR_RARITIES[0];
+  const n = Math.min(3, Math.max(1, Math.round(Number(slots)) || 1));
+  const town = sizeById(size);
+  if (r.minSize > 5) return { ok: false, reason: 'No ordinary smith can mend this. It needs a master smith, or a quest.' };
+  if (town.id < r.minSize) {
+    return { ok: false, reason: `A ${town.name.toLowerCase()} smith can\u2019t work ${r.label.toLowerCase()} gear. Try a ${SIZES.find((x) => x.id === r.minSize).name.toLowerCase()} or bigger.` };
+  }
+  if (town.id === 1 && n === 3) return { ok: false, reason: 'A hamlet smith can patch a piece up, but can\u2019t rebuild a broken one. Try a village or bigger.' };
+  const gp = r.slot * SLOT_STEPS.slice(0, n).reduce((a, b) => a + b, 0) * (n === 3 ? BROKEN_SURCHARGE : 1);
+  return { ok: true, gp };
+}
+
 // ─── haggling ───────────────────────────────────────────────────────
 // Once per player, per shop, per week: they roll Persuasion and enter the total.
 // The result changes that player's prices at that shop until the stock refreshes.
