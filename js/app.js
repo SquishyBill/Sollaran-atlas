@@ -1679,8 +1679,15 @@ function haggleBox(shop, st) {
       if (answer == null) return;
       bonus = parseInt(String(answer).replace('+', ''), 10);
       if (!Number.isFinite(bonus) || bonus < -5 || bonus > 20) { toast('Enter your Persuasion bonus as a number, e.g. 3.'); return; }
-      try { await S.store.savePlayer({ name: myName() || S.store.displayName || 'A party member', persuasion: bonus, setAt: Date.now() }); }
-      catch (err) { toast('Could not save your bonus: ' + err.message); return; }
+      try {
+        const rec = await S.store.savePlayer({ name: String(myName() || S.store.displayName || 'A party member').slice(0, 60), persuasion: bonus, setAt: Date.now() });
+        if (Number.isFinite(rec?.persuasion)) bonus = rec.persuasion;
+      } catch (err) {
+        toast(err.code === 'permission-denied'
+          ? 'Could not save your bonus: the atlas’s database rules need updating. Let your DM know.'
+          : 'Could not save your bonus: ' + err.message);
+        return;
+      }
     }
     btn.disabled = true;
     const roll = await tumble(die); // the atlas rolls the d20

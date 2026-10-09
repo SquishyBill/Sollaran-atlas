@@ -220,9 +220,10 @@ export class LocalStore {
 
   // a player's own record (their Persuasion bonus); players set it once, the DM can change it
   async savePlayer(data, uid = this.uid) {
-    if (this.db.players[uid] && !this.isDM) throw new Error('Only the DM can change that now.');
+    if (this.db.players[uid] && !this.isDM) return this.db.players[uid];
     this.db.players[uid] = { ...this.db.players[uid], ...data };
     this.persist();
+    return this.db.players[uid];
   }
 
   async getPicture(id) { return this.db.pictures[id]?.data ?? null; }

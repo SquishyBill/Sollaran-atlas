@@ -274,8 +274,14 @@ export class FirebaseStore {
   }
 
   // a player's own record (their Persuasion bonus); players create it once, the DM can change it
-  savePlayer(data, uid = this.uid) {
-    return this.F.setDoc(this.ref('players', uid), data, { merge: this.isDM });
+  async savePlayer(data, uid = this.uid) {
+    if (!this.isDM) {
+      // already on record (e.g. the page hadn't caught up yet): use that rather than overwrite it
+      const snap = await this.F.getDoc(this.ref('players', uid));
+      if (snap.exists()) return snap.data();
+    }
+    await this.F.setDoc(this.ref('players', uid), data, { merge: this.isDM });
+    return data;
   }
 
   async getPicture(id) {
