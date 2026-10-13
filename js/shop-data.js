@@ -475,6 +475,113 @@ export function nicePrice(gp) {
   return Math.max(0.01, Math.round(gp * 100) / 100);
 }
 
+// ─── festivals ──────────────────────────────────────────────────────
+// The DM switches a festival on and every shop (that fits) gains its festival specials, alongside
+// the usual weekly stock. [name, price in gp, smallest settlement size, flags] as in the catalogs;
+// 'r' flags a special that's held back for customers in good standing.
+export const FESTIVALS = {
+  harmony: {
+    label: 'Festival of the Sacred Harmony', short: 'harmony special',
+    blurb: 'The Sisters carry their crystals to the capital, and the song will be heard across the land. Pilgrims are on the roads, and the shops are full of white-and-gold keepsakes.',
+    any: [['Harmony ribbon, white and gold', 0.1, 1, 'c'], ['Pilgrim\u2019s candle', 0.2, 1, 'c']],
+    types: {
+      temple: [['Crystal-song hymnal', 3, 1], ['Pilgrim\u2019s blessing for the road', 2, 1, 's'], ['Vial of song-purified water', 10, 1, 'c'],
+        ['Blessed seed for the harvest (pouch)', 1, 1, 'c'], ['Crystal-song shard (a warm pilgrim\u2019s keepsake)', 200, 3, 'r']],
+      herbalist: [['Harmony tincture (calming)', 15, 2, 'c']],
+      alchemist: [['Harmony tincture (calming)', 15, 2, 'c'], ['Water purified by the Song (flask)', 12, 2, 'c']],
+      tailor: [['White festival robe', 5, 1], ['Gold-trimmed sash', 3, 1]],
+      jeweler: [['Crystal sliver pendant (decorative)', 25, 2], ['Gold-trimmed mask (festival costume)', 40, 3]],
+      scribe: [['Printed program of the Song', 0.1, 1, 'c'], ['Pilgrim\u2019s letter of passage', 5, 1, 's']],
+      inn: [['A pilgrim\u2019s bed in the common room', 0.5, 1, 's'], ['Harvest feast (per person)', 1, 1, 's']],
+      stable: [['Pilgrim\u2019s cart to the capital (per person)', 8, 1, 's']],
+      provisioner: [['Harvest-blessed grain (sack)', 1, 1, 'c'], ['Harvest bread, festival loaf', 0.1, 1, 'c'], ['Pilgrim\u2019s rations (3 days)', 2, 1, 'c']],
+      general: [['Harvest bread, festival loaf', 0.1, 1, 'c'], ['Pilgrim\u2019s rations (3 days)', 2, 1, 'c']],
+      salt: [['Blessed salt (pouch)', 0.5, 1, 'c']],
+    },
+  },
+  rye: {
+    label: 'Bertram\u2019s Rye Ale Festival', short: 'festival special',
+    blurb: 'Brewers from across Sollara have set up booths, the taverns are roaring, and everyone has a favorite to vote for. A year\u2019s right to the name Bertram is at stake.',
+    any: [['Festival tankard (commemorative)', 3, 1], ['Rye ale festival ribbon', 0.1, 1, 'c']],
+    types: {
+      brewer: [['Rye ale tasting flight (five cups)', 0.5, 1, 'c'], ['Rye ale, festival cup', 0.1, 1, 'c'], ['Entry keg of rye ale (festival entry)', 12, 1], ['Rye mash, award-winning (sack)', 2, 1, 'c'],
+        ['Bertram\u2019s Rye Ale, this year\u2019s winning keg', 45, 2, 'r']],
+      inn: [['Rye ale tasting flight (five cups)', 0.5, 1, 'c'], ['Festival rye ale (round for the table)', 1, 1, 'c'], ['Festival feast (per person)', 2, 1, 's'], ['A bed above the noise (festival rates)', 1.5, 1, 's']],
+      provisioner: [['Rye ale (gallon, festival)', 0.3, 1, 'c'], ['Rye bread, festival loaf', 0.1, 1, 'c']],
+      general: [['Rye ale (gallon, festival)', 0.3, 1, 'c']],
+      vintner: [['Rye spirit, festival still (bottle)', 5, 2, 'c']],
+      music: [['Festival drinking songs (songbook)', 2, 1]],
+      imports: [['Bertram\u2019s Rye Ale (export crate)', 120, 3, 'r']],
+    },
+  },
+};
+
+export function festivalStock(shop, week, active) {
+  const s = sizeById(shop.size), out = [];
+  if (shop.type === 'blackmarket') return out; // nobody puts bunting up in a black market
+  for (const id of active || []) {
+    const f = FESTIVALS[id];
+    if (!f) continue;
+    const r = rng(`fest:${shop.seed}:${week}:${id}`);
+    for (const [name, price, min = 1, flags = ''] of [...f.any, ...(f.types[shop.type] || [])]) {
+      if (min > s.id) continue;
+      const service = flags.includes('s'), rare = flags.includes('r');
+      out.push({
+        key: `fest:${id}:${name}`, name, grade: rare ? 'rare' : 'standard', price: nicePrice(price * (shop.priceMod || 1)), festival: f.short, service,
+        qty: service ? null : flags.includes('c') ? between(r, 3, 8) * s.qtyBoost : rare ? 1 : between(r, 1, 3),
+      });
+    }
+  }
+  return out;
+}
+
+// ─── selling back ───────────────────────────────────────────────────
+// What a shop pays for what the party found, as a share of its value. The DM sells from the Loot tab.
+const KIND_RATES = {
+  gem: { jeweler: 0.6, moneychanger: 0.55, imports: 0.5, arcane: 0.4, blackmarket: 0.4 },
+  art: { jeweler: 0.55, imports: 0.55, moneychanger: 0.45, general: 0.3, blackmarket: 0.4 },
+  magic: { arcane: 0.55, imports: 0.5, temple: 0.4, blackmarket: 0.45 },
+  gear: { general: 0.4, tinker: 0.4, quartermaster: 0.4, blackmarket: 0.3 },
+};
+const GEAR_EXTRA = [
+  [/sword|axe|mace|hammer|dagger|spear|shield|armor|mail|plate|helm|glaive|pike|trident|cutlass|flail|rapier|scimitar|halberd|manacle/i, { smith: 0.45 }],
+  [/\bbows?\b|arrow|bolt|quiver|crossbow|sling/i, { fletcher: 0.45 }],
+  [/cloak|robe|clothes|silk|cloth|vestment|shroud|scarf|glove|\bhat\b|mask|sash/i, { tailor: 0.45 }],
+  [/leather|saddle|boot|\bbelt\b|pouch|backpack|waterskin/i, { leather: 0.45 }],
+  [/\bale\b|wine|rum|brandy|\bham\b|salt|spice|coffee|rations|cheese|honey|keg|barrel|flour|bread/i, { provisioner: 0.4, brewer: 0.4 }],
+  [/potion|vial|reagent|herb|poison|tincture|salve|residuum|antidote/i, { alchemist: 0.45, herbalist: 0.4 }],
+  [/spellbook|\bink\b|scroll|focus|crystal|component|wand|\borb\b|astrolabe|sextant|hourglass/i, { arcane: 0.5, scribe: 0.4 }],
+  [/holy|prayer|candle|incense|icon|relic|censer|\bbell\b|beads/i, { temple: 0.45 }],
+  [/\bmap\b|chart|compass|spyglass|navigator|tools/i, { cartographer: 0.45, tinker: 0.45 }],
+];
+// total gold a shop of each size can pay out in one sale
+export const SELL_LIMIT = { 1: 75, 2: 300, 3: 1500, 4: 8000, 5: 50000 };
+
+export function sellRate(shopType, item) {
+  let rate = KIND_RATES[item.kind]?.[shopType] || 0;
+  if (item.kind === 'gear' || item.kind === 'magic') {
+    for (const [re, rates] of GEAR_EXTRA) if (re.test(item.name) && rates[shopType]) rate = Math.max(rate, rates[shopType]);
+  }
+  return rate;
+}
+
+// A shop catalog's price for something with this exact name (for mundane finds that have no value of their own).
+export function catalogValue(name) {
+  const want = String(name || '').toLowerCase().trim();
+  for (const t of Object.values(SHOP_TYPES)) {
+    const hit = t.catalog.find((row) => row[0].toLowerCase() === want);
+    if (hit) return hit[1];
+  }
+  return null;
+}
+
+// What standing does to an offer: a good name earns up to 20% more, a bad one cuts it (and below -6 they won't deal).
+export function sellRenown(score, inverse) {
+  const s = inverse ? -score : score;
+  if (s <= -7) return { mult: 0, refuses: true };
+  return { mult: s >= 0 ? 1 + 0.02 * s : Math.max(0.4, 1 + 0.04 * s), refuses: false };
+}
+
 // ─── repairs ────────────────────────────────────────────────────────
 // Weapons and armor have three damage slots; all three used means broken. A smith mends them
 // for a price per slot (the document: 2 gp a slot for regular gear), and the finer the item, the

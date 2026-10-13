@@ -64,6 +64,7 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('renownLog') : query(this.col('renownLog'), where('hidden', '==', false)),
       (s) => h.renownLog?.(list(s)), err);
     onSnapshot(this.ref('config', 'renown'), (s) => h.renownTiers?.(s.exists() ? s.data().tiers : null), err);
+    onSnapshot(this.ref('config', 'festivals'), (s) => h.festivals?.(s.exists() ? s.data() : {}), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -207,6 +208,8 @@ export class FirebaseStore {
   }
 
   saveRenownTiers(tiers) { return this.F.setDoc(this.ref('config', 'renown'), { tiers }); }
+  // which festivals are on (everyone reads it; only the DM can change it)
+  saveFestivals(f) { return this.F.setDoc(this.ref('config', 'festivals'), f); }
 
   // ── shops and their purchase ledger
   async saveShop(data, id) {

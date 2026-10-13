@@ -955,3 +955,17 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .npc-input input, .npc-input textarea { flex: 1; min-width: 0; }
 .npc-sub { font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); margin: 16px 0 4px; border-bottom: 1px solid rgba(90, 60, 25, .3); padding-bottom: 3px; }
 .npc-lore { font-size: 14px; }
+
+/* festivals + selling */
+.fest-bar {
+  position: fixed; left: 50%; top: calc(var(--bar) + 8px); transform: translateX(-50%); z-index: 14; max-width: calc(100vw - 24px);
+  padding: 5px 16px; border-radius: 16px; border: 1px solid rgba(201, 164, 92, .7); background: rgba(34, 21, 12, .92);
+  color: var(--gold-hi); font: 700 12px var(--f-head); letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 6px 18px rgba(0, 0, 0, .4);
+}
+.fest-bar[hidden] { display: none; }
+.fest-note { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--gold); background: rgba(201, 164, 92, .14); font-size: 16px; }
+.fest-note strong { display: block; font: 700 12px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+.festivals { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin: 6px 0 10px; padding: 8px 10px; border: 1px dashed rgba(90, 60, 25, .4); border-radius: 6px; }
+.festivals strong { font: 700 12px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+.sell-offer { margin: 8px 0; }
+.sell-total { font: 700 22px var(--f-head); color: var(--ink); }

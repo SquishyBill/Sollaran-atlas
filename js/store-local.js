@@ -58,6 +58,7 @@ export class LocalStore {
     this.handlers.renown?.(rows(this.db.renown).filter((r) => dm || !r.hidden));
     this.handlers.renownLog?.(rows(this.db.renownLog).filter((l) => dm || !l.hidden));
     this.handlers.renownTiers?.(this.db.config.renown?.tiers || null);
+    this.handlers.festivals?.(this.db.config.festivals || {});
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.haggles?.(rows(this.db.haggles).filter((x) => dm || x.uid === this.uid));
@@ -153,6 +154,7 @@ export class LocalStore {
   }
 
   async saveRenownTiers(tiers) { this.db.config.renown = { tiers }; this.persist(); }
+  async saveFestivals(f) { this.db.config.festivals = f; this.persist(); }
 
   // ── shops and their purchase ledger
   async saveShop(data, id) {
