@@ -949,3 +949,9 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .repair-price { font: 700 22px var(--f-head); color: var(--ink); }
 .repair-no { color: var(--wax); font-style: italic; }
 .repair input[type=text] { width: 100%; margin: 6px 0; }
+
+/* NPC generator */
+.npc-input { display: flex; gap: 6px; align-items: flex-start; }
+.npc-input input, .npc-input textarea { flex: 1; min-width: 0; }
+.npc-sub { font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); margin: 16px 0 4px; border-bottom: 1px solid rgba(90, 60, 25, .3); padding-bottom: 3px; }
+.npc-lore { font-size: 14px; }

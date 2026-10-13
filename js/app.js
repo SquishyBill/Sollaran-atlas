@@ -1,5 +1,6 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
+import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 
@@ -758,7 +759,7 @@ function renderPanel() {
   body.replaceChildren();
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
-    renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
+    npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
     shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
@@ -1011,7 +1012,9 @@ function peopleView() {
     h('div', { class: 'codex-kind', html: '<span>Dramatis Personae</span>' }),
     h('h2', { class: 'codex-title', text: 'People of the Realm' }),
     h('p', { class: 'codex-sub', text: `${S.people.length} ${S.people.length === 1 ? 'person' : 'people'} known` }),
-    isDM() ? h('div', { class: 'codex-actions' }, h('button', { class: 'btn', text: '+ Add a person', onclick: () => openPersonEditor(null, []) })) : null,
+    isDM() ? h('div', { class: 'codex-actions' },
+      h('button', { class: 'btn', text: '+ Add a person', onclick: () => openPersonEditor(null, []) }),
+      h('button', { class: 'btn ghost', text: 'Generate an NPC', onclick: () => openNpcGen() })) : null,
     search,
     list);
 }
@@ -1211,6 +1214,101 @@ function personEditor() {
     } catch (err) { toast('Could not save: ' + err.message); }
   });
   return form;
+}
+
+// ─── NPC generator ──────────────────────────────────────────────────
+// DM only. Pin as much or as little as you like (people, affiliation, role, age, wealth, attitude);
+// everything else is rolled. Every field it makes can be edited or re-rolled before it's saved.
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+function npcDraft(npc) { return { ...npc, hidden: true, places: [] }; }
+
+function openNpcGen(opts = {}) {
+  S.panel = { type: 'npcGen', id: 'new', opts, d: npcDraft(generateNpc(opts)) };
+  renderPanel();
+}
+
+function npcGenView() {
+  const P = S.panel, o = P.opts, d = P.d;
+  const regenerate = () => { P.d = npcDraft(generateNpc(o)); renderPanel(); };
+
+  const pin = (label, key, options) => field(label, h('select', {
+    onchange: (e) => { o[key] = e.target.value; if (key === 'affiliation') o.role = ''; renderPanel(); },
+  }, [h('option', { value: '', text: 'Random' }), ...options.map(([v, t]) => h('option', { value: v, selected: o[key] === v, text: t }))]));
+
+  const aff = o.affiliation ? affiliationById(o.affiliation) : null;
+  const roles = aff ? (aff.cover ? OCCUPATIONS : aff.roles) : [];
+
+  const form = h('form', { class: 'editor npc-form' });
+  const sync = () => {
+    const fd = new FormData(form);
+    for (const k of ['name', 'title', 'ageLine', 'appearance', 'manner', 'trait', 'want', 'secret', 'stat', 'attitude', 'group']) if (fd.has(k)) d[k] = fd.get(k);
+    d.hidden = fd.get('hidden') === 'on';
+    d.places = picker.getRefs();
+  };
+  const reroll = (part) => h('button', { type: 'button', class: 'btn small ghost', text: '\u21bb', title: 'Roll this one again', 'aria-label': 'Roll this one again',
+    onclick: () => { sync(); d[part] = rollPart(part, d.ctx); renderPanel(); } });
+  const row = (label, control, part) => field(label, h('div', { class: 'npc-input' }, control, part ? reroll(part) : null));
+  const text = (name) => h('input', { name, type: 'text', maxlength: 200, value: d[name] || '' });
+  const area = (name, rows = 2) => { const t = h('textarea', { name, rows }); t.value = d[name] || ''; return t; };
+  const picker = placePicker(d.places || []);
+
+  form.append(
+    h('h3', { class: 'npc-sub', text: 'What you see' }),
+    row('Name', text('name'), 'name'),
+    row('Title or role', text('title')),
+    row('Who they are', text('ageLine')),
+    row('Appearance', area('appearance', 3), 'appearance'),
+    row('Manner', area('manner'), 'manner'),
+    row('Nature', text('trait'), 'trait'),
+    row('Wants', area('want'), 'want'),
+    h('h3', { class: 'npc-sub', text: 'DM only' }),
+    row('Stat block to look up', text('stat')),
+    field('Attitude toward the party', h('select', { name: 'attitude' }, ATTITUDES.map(([v, t]) => h('option', { value: v, selected: d.attitude === v, text: t })))),
+    row('Secret', area('secret', 3), 'secret'),
+    d.lore ? h('p', { class: 'muted npc-lore', text: `Lore: ${d.lore}` }) : null,
+    h('h3', { class: 'npc-sub', text: 'Add to the atlas' }),
+    groupField(d.group || '', allGroupPaths()),
+    field('Found at', picker, 'Places this person can be found (optional).'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'hidden', checked: d.hidden }), ' Hidden from players (DM only)'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'submit', name: 'save', text: 'Add to People' }),
+      h('button', { class: 'btn ghost', type: 'submit', name: 'again', text: 'Add, then roll another' }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => openPeople() })));
+  form.addEventListener('input', sync);
+  form.addEventListener('change', sync);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    sync();
+    const again = e.submitter?.name === 'again';
+    const name = (d.name || '').trim();
+    if (!name) { toast('Give them a name first.'); return; }
+    const body = [`*${d.ageLine}.*`, d.appearance, [d.manner, d.trait].filter(Boolean).join(' '), d.want ? `**Wants:** ${d.want}` : ''].filter(Boolean).join('\n\n');
+    const dm = [`**Stat block:** ${d.stat || 'Commoner'}`, `**Attitude toward the party:** ${cap(d.attitude || 'neutral')}`, d.secret ? `**Secret:** ${d.secret}` : '', d.lore ? `**Lore note:** ${d.lore}` : ''].filter(Boolean).join('\n\n');
+    try {
+      const id = await S.store.savePerson({ name, title: (d.title || '').trim(), group: normGroup(d.group), image: '', body, hidden: d.hidden, places: d.places });
+      await S.store.saveSecret(id, dm);
+      toast(`${name} is in People.`);
+      if (again) { openNpcGen({ ...o }); return; }
+      S.panel = { type: 'person', id: null, saving: true };
+      openPerson(id);
+      if (!personById(id)) S.pendingPerson = id;
+    } catch (err) { toast('Could not save: ' + err.message); }
+  });
+
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>Dramatis Personae</span>' }),
+    h('h2', { class: 'codex-title', text: 'Generate an NPC' }),
+    h('p', { class: 'muted', text: 'Pin anything you want, leave the rest random, then roll. You can edit or re-roll every detail before adding them.' }),
+    h('div', { class: 'row gen-pickers' },
+      pin('People', 'people', PEOPLES.map((p) => [p.id, p.label])),
+      pin('Affiliation', 'affiliation', AFFILIATIONS.map((a) => [a.id, a.label]))),
+    aff && roles.length ? h('div', { class: 'row gen-pickers' }, pin('Role', 'role', roles.map((x) => [x.title.replace('{nation}', 'a foreign power'), x.title]))) : null,
+    h('div', { class: 'row gen-pickers' },
+      pin('Gender', 'gender', GENDERS), pin('Age', 'age', AGES)),
+    h('div', { class: 'row gen-pickers' },
+      pin('Wealth', 'wealth', WEALTH), pin('Attitude', 'attitude', ATTITUDES)),
+    h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', text: '\u21bb Roll a new NPC', onclick: regenerate })),
+    form);
 }
 
 // ─── renown ─────────────────────────────────────────────────────────
