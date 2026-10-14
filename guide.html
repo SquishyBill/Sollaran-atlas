@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Atlas of Sollara: A Player's Handbook</title>
+<meta name="theme-color" content="#1c120c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cinzel+Decorative:wght@700;900&family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #ead9ad; --paper-lo: #d9c18a; --ink: #2b1a0e; --ink-soft: #5a4129; --wax: #8e2b20; --gold: #c9a45c; --gold-hi: #f0d596; --leather: #1c120c;
+  --rule: rgba(90, 60, 25, .7);
+}
+* { box-sizing: border-box; }
+html { background: var(--leather); }
+body {
+  margin: 0; padding: 18px 0 40px; color: var(--ink); font: 400 19px/1.5 'IM Fell English', Georgia, serif;
+  background: radial-gradient(ellipse at 50% 0%, #3a2616 0%, #1c120c 60%, #120a06 100%) fixed;
+  -webkit-font-smoothing: antialiased;
+}
+svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vertical-align: -.14em; }
+
+/* ── a page of the book ───────────────────────────────────────── */
+.sheet {
+  position: relative; width: min(860px, calc(100vw - 20px)); margin: 22px auto; padding: 54px 62px 60px;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='4'/><feColorMatrix values='0 0 0 0 .35  0 0 0 0 .22  0 0 0 0 .1  0 0 0 .13 0'/></filter><rect width='220' height='220' filter='url(%23n)'/></svg>"),
+    radial-gradient(ellipse at 50% 40%, #f1e4bb 0%, var(--paper) 62%, var(--paper-lo) 100%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .6), inset 0 0 90px rgba(120, 80, 30, .28);
+  counter-increment: sheet;
+}
+.sheet::before { content: ''; position: absolute; inset: 14px; border: 3px double var(--rule); pointer-events: none; }
+.sheet::after { content: ''; position: absolute; inset: 24px; border: 1px solid rgba(90, 60, 25, .4); pointer-events: none; }
+.knot { position: absolute; width: 22px; height: 22px; z-index: 2; color: var(--wax); }
+.knot.tl { top: 5px; left: 5px; } .knot.tr { top: 5px; right: 5px; } .knot.bl { bottom: 5px; left: 5px; } .knot.br { bottom: 5px; right: 5px; }
+.folio { position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; font: 500 13px 'Cinzel', serif; letter-spacing: .25em; color: var(--ink-soft); }
+.folio::before { content: '\2014  ' counter(sheet) '  \2014'; }
+
+/* ── type ─────────────────────────────────────────────────────── */
+h1, h2, h3, h4 { font-family: 'Cinzel', serif; font-weight: 700; margin: 0; color: var(--ink); }
+.chapter-no { text-align: center; font: 500 14px 'Cinzel', serif; letter-spacing: .42em; text-transform: uppercase; color: var(--wax); }
+h2.ch { text-align: center; font: 900 32px/1.15 'Cinzel', serif; letter-spacing: .04em; margin: 6px 0 4px; text-transform: uppercase; }
+.rule { display: block; margin: 8px auto 14px; width: 62%; color: var(--wax); }
+.epigraph { text-align: center; font-style: italic; color: var(--ink-soft); margin: 0 auto 16px; max-width: 34em; }
+p { margin: 0 0 .75em; text-wrap: pretty; }
+.chapter > p.lead::first-letter {
+  font: 900 3.55em/.82 'Cinzel Decorative', serif; color: var(--wax); float: left; padding: .06em .09em 0 0;
+}
+h3 { font-size: 15px; letter-spacing: .16em; text-transform: uppercase; margin: 15px 0 5px; color: var(--wax); border-bottom: 1px solid var(--rule); padding-bottom: 3px; }
+ul, ol { margin: 0 0 .8em; padding-left: 1.3em; } li { margin-bottom: .28em; }
+b, strong { font-weight: 400; color: var(--wax); font-family: 'IM Fell English SC', 'IM Fell English', serif; letter-spacing: .02em; }
+em { color: var(--ink); }
+kbd { font: 500 .78em 'Cinzel', serif; padding: .08em .45em; border: 1px solid var(--rule); border-radius: 4px; background: rgba(255, 255, 255, .28); white-space: nowrap; }
+.num { font-family: 'Cinzel', serif; font-size: .86em; }
+
+.note, .warn { margin: 12px 0; padding: 9px 14px 8px; border: 1px solid var(--rule); background: rgba(255, 245, 210, .34); position: relative; }
+.note::before, .warn::before { content: 'The Adventurer\2019s Note'; display: block; font: 700 12px 'Cinzel', serif; letter-spacing: .2em; text-transform: uppercase; color: var(--wax); margin-bottom: 2px; }
+.warn { border-style: double; border-width: 3px; }
+.warn::before { content: 'Beware'; }
+.note p:last-child, .warn p:last-child { margin-bottom: 0; }
+
+table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: .92em; }
+th { font: 700 11.5px 'Cinzel', serif; letter-spacing: .14em; text-transform: uppercase; text-align: left; color: var(--wax); border-bottom: 2px solid var(--rule); padding: 3px 8px 3px 4px; }
+td { padding: 3px 8px 3px 4px; border-bottom: 1px solid rgba(90, 60, 25, .3); vertical-align: top; }
+td.r, th.r { text-align: right; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.icons td:first-child { width: 2.6em; text-align: center; font-size: 1.35em; color: var(--wax); }
+.icons td:nth-child(2) { white-space: nowrap; width: 8.4em; }
+
+/* ── cover ────────────────────────────────────────────────────── */
+.cover { background: radial-gradient(ellipse at 50% 38%, #3b2716 0%, #24160d 58%, #150c07 100%); color: var(--gold-hi); min-height: 1060px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 70px 70px; }
+.cover::before { border: 4px double var(--gold); inset: 16px; } .cover::after { border: 1px solid rgba(201, 164, 92, .55); inset: 28px; }
+.cover .knot { color: var(--gold); }
+.cover .small { font: 500 15px 'Cinzel', serif; letter-spacing: .5em; text-transform: uppercase; color: var(--gold); }
+.cover h1 { font: 900 66px/1.05 'Cinzel Decorative', serif; color: var(--gold-hi); margin: 26px 0 10px; text-shadow: 0 3px 0 #000, 0 0 30px rgba(201, 164, 92, .3); }
+.cover .sub { font: 700 24px 'Cinzel', serif; letter-spacing: .3em; text-transform: uppercase; color: var(--gold); margin: 8px 0 10px; }
+.cover .seal { width: 150px; height: 150px; margin: 24px 0; color: var(--gold); }
+.cover .seal circle { fill: #8e2b20; stroke: var(--gold); stroke-width: .7; } .cover .seal path { fill: var(--gold-hi); stroke: none; }
+.cover p { max-width: 28em; font-style: italic; color: #e8cf94; margin: 10px auto; }
+.cover .base { position: absolute; left: 0; right: 0; bottom: 56px; font: 500 12px 'Cinzel', serif; letter-spacing: .3em; text-transform: uppercase; color: var(--gold); }
+.cover .rule { color: var(--gold); }
+.cover .folio { display: none; }
+
+/* ── contents ─────────────────────────────────────────────────── */
+.toc { list-style: none; padding: 0; margin: 14px 0; columns: 2; column-gap: 40px; }
+.toc li { break-inside: avoid; margin: 0 0 7px; display: flex; gap: 8px; align-items: baseline; }
+.toc a { color: var(--ink); text-decoration: none; flex: 1; border-bottom: 1px dotted var(--rule); }
+.toc a:hover { color: var(--wax); }
+.toc .n { font: 700 12px 'Cinzel', serif; color: var(--wax); letter-spacing: .1em; width: 2.6em; }
+
+@media (max-width: 720px) {
+  body { font-size: 17.5px; }
+  .sheet { padding: 40px 24px 52px; }
+  h2.ch { font-size: 24px; } .cover h1 { font-size: 40px; } .cover .sub { font-size: 17px; letter-spacing: .2em; }
+  .toc { columns: 1; } .two { grid-template-columns: 1fr; }
+  .cover { min-height: 780px; padding: 50px 28px; }
+}
+
+/* ── printing: every sheet becomes one Letter page ────────────── */
+@page { size: Letter; margin: 0; }
+@media print {
+  html, body { background: #fff !important; }
+  body { padding: 0; font-size: 11.4pt; line-height: 1.38; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { width: 8.5in; height: 11in; margin: 0; padding: .62in .78in .7in; box-shadow: none; break-after: page; page-break-after: always; overflow: hidden; }
+  .sheet:last-child { break-after: auto; page-break-after: auto; }
+  .sheet::before { inset: .24in; } .sheet::after { inset: .34in; }
+  .cover { min-height: 0; }
+  h2.ch { font-size: 26pt; } .cover h1 { font-size: 54pt; }
+  .folio { bottom: .5in; }
+  h3 { margin-top: 10px; } .note, .warn { margin: 8px 0; } p { margin-bottom: .55em; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="fl" viewBox="0 0 300 20"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+      <path d="M8 10H118M182 10H292"/><path d="M118 10c10-9 19-9 24 0-5 9-14 9-24 0zM182 10c-10-9-19-9-24 0 5 9 14 9 24 0z"/>
+      <path d="M150 2l8 8-8 8-8-8z" fill="currentColor"/><path d="M8 10c4-4 7-4 10 0M292 10c-4-4-7-4-10 0"/></g></symbol>
+    <symbol id="kn" viewBox="0 0 22 22"><g fill="none" stroke="currentColor" stroke-width="1.4"><path d="M11 2l9 9-9 9-9-9z"/><path d="M11 6l5 5-5 5-5-5z" fill="currentColor"/></g></symbol>
+    <symbol id="seal" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#8e2b20" stroke="#c9a45c" stroke-width=".7"/><circle cx="12" cy="12" r="9.2" fill="none" stroke="#c9a45c" stroke-width=".35"/><path d="M12 3l2 7 7 2-7 2-2 7-2-7-7-2 7-2z" fill="#f0d596"/></symbol>
+    <symbol id="d20" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 7l5 8H7zM12 2v5M3 7l4 8M21 7l-4 8M12 22l-5-7M12 22l5-7"/></symbol>
+    <symbol id="coins" viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4M5 10.5v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4"/></symbol>
+    <symbol id="anvil" viewBox="0 0 24 24"><path d="M3 8h14c2.5 0 3.6 1.6 4.5 3-2 0-4 .6-5 2.2L15 15h-3v3h4v2.5H7V18h4v-3H9c-.8-2-2.4-4-6-4z"/></symbol>
+    <symbol id="flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.2 9.2A2 2 0 0 0 6.5 21h11a2 2 0 0 0 1.7-2.8L14 9V3M7.5 15h9"/></symbol>
+    <symbol id="compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 5l2.3 6.7L12 19l-2.3-7.3zM12 1v2M12 21v2M1 12h2M21 12h2"/></symbol>
+    <symbol id="scroll" viewBox="0 0 24 24"><path d="M6 3h11a2 2 0 0 1 2 2v13a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6a3 3 0 0 1 1-3zM9 8h7M9 12h7M9 16h4"/></symbol>
+  </defs>
+</svg>
+
+<!-- ═══════════ COVER ═══════════ -->
+<section class="sheet cover" id="top">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="small">The Sollaran Archonate</div>
+  <svg class="rule" viewBox="0 0 300 20" width="320" height="22"><use href="#fl"/></svg>
+  <h1>The Atlas<br>of Sollara</h1>
+  <div class="sub">A Player&rsquo;s Handbook</div>
+  <svg class="seal" viewBox="0 0 24 24"><use href="#seal"/></svg>
+  <svg class="rule" viewBox="0 0 300 20" width="320" height="22"><use href="#fl"/></svg>
+  <p>Being a true and faithful guide to the Book of Maps, the Market, the Party&rsquo;s Loot, and all else that the Adventurer may find therein.</p>
+  <div class="base">For the use of the Party &middot; Keep it dry</div>
+</section>
+
+<!-- ═══════════ CONTENTS ═══════════ -->
+<section class="sheet" id="contents">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Before the Journey</div>
+    <h2 class="ch">A Word to the Adventurer</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Hearken, traveller. The Archonate of Sollara is wide, and no one walks it well without a map. Your Dungeon Master keeps a living atlas for this campaign: maps of the continent and its dukedoms, the town of Emmett, the inns and temples within it, and everything your party has learned along the way. It also holds the markets where you may buy and sell, and the stash where your treasure is kept.</p>
+    <p>This handbook explains every part of it, in the order you are likely to need it. The atlas is for the <em>party</em>: what you write and buy is seen by your companions, and what your Dungeon Master hides stays hidden until the story reveals it.</p>
+    <ol class="toc">
+      <li><span class="n">I</span><a href="#c1">First Steps</a></li>
+      <li><span class="n">II</span><a href="#c2">The Book of Maps</a></li>
+      <li><span class="n">III</span><a href="#c3">Places and Pins</a></li>
+      <li><span class="n">IV</span><a href="#c4">Your Notes</a></li>
+      <li><span class="n">V</span><a href="#c5">Ping and Torchlight</a></li>
+      <li><span class="n">VI</span><a href="#c6">The People of the Realm</a></li>
+      <li><span class="n">VII</span><a href="#c7">Renown</a></li>
+      <li><span class="n">VIII</span><a href="#c8">The Market</a></li>
+      <li><span class="n">IX</span><a href="#c9">Haggling</a></li>
+      <li><span class="n">X</span><a href="#c10">The Smith&rsquo;s Repairs</a></li>
+      <li><span class="n">XI</span><a href="#c11">The Party&rsquo;s Loot</a></li>
+      <li><span class="n">XII</span><a href="#c12">The Merchant&rsquo;s Road</a></li>
+      <li><span class="n">XIII</span><a href="#c13">Festivals</a></li>
+      <li><span class="n">XIV</span><a href="#c14">Trouble and Remedies</a></li>
+      <li><span class="n">App.</span><a href="#c15">Tables for Quick Reference</a></li>
+    </ol>
+    <div class="note"><p>This handbook covers what a <em>player</em> sees. Your Dungeon Master has further tools that are not described here, and the pages may change a little as the campaign grows. When in doubt, ask.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ I ═══════════ -->
+<section class="sheet" id="c1">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter I</div>
+    <h2 class="ch">First Steps</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="epigraph">&ldquo;Know the door before you knock upon it.&rdquo;</p>
+    <p class="lead">The atlas lives on the web, so there is nothing to install. Open the address your Dungeon Master gave you in any browser, on a computer, a tablet or a phone. It is the same book on every device, and what one of you adds appears on everyone&rsquo;s screen within moments.</p>
+    <h3>Signing in</h3>
+    <ol>
+      <li>You will meet a gate. Press the button to <b>sign in with Google</b>.</li>
+      <li>Choose the Google account your Dungeon Master knows you by. There are no other passwords and no new accounts to make.</li>
+      <li>The book opens. Your first name now sits on the button at the top right. Press it only when you wish to <b>sign out</b>.</li>
+    </ol>
+    <p>The atlas can be limited to the people your Dungeon Master names. If the gate turns you away, tell them which Google address you used.</p>
+    <h3>Telling the atlas who you are</h3>
+    <p>The first time you write a note, the atlas asks for your <b>name or character</b>. It remembers it afterward, and a small <em>change</em> link lets you alter it. This is the name your companions see beside your notes and your purchases.</p>
+    <h3>On a phone or tablet</h3>
+    <p>Everything works by touch. Panels rise from the bottom of the screen and close with the &times;. Documents turn with a swipe; maps are dragged with a finger and zoomed with a pinch.</p>
+    <div class="note"><p>After your Dungeon Master updates the atlas, your browser may show the old pages for about ten minutes. Hold <kbd>Ctrl</kbd> and press <kbd>F5</kbd> (on a phone, reload twice) to fetch the new ones.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ II ═══════════ -->
+<section class="sheet" id="c2">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter II</div>
+    <h2 class="ch">The Book of Maps</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">The atlas is a book. Each page is either a <b>map</b> or a <b>document</b>, and the page&rsquo;s name appears beneath the title at the top. Turn the pages with the arrows at either edge, the folded corners, the <kbd>&larr;</kbd> and <kbd>&rarr;</kbd> keys, or a swipe across a document.</p>
+    <h3>The bar of icons</h3>
+    <table class="icons">
+      <tr><td><svg class="i" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg></td><td><b>Contents</b></td><td>Every page in the book, nested as the world is. A dukedom opens into its towns, a town into its inns. Press the small arrows to open or close a branch, or a name to go there.</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg></td><td><b>Search</b></td><td>Find any place, page or scrap of lore. Press <kbd>/</kbd> from anywhere, then use the arrow keys and <kbd>Enter</kbd>.</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20.5c0-3.8 2.9-6.6 6.5-6.6s6.5 2.8 6.5 6.6"/><circle cx="17" cy="8.8" r="2.7"/><path d="M15.8 14.2c3.2.2 5.7 2.7 5.7 6.3"/></svg></td><td><b>People</b></td><td>The register of everyone your party knows (Chapter VI).</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><path d="M12 21c-4.2-1.6-7.5-5.6-7.5-10.5 0-2.3.7-4.4 1.8-6M12 21c4.2-1.6 7.5-5.6 7.5-10.5 0-2.3-.7-4.4-1.8-6"/><path d="M5.2 8.5c1.6 0 2.9.9 3.4 2.3M4.8 13c1.7-.2 3.2.6 3.9 2M18.8 8.5c-1.6 0-2.9.9-3.4 2.3M19.2 13c-1.7-.2-3.2.6-3.9 2"/><path d="M12 6.5l1.1 2.3 2.5.3-1.8 1.7.5 2.5-2.3-1.2-2.3 1.2.5-2.5-1.8-1.7 2.5-.3z"/></svg></td><td><b>Renown</b></td><td>How the party is regarded in each place (Chapter VII).</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><path d="M9 3h6l-1.5 3h-3zM6.5 7.5h11c2 2.4 3 5 3 7.8C20.5 19 17 21 12 21s-8.5-2-8.5-5.7c0-2.8 1-5.4 3-7.8z"/><path d="M14.3 11.6c-.6-.6-1.4-.9-2.3-.9-1.3 0-2.3.7-2.3 1.7 0 2.3 4.6 1.2 4.6 3.4 0 1-1 1.7-2.3 1.7-1 0-1.9-.4-2.5-1M12 9.5v1.2M12 17.4v1.1"/></svg></td><td><b>Market</b></td><td>Shops, loot and purchases (Chapters VIII to XII).</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg></td><td><b>Ping</b></td><td>Point out a spot to the whole party (Chapter V).</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><path d="M12 2c1 3 4.5 4.6 4.5 8.4a4.5 4.5 0 0 1-9 0c0-2 1.2-3.4 2-4.7.4 1.3 1 2.1 1.9 2.4C11 6 11.3 4 12 2zM10 16h4l-1 6h-2z"/></svg></td><td><b>Torchlight</b></td><td>Darkens the map, for night scenes (Chapter V).</td></tr>
+      <tr><td><svg class="i" viewBox="0 0 24 24"><path d="M6 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6zM6 3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2M9 8h7M9 12h7M9 16h4"/></svg></td><td><b>About</b></td><td>Notes on the current page, and the party notes written beneath them.</td></tr>
+    </table>
+    <h3>Reading a map</h3>
+    <ul>
+      <li><b>Drag</b> to pan, and use the wheel or a pinch to <b>zoom</b>. The compass rose in the corner shows north.</li>
+      <li>Small marks on the map are <b>pins</b>: towns, inns, temples and the like (Chapter III).</li>
+      <li>A gold link in a document jumps to the place or person it names.</li>
+      <li>The page number at the foot is the <em>folio</em>. <kbd>Esc</kbd> closes whatever is open on top of the book.</li>
+    </ul>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ III ═══════════ -->
+<section class="sheet" id="c3">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter III</div>
+    <h2 class="ch">Places and Pins</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="epigraph">&ldquo;Every pin is a door. Open it.&rdquo;</p>
+    <p class="lead">Press any pin on a map and a panel opens beside it. Press a town and you will find, in order, whatever your party has learned of it.</p>
+    <h3>What a place may hold</h3>
+    <ul>
+      <li><b>A description</b> and sometimes a picture.</li>
+      <li><b>The party&rsquo;s standing</b> there, for towns and cities (Chapter VII).</li>
+      <li><b>People here</b>: those who may be found at this place, each a link to their entry.</li>
+      <li><b>Shops here</b>: the merchants and craftsmen of the place, each a link to its stock.</li>
+      <li><b>Party notes</b>: what you and your companions have written (Chapter IV).</li>
+    </ul>
+    <h3>The About tab</h3>
+    <p>Every page has an <b>About</b> panel, opened by the book icon in the bar (or the tab at the edge of the map). It tells what the whole page is: the lore of a dukedom, the history of a city. It also holds the party notes for that page.</p>
+    <h3>Places inside places</h3>
+    <p>The Archonate is built of nested maps. A dukedom&rsquo;s map shows its towns; a town such as Emmett has its own map; and within it stand inns and chapels, each with floors of their own. Use the <b>Contents</b>, or press a pin that leads onward, to go deeper.</p>
+    <div class="note"><p>Not everything is shown to you at once. Your Dungeon Master reveals pins, people and shops as your party discovers them, so a place may appear that was not on the map yesterday.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ IV ═══════════ -->
+<section class="sheet" id="c4">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter IV</div>
+    <h2 class="ch">Your Notes</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Beneath every pin, page, person and shop is a place for <b>party notes</b>. Write rumors you have heard, suspicions you hold, debts you are owed, or the name of the innkeeper who overcharged you. It is the party&rsquo;s shared memory, and it is saved at once.</p>
+    <h3>Writing a note</h3>
+    <ol>
+      <li>Open the thing you wish to write about and find <em>Party notes</em> at the bottom of its panel.</li>
+      <li>Type in the box. Press <b>Add note</b>, or <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.</li>
+      <li>Your note appears under your name, for everyone in the party to read.</li>
+    </ol>
+    <h3>Private notes</h3>
+    <p>Tick <b>Private</b> before you add a note and only <em>you</em> will see it, not your companions, and not your Dungeon Master. Use it for a character&rsquo;s secret, a plan you are not ready to share, or a reminder to yourself.</p>
+    <h3>Changing your mind</h3>
+    <p>You can edit or delete your own notes. You cannot alter anyone else&rsquo;s.</p>
+    <div class="note"><p>A note belongs to the thing you wrote it under. A rumor about the Duke goes under the Duke, and a warning about a bridge goes under the bridge. File it where you will think to look for it.</p></div>
+    <div class="warn"><p>A shared note is read by the whole table. If your character is keeping a secret from the party, tick <b>Private</b>.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ V ═══════════ -->
+<section class="sheet" id="c5">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter V</div>
+    <h2 class="ch">Ping and Torchlight</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Two small tools make the map a table-top companion. Both appear only when a map is open.</p>
+    <h3>Ping: &ldquo;Look here!&rdquo;</h3>
+    <p>Press the <b>Ping</b> icon, then press a spot on the map, or simply <b>right-click</b> the spot. A pulsing ring appears on every party member&rsquo;s map, with your name beside it, and fades after a few seconds. Anyone looking at a different page is offered a <b>Go there</b> button. Use it to say <em>we are here</em>, <em>the ambush is there</em>, or <em>this is the bridge I mean</em>. Press <kbd>Esc</kbd> to leave ping mode.</p>
+    <h3>Torchlight</h3>
+    <p>Press the <b>Torchlight</b> icon and the map grows dark, with a circle of light that follows your pointer or finger. It is for mood alone, ideal when the party is in a cellar, a cave or a crypt. Press the icon again to bring back the day.</p>
+    <div class="note"><p>Both tools change only <em>your</em> screen or send a brief signal. They never alter the map itself.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ VI ═══════════ -->
+<section class="sheet" id="c6">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter VI</div>
+    <h2 class="ch">The People of the Realm</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Press the <b>People</b> icon to open the <em>Dramatis Personae</em>: everyone your party has met or heard of, with their portraits, titles and descriptions.</p>
+    <h3>Groups within groups</h3>
+    <p>People are sorted into groups, and groups sit inside one another. <em>Emmett</em> may hold <em>The Roosting Crow</em>, which holds its staff, and <em>the Chapel of the Rising Sun</em>, which holds its Sisters. Press a group&rsquo;s name to open or close it. The number beside it counts everyone inside. A group may also carry a <b>renown</b> standing of its own (Chapter VII).</p>
+    <h3>Finding someone</h3>
+    <ul>
+      <li>Type in the search box to match <b>names, titles, groups and places</b>. Every group holding a match opens by itself.</li>
+      <li>Press a name to read their entry: a portrait, a description, and the places where they may be found, each a link.</li>
+      <li>An entry also holds the party notes about that person (Chapter IV).</li>
+    </ul>
+    <h3>Shopkeepers</h3>
+    <p>When a shop has a named proprietor, their entry appears here too, filed under the town&rsquo;s <em>Merchants</em>. The shop page links to them, and they link back.</p>
+    <div class="note"><p>You see only the people your Dungeon Master has made known to you. A character you have not yet met is not in the register, and a name may appear there before you have learned all of their story.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ VII ═══════════ -->
+<section class="sheet" id="c7">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter VII</div>
+    <h2 class="ch">Renown</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="epigraph">&ldquo;A good name is a coin that cannot be stolen, only spent.&rdquo;</p>
+    <p class="lead">Renown is the <b>party&rsquo;s</b> standing with a place or a group, shared by all of you together. It is a number from &minus;10 to +10, which falls into a named tier. Press the <b>Renown</b> icon to see where you stand, and press any entry to read its <em>history</em>, with the reason for every change.</p>
+    <table>
+      <tr><th>Tier</th><th class="r">From</th><th>What it means (a general guide)</th></tr>
+      <tr><td><b>Reviled</b></td><td class="r num">&minus;10</td><td>Guards may arrest you on sight; no one will trade with you.</td></tr>
+      <tr><td><b>Distrusted</b></td><td class="r num">&minus;6</td><td>Higher prices, closed doors, and the Watch keeps an eye on you.</td></tr>
+      <tr><td><b>Disliked</b></td><td class="r num">&minus;2</td><td>Cool service and the worse price; never the benefit of the doubt.</td></tr>
+      <tr><td><b>Unknown</b></td><td class="r num">0</td><td>Nobody knows you. Ordinary prices, ordinary treatment.</td></tr>
+      <tr><td><b>Respected</b></td><td class="r num">+3</td><td>Locals share rumors and lend a hand.</td></tr>
+      <tr><td><b>Honored</b></td><td class="r num">+7</td><td>Discounts, free lodging, and an audience with local leaders.</td></tr>
+      <tr><td><b>Exalted</b></td><td class="r num">+10</td><td>Heroes here. People take real risks for you.</td></tr>
+    </table>
+    <h3>What renown does in the Market</h3>
+    <p>Each shop shows <em>your standing</em> and how it changes the shop&rsquo;s terms. Good renown lowers prices, up to a quarter off at +10, and opens the doors to better goods. Poor renown raises them (up to 60% more at &minus;10) and holds the better goods back. Below &minus;6, a merchant will not deal with you at all.</p>
+    <div class="note"><p>Renown is earned and lost by what the party <em>does</em>. Your Dungeon Master sets each number and writes the reason into the history. Each place keeps its own tally, so a great name in Emmett means little in the next dukedom. Tiers and wording may differ a little in your game, and a place may hold its own specifics.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ VIII ═══════════ -->
+<section class="sheet" id="c8">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter VIII</div>
+    <h2 class="ch">The Market</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Press the <b>Market</b> icon (the coin purse) to open three tabs: <b>Shops</b>, <b>Loot</b> and <b>My purchases</b>. Shops are grouped by the place where they stand. Press one to enter it.</p>
+    <h3>Inside a shop</h3>
+    <ul>
+      <li>The <b>proprietor</b> and a word about the shop, and a line showing <b>your standing</b> and how it affects prices.</li>
+      <li>The <b>local market</b>: what is cheap and what is dear in this town (Chapter XII).</li>
+      <li>The <b>stock</b>: each item, how many are left, its price, and a <b>Buy</b> button. A price struck through means it has been adjusted for you.</li>
+      <li>A countdown: <em>stock refreshes in so many days</em>. Shelves are restocked each week.</li>
+    </ul>
+    <h3>Kinds of goods</h3>
+    <table>
+      <tr><td><b>Plain</b></td><td>Everyday goods at everyday quality.</td></tr>
+      <tr><td><b>Fine</b></td><td>A better-made version, at double the price. Bigger towns have more of them.</td></tr>
+      <tr><td><b>Under the counter</b></td><td>Rare or special goods, offered only to customers in good standing. Otherwise you will read <em>not for you, not yet</em>.</td></tr>
+      <tr><td><b>House special</b></td><td>A thing this shop is known for.</td></tr>
+      <tr><td><b>Service</b></td><td>Lodging, healing, repairs and the like. It never runs out.</td></tr>
+    </table>
+    <h3>Buying</h3>
+    <ol>
+      <li>Press <b>Buy</b>, enter how many, and confirm.</li>
+      <li>The purchase is written to the <b>ledger</b>, and the goods are placed in the party&rsquo;s <b>Loot</b> (Chapter XI).</li>
+      <li>You settle the gold with your Dungeon Master at the table. <b>My purchases</b> lists everything you bought and whether it has been settled.</li>
+    </ol>
+    <div class="note"><p>A larger settlement stocks more, finer goods and more rarities. A hamlet may have a handful of wares; a city has many. Shops of the same kind in different towns will not offer the same things.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ IX ═══════════ -->
+<section class="sheet" id="c9">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter IX</div>
+    <h2 class="ch">Haggling</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Every shop lets you <b>haggle once a week</b>. Press the <b>Haggle</b> button and the atlas rolls a twenty-sided die for you, adds your character&rsquo;s <b>Persuasion bonus</b>, and reads the result against the table below. There is nothing to type and nothing to dispute: the die is cast in the atlas.</p>
+    <table>
+      <tr><th>Total</th><th>The merchant&rsquo;s answer</th><th class="r">Prices</th></tr>
+      <tr><td class="num">5 or less</td><td>Offended!</td><td class="r">+20%</td></tr>
+      <tr><td class="num">6 to 9</td><td>Unimpressed.</td><td class="r">+10%</td></tr>
+      <tr><td class="num">10 to 14</td><td>No deal.</td><td class="r">no change</td></tr>
+      <tr><td class="num">15 to 19</td><td>A fair bargain.</td><td class="r">&minus;10%</td></tr>
+      <tr><td class="num">20 to 24</td><td>Charmed.</td><td class="r">&minus;15%</td></tr>
+      <tr><td class="num">25 or more</td><td>Won over completely.</td><td class="r">&minus;20%</td></tr>
+    </table>
+    <h3>Your Persuasion bonus</h3>
+    <p>The first time you haggle, the atlas asks for your character&rsquo;s Persuasion bonus (such as <b>+3</b>, or <b>&minus;1</b>). Enter it <em>once</em>. After that your Dungeon Master keeps it up to date as you level, so you will not be asked again.</p>
+    <h3>How it works</h3>
+    <ul>
+      <li>The result applies to <b>everything you buy at that shop</b> until its stock refreshes, and also <b>when you sell there</b>, in your favor if you rolled well (Chapter XII).</li>
+      <li>You may haggle <em>once per shop, per week</em>. A different shop is a fresh attempt.</li>
+      <li>Your companions haggle for themselves; one person&rsquo;s luck is not shared.</li>
+    </ul>
+    <div class="warn"><p>A poor roll makes things <em>dearer</em>, not merely the same. Consider carefully whether to risk it before a big purchase. If a roll goes badly wrong, your Dungeon Master can reset it, but ask nicely.</p></div>
+    <div class="note"><p>Black markets keep their own counsel. They favor the people the law dislikes, so the <em>worse</em> your standing with the authorities, the better they treat you.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ X ═══════════ -->
+<section class="sheet" id="c10">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter X</div>
+    <h2 class="ch">The Smith&rsquo;s Repairs</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">In the Archonate, every weapon and every piece of armor has <b>three damage slots</b>. When all three are spent, the item is <b>broken</b> and will not serve until mended. A blacksmith will repair it for gold, and the atlas works out the price for you.</p>
+    <h3>Using the repair panel</h3>
+    <p>Open a <b>Blacksmith &amp; Armorer</b> and find <em>Repairs</em> above the stock.</p>
+    <ol>
+      <li>Choose <b>Weapon</b> or <b>Armor or shield</b>.</li>
+      <li>Choose the item&rsquo;s <b>rarity</b>. Look the item up on D&amp;D Beyond to find it. A plain sword is <em>Common</em>; a +1 weapon is <em>Uncommon</em>, and so on up the ladder.</li>
+      <li>Say how many slots are used: one, two, or three (broken).</li>
+      <li>Optionally name the item, so the ledger shows which it was.</li>
+      <li>Read the price, then press <b>Pay for the repair</b>. The mending is instant.</li>
+    </ol>
+    <table>
+      <tr><th>Rarity</th><th class="r">1 slot</th><th class="r">2 slots</th><th class="r">Broken</th><th>Smith needed</th></tr>
+      <tr><td><b>Common</b></td><td class="r num">2 gp</td><td class="r num">4&frac12; gp</td><td class="r num">9 gp</td><td>Any village; a hamlet, if not broken</td></tr>
+      <tr><td><b>Uncommon</b></td><td class="r num">25 gp</td><td class="r num">56 gp</td><td class="r num">113 gp</td><td>A town or larger</td></tr>
+      <tr><td><b>Rare</b></td><td class="r num">150 gp</td><td class="r num">338 gp</td><td class="r num">675 gp</td><td>A city or larger</td></tr>
+      <tr><td><b>Very rare</b></td><td class="r num">800 gp</td><td class="r num">1,800 gp</td><td class="r num">3,600 gp</td><td>A metropolis</td></tr>
+      <tr><td><b>Legendary</b></td><td class="r" colspan="3">Beyond any ordinary smith</td><td>A master, or a quest</td></tr>
+    </table>
+    <p>Prices shown here are before your <b>renown</b> and <b>haggling</b>, which adjust them as they do any purchase. Each further slot costs a little more than the last, and a fully broken piece costs a little extra to rebuild.</p>
+    <div class="note"><p>If a smith cannot work on your item, the panel says so and names the size of town to look for. That is a hint about where to travel next. You may also restore slots yourself by resting, by the rules your Dungeon Master gave you.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ XI ═══════════ -->
+<section class="sheet" id="c11">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter XI</div>
+    <h2 class="ch">The Party&rsquo;s Loot</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Everything the party finds or buys is kept in one shared stash, under the <b>Loot</b> tab of the Market. Anyone in the party may look into it at any time.</p>
+    <h3>What the tab shows</h3>
+    <ul>
+      <li><b>The party purse</b> at the top: the coins held in common. Your Dungeon Master adds and divides them.</li>
+      <li><b>In the party&rsquo;s Loot</b>: each item with its quantity and value, where it was found, and, for goods you bought, what was paid for it.</li>
+      <li><b>Claimed</b>: items a character has taken. These belong to that character now.</li>
+      <li><b>History</b>: a running record of finds, claims, sales and identifications.</li>
+    </ul>
+    <h3>Taking an item</h3>
+    <p>When a character wants to keep something from the stash, tell your Dungeon Master, who will <b>give it to your character</b>. It leaves the shared Loot and goes into the Claimed list under your name.</p>
+    <h3>Unidentified magic</h3>
+    <p>A magic item the party has found is <b>not what it seems</b>. You will see only what a character could see at a glance: <em>a crystal set in a plain pendant</em>, perhaps, with its value marked <em>unknown</em>. To learn what it truly is:</p>
+    <ol>
+      <li>Visit a shop that offers <b>Identify an item</b> (Arcane Curios and temples do, for about 20 gp).</li>
+      <li>Press <b>Buy</b> on that service, choose which unidentified item to study, and confirm.</li>
+      <li>The sage takes it away. The item is <b>revealed automatically</b> the next time your Dungeon Master opens the atlas, and its real name and powers replace the vague description.</li>
+    </ol>
+    <div class="note"><p>You may not identify an item without paying for it. This is by design: magic in the Archonate is a puzzle, and the sage&rsquo;s fee is part of the price of knowing.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ XII ═══════════ -->
+<section class="sheet" id="c12">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter XII</div>
+    <h2 class="ch">The Merchant&rsquo;s Road</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="epigraph">&ldquo;Buy where it is made, and sell where it is wanted.&rdquo;</p>
+    <p class="lead">Each town has its own market. What is cheap in one place is dear in another, so a patient trader may earn a little by carrying goods across the land. The atlas keeps count of all of it.</p>
+    <h3>Reading a town&rsquo;s market</h3>
+    <p>A shop&rsquo;s page carries a line such as <em>&ldquo;In this market: <b>cheap</b> wine, salt; <b>dear</b> silk, spices.&rdquo;</em> Ten kinds of goods vary from town to town: wine and spirits, ale and mead, salt, spices, coffee, tea and perfume, silk and fine cloth, gems and jewelry, furs and leather, iron and ingots, and grain. Lynport is famed for its wine; Saltyard for its salt; the capital craves luxuries.</p>
+    <h3>Selling your goods</h3>
+    <ol>
+      <li>Open the <b>Loot</b> tab. Goods you bought are listed there.</li>
+      <li>Press <b>sell&hellip;</b> beside an item that is not yet claimed.</li>
+      <li>Choose a shop. The list shows what each will pay; merchants who sell that kind of goods pay the most.</li>
+      <li>Read the offer. The atlas shows how it was reached, and whether it is a <b>profit</b> or a <b>loss</b> on what was paid.</li>
+      <li>Press <b>Sell it</b>.</li>
+    </ol>
+    <p>The gold is <b>owed to you</b>: it appears under <em>My sales</em> in the ledger, and your Dungeon Master pays you at the table.</p>
+    <h3>What shapes the price</h3>
+    <p>The item&rsquo;s standard value, what that shop pays for such goods (a merchant of the right trade gives about 85%), how much the town <b>wants</b> it, the party&rsquo;s <b>renown</b> there, and your <b>haggle</b> (a good roll now earns you <em>more</em>).</p>
+    <div class="warn"><p>Selling at the town where you bought almost always loses money. The profit is on the road. Shops also have limits: each can pay only so much in <b>one sale</b> and in <b>one week</b> (see the tables), so a small town cannot buy a dragon&rsquo;s hoard. Plan your route, and your Dungeon Master may have plans for you on it.</p></div>
+    <div class="note"><p><b>Example.</b> Fine wine is cheap in Lynport, where you pay 7 gp a bottle. In Saltyard, where it is wanted, a wine merchant may pay 11 gp. Five bottles earn about 20 gp, which is not a fortune, but the wine had to be carried there.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ XIII ═══════════ -->
+<section class="sheet" id="c13">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter XIII</div>
+    <h2 class="ch">Festivals</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">The Archonate keeps two great holidays. When your Dungeon Master declares one under way, a <b>banner</b> appears at the top of the atlas, a short note greets you in the Market, and the shops fill with festival goods. Press the banner to go to the Market.</p>
+    <h3>The Festival of the Sacred Harmony</h3>
+    <p>Held once a year, on the seventh hour of the seventh day of the seventh month, when the Sanguine Sisters carry their crystals to the capital and the Song is heard across the land. Pilgrims crowd the roads. Look for white-and-gold ribbons and candles, pilgrim&rsquo;s rations, song-purified water, white festival robes, hymnals, blessings for the road, and, for those in good standing, a rare crystal-song shard at the temples.</p>
+    <h3>Bertram&rsquo;s Rye Ale Festival</h3>
+    <p>Held six months later: a raucous, joyful contest in which brewers from across Sollara compete to be named <em>Bertram</em> for a year. Look for commemorative tankards, tasting flights of rye ale, entry kegs, rye mash, festival feasts at the inns, and, for trusted customers, this year&rsquo;s winning keg.</p>
+    <h3>The rules of festival goods</h3>
+    <ul>
+      <li>Festival goods are marked as <b>harmony specials</b> or <b>festival specials</b>, and sit beside the usual stock.</li>
+      <li>Rare specials are held back for customers in good standing, as with any under-the-counter goods.</li>
+      <li>They are bought and carried like anything else, and they can be sold on.</li>
+      <li>When the festival ends, the specials are gone. <b>Black markets take no part</b> in either holiday.</li>
+    </ul>
+    <div class="note"><p>Festivals pass. If something tempts you, buy it while the banner flies.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ XIV ═══════════ -->
+<section class="sheet" id="c14">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Chapter XIV</div>
+    <h2 class="ch">Trouble and Remedies</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Should something go awry, begin here.</p>
+    <table>
+      <tr><th>The trouble</th><th>The remedy</th></tr>
+      <tr><td>The page is blank, or looks as it did last week.</td><td>Hold <kbd>Ctrl</kbd> and press <kbd>F5</kbd>. After an update the old copy may linger for about ten minutes. On a phone, reload twice.</td></tr>
+      <tr><td>The gate will not let me in.</td><td>Use the Google address your Dungeon Master knows. If a pop-up window was blocked, allow it and try again.</td></tr>
+      <tr><td>I see &ldquo;Missing or insufficient permissions.&rdquo;</td><td>The atlas&rsquo;s rules need updating. Tell your Dungeon Master; nothing you did is wrong.</td></tr>
+      <tr><td>A shop, person or place is missing.</td><td>It may be hidden until your party discovers it. Ask.</td></tr>
+      <tr><td>I cannot haggle again.</td><td>One try per shop each week. A new week, or a new shop, is a fresh attempt. Your Dungeon Master can reset one.</td></tr>
+      <tr><td>The shelves look different today.</td><td>Stock refreshes weekly, and festivals add and remove specials.</td></tr>
+      <tr><td>I bought something and cannot find it.</td><td>Look in the Market&rsquo;s <b>Loot</b> tab. Goods go to the party stash. Services (repairs, identifying) leave nothing to find.</td></tr>
+      <tr><td>I cannot sell an item.</td><td>Only unclaimed goods that the party bought may be sold by players. Found treasure is sold by your Dungeon Master, and a claimed item belongs to its character.</td></tr>
+      <tr><td>Nobody will buy my goods.</td><td>Some shops want only what they sell themselves. Try a general store or an importer, or travel to a town that wants them.</td></tr>
+      <tr><td>My note vanished.</td><td>Private notes show only to their author, so check that you are signed in under the same account.</td></tr>
+    </table>
+    <div class="note"><p>Whatever is not in this handbook, your Dungeon Master will gladly explain. The atlas is theirs to shape.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<!-- ═══════════ APPENDIX ═══════════ -->
+<section class="sheet" id="c15">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Appendix</div>
+    <h2 class="ch">Tables for Quick Reference</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <h3>Settlements and what they offer</h3>
+    <table>
+      <tr><th>Size</th><th class="r">Wares</th><th class="r">Fine goods</th><th class="r">Under the counter</th><th>Smith repairs up to</th><th class="r">One sale up to</th><th class="r">A week up to</th></tr>
+      <tr><td><b>Hamlet</b></td><td class="r num">4&ndash;6</td><td class="r">none</td><td class="r">none</td><td>Common (not broken)</td><td class="r num">75 gp</td><td class="r num">150 gp</td></tr>
+      <tr><td><b>Village</b></td><td class="r num">6&ndash;9</td><td class="r">few</td><td class="r">none</td><td>Common</td><td class="r num">300 gp</td><td class="r num">600 gp</td></tr>
+      <tr><td><b>Town</b></td><td class="r num">9&ndash;12</td><td class="r">some</td><td class="r">1</td><td>Uncommon</td><td class="r num">1,500 gp</td><td class="r num">3,000 gp</td></tr>
+      <tr><td><b>City</b></td><td class="r num">12&ndash;16</td><td class="r">plenty</td><td class="r">2</td><td>Rare</td><td class="r num">8,000 gp</td><td class="r num">16,000 gp</td></tr>
+      <tr><td><b>Metropolis</b></td><td class="r num">15&ndash;20</td><td class="r">many</td><td class="r">3</td><td>Very rare</td><td class="r num">50,000 gp</td><td class="r num">100,000 gp</td></tr>
+    </table>
+    <div class="two">
+      <div>
+        <h3>Renown and prices</h3>
+        <table>
+          <tr><th>Standing</th><th>Effect</th></tr>
+          <tr><td class="num">+10</td><td>25% off</td></tr>
+          <tr><td class="num">+5</td><td>About 12% off</td></tr>
+          <tr><td class="num">+3 or more</td><td>Under-the-counter goods open</td></tr>
+          <tr><td class="num">0 to +2</td><td>Fine goods, ordinary prices</td></tr>
+          <tr><td class="num">&minus;1 and below</td><td>Dearer; better goods held back</td></tr>
+          <tr><td class="num">&minus;10</td><td>60% dearer</td></tr>
+          <tr><td class="num">&minus;7 and below</td><td>The merchant will not deal</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>Keys and shortcuts</h3>
+        <table>
+          <tr><td><kbd>/</kbd></td><td>Search</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Search</td></tr>
+          <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Turn the page</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close a panel, or leave ping</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Add the note</td></tr>
+          <tr><td>Right-click</td><td>Ping the map</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>F5</kbd></td><td>Fetch the newest pages</td></tr>
+        </table>
+      </div>
+    </div>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18" style="margin-top:14px"><use href="#fl"/></svg>
+    <p style="text-align:center;font-style:italic;color:var(--ink-soft);margin:0">May your purse be heavy, your blade unbroken, and your name well spoken.</p>
+  </div>
+  <div class="folio"></div>
+</section>
+
+</body>
+</html>
