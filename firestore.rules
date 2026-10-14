@@ -127,10 +127,42 @@ service cloud.firestore {
     // player may send an unidentified item off to be identified (after paying a shop for it).
     match /loot/{id} {
       allow read: if isPlayer();
-      allow create, delete: if isDM();
-      allow update: if isDM() || (isPlayer()
-        && resource.data.status == 'unidentified' && request.resource.data.status == 'pending'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'pendingBy', 'pendingAt', 'pendingIn']));
+      // Anything a player buys lands here as "goods" (under their own name). Unclaimed goods can be sold
+      // by any player, which removes them or lowers the quantity. Everything else is the DM's.
+      allow create: if isDM() || (isPlayer()
+        && request.resource.data.kind == 'goods' && request.resource.data.status == 'identified'
+        && request.resource.data.boughtByUid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 160
+        && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
+        && request.resource.data.value is number && request.resource.data.value >= 0
+        && request.resource.data.cost is number && request.resource.data.cost >= 0);
+      allow delete: if isDM() || (isPlayer()
+        && resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null);
+      allow update: if isDM()
+        || (isPlayer()
+          && resource.data.status == 'unidentified' && request.resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'pendingBy', 'pendingAt', 'pendingIn']))
+        || (isPlayer()
+          && resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty'])
+          && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty < resource.data.qty);
+    }
+
+    // Sales: a player selling goods to a shop. Everyone can read them (a shop's weekly appetite is worked
+    // out from them); only the DM can mark one settled or void it.
+    match /sales/{id} {
+      allow read: if isPlayer();
+      allow create: if isPlayer()
+        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemName', 'qty', 'unitPrice', 'total', 'cost', 'buyer', 'buyerUid', 'at', 'settled'])
+        && request.resource.data.buyerUid == request.auth.uid
+        && request.resource.data.shopId is string
+        && request.resource.data.itemName is string && request.resource.data.itemName.size() <= 200
+        && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
+        && request.resource.data.total is number && request.resource.data.total >= 0 && request.resource.data.total <= 100000
+        && request.resource.data.buyer is string && request.resource.data.buyer.size() <= 60
+        && request.resource.data.settled == false;
+      allow update, delete: if isDM();
     }
     match /lootLog/{id} {
       allow read: if isPlayer();

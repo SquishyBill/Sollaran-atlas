@@ -1,7 +1,7 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
-import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT } from './shop-data.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ const glyph = (k, size = 16) =>
 const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
-  renown: [], renownLog: [], renownTiers: null, festivals: {},
+  renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   pageId: null, pinId: null,
@@ -122,7 +122,7 @@ async function boot() {
   updateFestBar();
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, sales: onSales, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
     loot: onLoot, lootTruth: onLootTruth,
     lootLog: (list) => { S.lootLog = list; refreshLootViews(); },
     partyCoins: (c) => { S.partyCoins = c; refreshLootViews(); },
@@ -254,6 +254,7 @@ function onShops(list) {
   if (['shop', 'market', 'pin', 'about'].includes(S.panel?.type)) renderPanel();
 }
 function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
+function onSales(list) { S.sales = list; if (['shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel(); }
 function onHaggles(list) { S.haggles = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
 function onPlayers(list) { S.players = list; if (S.panel?.type === 'market') renderPanel(); }
 function onRenownLog(list) { S.renownLog = list; if (S.panel?.type === 'renownDetail') renderPanel(); }
@@ -275,6 +276,17 @@ function updateFestBar() {
   bar.onclick = () => openMarket('shops');
 }
 const festivalNotes = () => activeFestivals().map((id) => h('p', { class: 'fest-note' }, h('strong', { text: `\u2726 ${FESTIVALS[id].label}` }), FESTIVALS[id].blurb));
+// The town's market for trade goods: what's cheap here and what it will pay well for.
+const placeKeyOf = (shop) => placeOf(shop.location)?.label || String(shop.location || 'somewhere');
+function marketNote(shop) {
+  const pr = regionProfile(placeKeyOf(shop));
+  const list = (cats) => cats.map((c) => TRADE_LABEL[c]).join(', ');
+  if (!pr.cheap.length && !pr.dear.length) return null;
+  return h('p', { class: 'market-note' }, 'In this market: ',
+    pr.cheap.length ? h('span', {}, h('b', { text: 'cheap' }), ` ${list(pr.cheap)}`) : null,
+    pr.cheap.length && pr.dear.length ? '; ' : null,
+    pr.dear.length ? h('span', {}, h('b', { text: 'dear' }), ` ${list(pr.dear)}`) : null, '.');
+}
 function festivalControls() {
   return h('div', { class: 'festivals' }, h('strong', { text: 'Festivals' }),
     ...Object.entries(FESTIVALS).map(([id, f]) => h('label', { class: 'check' },
@@ -1240,11 +1252,24 @@ function personEditor() {
   return form;
 }
 
-// ─── selling loot back to a shop ────────────────────────────────────
-// The DM picks an item in Loot and a shop that would buy it. What they pay is the item's value times the
-// shop's rate, nudged by the party's standing there; a small shop can't afford a big find. The coins go
-// into the party purse (or are owed to whoever claimed the item) and the sale is written to the Loot history.
+// ─── selling to a shop ──────────────────────────────────────────────
+// Anything a player buys goes into the party's Loot as "goods". The DM can give it to a character; until then
+// any player can sell it. The DM can also sell found loot. What a shop pays is the item's value times its rate,
+// moved by the town's market (cheap where it's made, dear where it's scarce), the party's standing and the seller's
+// haggle. A shop can only absorb so much in a sale and in a week. The coins go to the party purse (DM sales)
+// or are owed to the player (recorded in the ledger, like a purchase).
 const gpToCoins = (gp) => { const cp = Math.round(gp * 100); return { pp: 0, gp: Math.floor(cp / 100), sp: Math.floor((cp % 100) / 10), cp: cp % 10 }; };
+
+// Put a purchase into the party stash. Returns true if it landed.
+async function stashGoods(shop, item, qty, buyer) {
+  try {
+    const place = placeOf(shop.location);
+    await S.store.saveLoot({ kind: 'goods', name: item.name, detail: '', value: item.price, cost: item.cost, qty, status: 'identified',
+      source: `Bought at ${shop.name}${place ? ` in ${place.label}` : ''}`, boughtBy: buyer, boughtByUid: S.store.uid, boughtAt: Date.now(),
+      cat: tradeCategory(item.name), fromPlace: placeKeyOf(shop) });
+    return true;
+  } catch (e) { toast('Bought, but it couldn\u2019t be added to the party\u2019s Loot: ' + e.message); return false; }
+}
 
 function openSell(id) {
   S.panel = { type: 'sell', id, shopId: '', qty: 0, unit: '' };
@@ -1255,19 +1280,29 @@ function sellOffer(shop, x, worth) {
   const rate = sellRate(shop.type, x);
   const rn = renownAt(shop.location);
   const standing = sellRenown(rn?.r.score ?? 0, !!SHOP_TYPES[shop.type]?.inverse);
-  return { rate, standing, unit: standing.refuses ? 0 : nicePrice(worth * rate * standing.mult) };
+  const cat = x.cat || tradeCategory(x.name);
+  const region = cat ? regionMult(placeKeyOf(shop), cat) : 1;
+  const wk = shopWeek(shop).week;
+  // a player's own haggle here works both ways: a good roll earns more when selling
+  const mine = x.kind === 'goods' && !isDM() ? S.haggles.find((g) => g.shopId === shop.id && g.week === wk && g.uid === S.store.uid) : null;
+  const haggle = mine ? Math.min(1.2, Math.max(0.8, 2 - mine.mult)) : 1;
+  const soldThisWeek = S.sales.filter((s) => s.shopId === shop.id && s.week === wk).reduce((n, s) => n + (Number(s.total) || 0), 0);
+  const room = Math.max(0, (SELL_WEEKLY[shop.size] || SELL_WEEKLY[2]) - soldThisWeek);
+  return { rate, standing, region, haggle, room, cat, unit: standing.refuses ? 0 : nicePrice(worth * rate * standing.mult * region * haggle) };
 }
 
 function sellView() {
-  const P = S.panel, x = S.loot.find((l) => l.id === P.id);
+  const P = S.panel, x = S.loot.find((l) => l.id === P.id), dm = isDM();
   const back = h('button', { class: 'linklike back', text: '\u2190 Back to Loot', onclick: () => openMarket('loot') });
   if (!x) return h('div', { class: 'codex' }, back, h('p', { class: 'muted', text: 'That item is no longer in Loot.' }));
+  if (!dm && (x.kind !== 'goods' || x.claimedBy)) return h('div', { class: 'codex' }, back, h('p', { class: 'muted', text: 'Only your DM can sell that.' }));
   const have = x.qty || 1;
   const listed = Number(x.value) || 0, fromCatalog = listed ? null : catalogValue(x.name);
   const base = listed || fromCatalog || (x.kind === 'gear' ? 1 : 0);
-  const worth = P.unit !== '' && P.unit != null ? Math.max(0, Number(P.unit) || 0) : base;
+  const worth = dm && P.unit !== '' && P.unit != null ? Math.max(0, Number(P.unit) || 0) : base;
   const qty = Math.min(have, Math.max(1, P.qty || have));
-  const buyers = S.shops.map((shop) => ({ shop, o: sellOffer(shop, x, worth) })).filter((b) => b.o.rate > 0)
+  const shops = S.shops.filter((s) => dm || !s.hidden);
+  const buyers = shops.map((shop) => ({ shop, o: sellOffer(shop, x, worth) })).filter((b) => b.o.rate > 0)
     .sort((p, q) => q.o.unit - p.o.unit);
   const chosen = buyers.find((b) => b.shop.id === P.shopId) || buyers[0];
 
@@ -1277,39 +1312,91 @@ function sellView() {
     const total = Math.round(o.unit * qty * 100) / 100;
     const problem = o.standing.refuses ? `${shop.name} won\u2019t deal with the party.`
       : !worth ? 'Set what it is worth first.'
-      : total > limit ? `That\u2019s more than a ${sizeById(shop.size).name.toLowerCase()} shop can pay in one sale (up to ${formatPrice(limit)}). Sell fewer, or find a bigger town.` : '';
+      : total > limit ? `That\u2019s more than a ${sizeById(shop.size).name.toLowerCase()} shop can pay in one sale (up to ${formatPrice(limit)}). Sell fewer, or find a bigger town.`
+      : total > o.room ? `${shop.name} has bought about as much as it can this week (${formatPrice(o.room)} left). Try next week, or another town.` : '';
+    const paid = Number(x.cost);
+    const gain = x.kind === 'goods' && paid >= 0 && o.unit ? Math.round((o.unit - paid) * qty * 100) / 100 : null;
+    const note = [
+      `${formatPrice(worth)} each \u00d7 ${Math.round(o.rate * 100)}%`,
+      o.region !== 1 ? `\u00d7 ${Math.round(o.region * 100)}% for this market` : '',
+      o.standing.mult !== 1 ? `\u00d7 ${Math.round(o.standing.mult * 100)}% for the party\u2019s standing` : '',
+      o.haggle !== 1 ? `\u00d7 ${Math.round(o.haggle * 100)}% for your haggle` : '',
+    ].filter(Boolean).join(' ') + (qty > 1 ? `, \u00d7 ${qty}` : '') + '.';
     offer = h('div', { class: 'sell-offer' },
-      h('div', { class: 'sell-total', text: problem && o.standing.refuses ? '\u2014' : formatPrice(total) }),
-      h('small', { class: 'muted', text: o.standing.refuses ? '' : `${formatPrice(worth)} each \u00d7 ${Math.round(o.rate * 100)}%${o.standing.mult !== 1 ? ` \u00d7 ${Math.round(o.standing.mult * 100)}% for the party\u2019s standing` : ''}${qty > 1 ? `, \u00d7 ${qty}` : ''}.` }),
+      h('div', { class: 'sell-total', text: o.standing.refuses ? '\u2014' : formatPrice(total) }),
+      o.standing.refuses ? null : h('small', { class: 'muted', text: note }),
+      gain != null && !problem ? h('p', { class: gain >= 0 ? 'muted' : 'repair-no', text: gain >= 0 ? `A profit of ${formatPrice(gain)} on what was paid.` : `A loss of ${formatPrice(-gain)} on what was paid.` }) : null,
       problem ? h('p', { class: 'repair-no', text: problem }) : null,
-      x.claimedBy ? h('p', { class: 'muted', text: `${x.claimedBy} claimed this, so the money is theirs. It isn\u2019t added to the party purse.` }) : null,
-      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', text: 'Sell it', disabled: !!problem, onclick: () => doSell(x, shop, qty, total, place) })));
+      dm && x.claimedBy ? h('p', { class: 'muted', text: `${x.claimedBy} claimed this, so the money is theirs. It isn\u2019t added to the party purse.` }) : null,
+      !dm ? h('p', { class: 'muted', text: 'The gold is paid to you at the table; your DM settles it from the ledger.' }) : null,
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', text: 'Sell it', disabled: !!problem, onclick: () => doSell(x, shop, qty, total, o.unit, place) })));
   }
+  const cat = x.cat || tradeCategory(x.name);
+  const here = chosen && cat ? regionMult(placeKeyOf(chosen.shop), cat) : 1;
 
   return h('div', { class: 'codex' },
     back,
     h('div', { class: 'codex-kind', html: '<span>Selling</span>' }),
     h('h2', { class: 'codex-title', text: `${have > 1 ? `${have} \u00d7 ` : ''}${x.name}` }),
     x.detail ? h('p', { class: 'muted', text: x.detail }) : null,
-    field('Worth each (gold)', h('input', { type: 'number', min: 0, step: 'any', value: worth || '', onchange: (e) => { P.unit = e.target.value; renderPanel(); } }),
-      listed ? 'Its listed value.' : fromCatalog ? 'From the shops\u2019 price list.' : x.kind === 'gear' ? 'Mundane finds have no set value, so this is a guess. Change it if you like.' : 'No value set. Enter one.'),
+    x.kind === 'goods' && x.cost != null ? h('p', { class: 'muted', text: `Bought for ${formatPrice(x.cost)} each${x.source ? ` (${x.source.replace(/^Bought at /, '')})` : ''}.` }) : null,
+    dm
+      ? field('Worth each (gold)', h('input', { type: 'number', min: 0, step: 'any', value: worth || '', onchange: (e) => { P.unit = e.target.value; renderPanel(); } }),
+        listed ? 'Its listed value.' : fromCatalog ? 'From the shops\u2019 price list.' : x.kind === 'gear' ? 'Mundane finds have no set value, so this is a guess. Change it if you like.' : 'No value set. Enter one.')
+      : h('p', { class: 'muted', text: `Standard value: ${formatPrice(worth)} each.` }),
     buyers.length ? [
       field('Sell to', h('select', { onchange: (e) => { P.shopId = e.target.value; renderPanel(); } },
         buyers.map(({ shop, o }) => h('option', { value: shop.id, selected: shop.id === chosen.shop.id,
           text: `${shop.name} \u00b7 ${placeOf(shop.location)?.label || 'elsewhere'} \u00b7 ${sizeById(shop.size).name} \u00b7 ${o.standing.refuses ? 'won\u2019t deal' : `pays ${formatPrice(o.unit)} each`}` })))),
+      cat ? h('p', { class: 'market-note', text: `${cap(TRADE_LABEL[cat])} ${here > 1.05 ? 'are wanted here and fetch more' : here < 0.95 ? 'are plentiful here and fetch less' : 'sell at ordinary prices here'}.` }) : null,
       have > 1 ? field(`How many (of ${have})`, h('input', { type: 'number', min: 1, max: have, value: qty, onchange: (e) => { P.qty = parseInt(e.target.value, 10) || have; renderPanel(); } })) : null,
-      offer] : h('p', { class: 'muted', text: 'None of the shops you\u2019ve made would buy this. Gems and art go to jewelers and moneychangers, magic to Arcane Curios, and so on.' }));
+      offer] : h('p', { class: 'muted', text: 'None of the shops you know would buy this. Merchants buy the goods they sell themselves; a general store or imports house will take most things.' }));
 }
 
-async function doSell(x, shop, qty, total, place) {
+async function doSell(x, shop, qty, total, unit, place) {
   if (!confirm(`Sell ${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name} to ${shop.name} for ${formatPrice(total)}?`)) return;
   try {
-    if (qty >= (x.qty || 1)) await S.store.deleteLoot(x.id); else await S.store.saveLoot({ qty: x.qty - qty }, x.id);
-    if (!x.claimedBy) await S.store.savePartyCoins(addCoins(S.partyCoins, gpToCoins(total)));
-    await S.store.addLootLog(`${x.claimedBy ? `${x.claimedBy} sold` : 'Sold'} ${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''} for ${formatPrice(total)}${x.claimedBy ? ', paid to them' : ''}.`);
-    toast(x.claimedBy ? `Sold. Pay ${x.claimedBy} ${formatPrice(total)}.` : `Sold for ${formatPrice(total)}. It\u2019s in the party purse.`);
+    const left = (x.qty || 1) - qty;
+    if (isDM()) {
+      if (left <= 0) await S.store.deleteLoot(x.id); else await S.store.saveLoot({ qty: left }, x.id);
+      if (!x.claimedBy) await S.store.savePartyCoins(addCoins(S.partyCoins, gpToCoins(total)));
+      await S.store.addLootLog(`${x.claimedBy ? `${x.claimedBy} sold` : 'Sold'} ${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''} for ${formatPrice(total)}${x.claimedBy ? ', paid to them' : ''}.`);
+      toast(x.claimedBy ? `Sold. Pay ${x.claimedBy} ${formatPrice(total)}.` : `Sold for ${formatPrice(total)}. It\u2019s in the party purse.`);
+    } else {
+      // the goods leave the stash first; the sale is then written to the ledger for the DM to settle
+      if (left <= 0) await S.store.deleteLoot(x.id); else await S.store.saveLoot({ qty: left }, x.id);
+      await S.store.addSale({ shopId: shop.id, week: shopWeek(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
+        buyer: String(myName() || S.store.displayName || 'A party member').slice(0, 60) });
+      toast(`Sold for ${formatPrice(total)}. It\u2019s on the ledger; your DM pays you.`);
+    }
     openMarket('loot');
   } catch (e) { toast('Could not sell it: ' + e.message); }
+}
+
+// Ledger: what players have sold (the DM pays them out).
+function salesBlock(onlyOpen) {
+  const dm = isDM();
+  const list = S.sales.filter((x) => (dm ? (!onlyOpen || !x.settled) : x.buyerUid === S.store.uid)).sort((p, q) => q.at - p.at);
+  if (!list.length) return null;
+  const owed = list.filter((x) => !x.settled).reduce((n, x) => n + x.total, 0);
+  return h('div', { class: 'ledger-sales' },
+    h('h4', { class: 'market-place', text: dm ? 'Sales (gold the party is owed)' : 'My sales' }),
+    h('p', { class: 'ledger-sum', text: `${list.length} sale${list.length === 1 ? '' : 's'}${owed ? ` \u00b7 ${formatPrice(owed)} ${dm ? 'to pay out' : 'owed to you'}` : ''}` }),
+    h('ol', { class: 'ledger' }, list.map((x) => {
+      const shop = shopById(x.shopId), gain = Number.isFinite(x.cost) && x.cost > 0 ? Math.round((x.total - x.cost) * 100) / 100 : null;
+      return h('li', { class: x.settled ? 'settled' : '' },
+        h('div', { class: 'ledger-main' },
+          h('strong', { text: `${x.qty} \u00d7 ${x.itemName}` }),
+          h('span', { class: 'ledger-total', text: formatPrice(x.total) })),
+        h('div', { class: 'ledger-meta' },
+          h('span', { text: dm ? x.buyer : 'You' }), ' \u00b7 sold to ',
+          shop ? h('button', { class: 'linklike', text: shop.name, onclick: () => openShop(shop.id) }) : h('span', { text: '(closed shop)' }),
+          ' \u00b7 ', h('time', { text: ago(x.at), title: new Date(x.at).toLocaleString() }),
+          gain != null ? h('span', { class: 'tag', text: gain >= 0 ? `profit ${formatPrice(gain)}` : `loss ${formatPrice(-gain)}` }) : null,
+          x.settled ? h('span', { class: 'tag settled-tag', text: 'paid' }) : null),
+        dm ? h('div', { class: 'ledger-actions' },
+          h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!x.settled, onchange: (e) => S.store.updateSale(x.id, { settled: e.target.checked }).catch((err) => toast(err.message)) }), ' Paid out')) : null);
+    })));
 }
 
 // ─── NPC generator ──────────────────────────────────────────────────
@@ -1722,7 +1809,7 @@ function stockFor(shop) {
     return {
       ...i, price,
       left: i.qty == null ? Infinity : Math.max(0, i.qty - (sold.get(i.key) || 0)),
-      cost: nicePrice(price * terms.mult * haggleMult),
+      cost: nicePrice(price * (tradeCategory(i.name) ? regionMult(placeKeyOf(shop), tradeCategory(i.name)) : 1) * terms.mult * haggleMult),
       available: !terms.refuses && !!terms.allow[i.grade],
     };
   });
@@ -1791,7 +1878,7 @@ function shopView() {
     try {
       const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
       await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer, ...extra });
-      toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}. It’s on the ledger.`);
+      toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}. It’s on the ledger.${item.service ? '' : await stashGoods(shop, item, qty, buyer) ? ' It’s in the party’s Loot.' : ''}`);
     } catch (e) { toast('Could not buy: ' + e.message); }
   };
 
@@ -1811,6 +1898,7 @@ function shopView() {
         st.terms.refuses || st.items.some((i) => !i.available) ? st.terms.note : '',
         !st.terms.refuses && pct ? `Prices ${pct}% ${st.terms.mult < 1 ? 'lower' : 'higher'}.` : '',
       ].filter(Boolean).join(' ') || 'Ordinary prices; everything on the shelves is for sale.' })),
+    marketNote(shop),
     ...festivalNotes(),
     st.inverse ? h('p', { class: 'muted shop-restock', text: 'A black market: the less the law likes you, the better they treat you.' }) : null,
     haggleBox(shop, st),
@@ -2234,6 +2322,7 @@ function marketView() {
               if (confirm(`Void ${p.buyer}'s purchase of ${p.qty} × ${p.itemName}? The items go back on the shelf.`)) await S.store.deletePurchase(p.id).catch((e) => toast(e.message));
             } })) : null);
       })) : h('p', { class: 'muted', text: isDM() ? 'Nothing to settle.' : 'You haven\u2019t bought anything yet.' }),
+      salesBlock(onlyOpen),
       haggles.length ? h('details', { class: 'legend' },
         h('summary', { text: `Haggling (${haggles.length})` }),
         h('ul', { class: 'sales' }, haggles.map((x) => h('li', {
@@ -2360,17 +2449,19 @@ function lootRow(x) {
       h('span', { class: 'loot-value', text: x.status !== 'identified' ? 'value unknown' : x.value ? formatPrice(x.value * (x.qty || 1)) : '' })),
     x.detail ? h('div', { class: 'loot-detail', text: x.detail }) : null,
     truth && x.status !== 'identified' ? h('div', { class: 'loot-truth', text: `DM: really ${truth.name}${truth.rarity ? ` (${truth.rarity})` : ''}${truth.value ? `, ${formatPrice(truth.value)}` : ''}. ${truth.detail || ''}` }) : null,
+    x.kind === 'goods' && x.cost != null ? h('div', { class: 'loot-detail', text: `Bought for ${formatPrice(x.cost)} each${x.boughtBy ? ` by ${x.boughtBy}` : ''}.` }) : null,
     h('div', { class: 'loot-meta' },
       [x.source ? `Found at ${x.source}` : '', x.claimedBy ? `Claimed by ${x.claimedBy}` : '', x.pendingBy ? (x.status === 'identified' ? `identified in ${x.pendingIn || 'town'} (paid by ${x.pendingBy})` : `sent to be identified by ${x.pendingBy}${x.pendingIn ? ` in ${x.pendingIn}` : ''}`) : ''].filter(Boolean).join(' · ')),
     isDM() ? h('div', { class: 'loot-actions' },
-      !x.claimedBy ? h('button', { class: 'linklike', text: 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
+      !x.claimedBy ? h('button', { class: 'linklike', text: x.kind === 'goods' ? 'give to a character…' : 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
       x.status === 'identified' && x.kind !== 'hook' ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
       x.status !== 'identified' ? h('button', { class: 'linklike', text: 'reveal', title: 'Identify it now, for free', onclick: () => revealItem(x, 'Identified').catch((e) => toast(e.message)) }) : null,
       h('button', { class: 'linklike', text: 'remove', onclick: async () => {
         if (!confirm(`Remove "${x.name}" from Loot for good?`)) return;
         await S.store.deleteLoot(x.id).catch((e) => toast(e.message));
         await S.store.addLootLog(`Removed from Loot: ${x.name}.`).catch(() => {});
-      } })) : null);
+      } })) : null,
+    !isDM() && x.kind === 'goods' && !x.claimedBy ? h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) })) : null);
 }
 
 async function claimItem(x) {

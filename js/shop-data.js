@@ -535,6 +535,51 @@ export function festivalStock(shop, week, active) {
   return out;
 }
 
+// ─── trade goods and regional prices ────────────────────────────────
+// Some goods are worth more in one town than another: cheap where they're made, dear where they're scarce.
+// Each town gets a market profile worked out from its name (so it never changes), plus a few lore overrides.
+export const TRADE_LABEL = {
+  wine: 'wine and spirits', ale: 'ale and mead', salt: 'salt', spice: 'spices', luxury: 'coffee, tea and perfume',
+  cloth: 'silk and fine cloth', gems: 'gems and jewelry', leather: 'furs and leather', metal: 'iron and ingots', grain: 'grain and flour',
+};
+const CAT_RX = [
+  ['wine', /wine|spirit|brandy|whiskey/i],
+  ['ale', /\b(ale|stout|mead|beer|keg|mash)\b/i],
+  ['salt', /salt/i],
+  ['spice', /spice|saffron|pepper|incense/i],
+  ['luxury', /coffee|\btea\b|perfume|porcelain|ivory/i],
+  ['cloth', /silk|crystal-weave|linen|bolt of/i],
+  ['gems', /\bgems?\b|diamond|emerald|topaz|pearl|opal|ruby|sapphire|moonstone|garnet|jade|amethyst|bloodstone|onyx|azurite|hematite|jacinth|carnelian|citrine|jasper|zircon|spinel|tourmaline|peridot|aquamarine|alexandrite|chrysoberyl|amber|coral|jet\b|obsidian|quartz|malachite|lapis|turquoise|agate|tiger eye|chalcedony|chrysoprase/i],
+  ['leather', /\bfurs?\b|pelt|\bhides?\b|leather/i],
+  ['metal', /ingot|iron bar|steel bar|copper wire/i],
+  ['grain', /wheat|\bcorn\b|flour|grain|barley|hops/i],
+];
+export function tradeCategory(name) {
+  for (const [cat, rx] of CAT_RX) if (rx.test(String(name || ''))) return cat;
+  return '';
+}
+
+// Lore: Lynport is wine country, Saltyard makes salt, the capital craves luxuries, the ports import spices and coffee.
+const LORE_MARKETS = [
+  [/lynport/i, { wine: 0.7 }], [/saltyard/i, { salt: 0.6 }], [/solvarig/i, { luxury: 1.3, cloth: 1.25, spice: 1.25 }],
+  [/saubantch/i, { spice: 0.85, luxury: 0.85, cloth: 0.9 }], [/tyr\b/i, { leather: 0.8, metal: 0.9 }],
+];
+const profiles = new Map();
+export function regionProfile(placeKey) {
+  const key = String(placeKey || '').toLowerCase().trim();
+  if (profiles.has(key)) return profiles.get(key);
+  const r = rng(`region:${key}`);
+  const cats = Object.keys(TRADE_LABEL).map((c) => [r(), c]).sort((a, b) => a[0] - b[0]).map(([, c]) => c);
+  const mult = Object.fromEntries(Object.keys(TRADE_LABEL).map((c) => [c, 1]));
+  cats.slice(0, 2).forEach((c) => { mult[c] = 0.8; });  // made here: cheap
+  cats.slice(2, 4).forEach((c) => { mult[c] = 1.3; });  // wanted here: dear
+  for (const [re, over] of LORE_MARKETS) if (re.test(key)) Object.assign(mult, over);
+  const out = { mult, cheap: Object.keys(mult).filter((c) => mult[c] < 0.95), dear: Object.keys(mult).filter((c) => mult[c] > 1.05) };
+  profiles.set(key, out);
+  return out;
+}
+export const regionMult = (placeKey, cat) => (cat ? regionProfile(placeKey).mult[cat] || 1 : 1);
+
 // ─── selling back ───────────────────────────────────────────────────
 // What a shop pays for what the party found, as a share of its value. The DM sells from the Loot tab.
 const KIND_RATES = {
@@ -542,6 +587,7 @@ const KIND_RATES = {
   art: { jeweler: 0.55, imports: 0.55, moneychanger: 0.45, general: 0.3, blackmarket: 0.4 },
   magic: { arcane: 0.55, imports: 0.5, temple: 0.4, blackmarket: 0.45 },
   gear: { general: 0.4, tinker: 0.4, quartermaster: 0.4, blackmarket: 0.3 },
+  goods: { blackmarket: 0.6 },
 };
 const GEAR_EXTRA = [
   [/sword|axe|mace|hammer|dagger|spear|shield|armor|mail|plate|helm|glaive|pike|trident|cutlass|flail|rapier|scimitar|halberd|manacle/i, { smith: 0.45 }],
@@ -556,8 +602,28 @@ const GEAR_EXTRA = [
 ];
 // total gold a shop of each size can pay out in one sale
 export const SELL_LIMIT = { 1: 75, 2: 300, 3: 1500, 4: 8000, 5: 50000 };
+// and in a whole week (players selling trade goods can't flood a market)
+export const SELL_WEEKLY = { 1: 150, 2: 600, 3: 3000, 4: 16000, 5: 100000 };
+
+// shops whose own stock includes a trade category will buy more of it, at a merchant's rate
+let buyersByCat = null;
+function categoryBuyers(cat) {
+  if (!buyersByCat) {
+    buyersByCat = {};
+    for (const [type, t] of Object.entries(SHOP_TYPES)) for (const row of t.catalog) { const c = tradeCategory(row[0]); if (c) (buyersByCat[c] ||= {})[type] = 0.85; }
+  }
+  return buyersByCat[cat] || {};
+}
 
 export function sellRate(shopType, item) {
+  if (item.kind === 'goods') {
+    if (shopType === 'blackmarket') return KIND_RATES.goods.blackmarket;
+    const cat = item.cat || tradeCategory(item.name);
+    if (cat) return Math.max(categoryBuyers(cat)[shopType] || 0, { general: 0.75, imports: 0.8 }[shopType] || 0);
+    let rate = KIND_RATES.gear[shopType] || 0;
+    for (const [re, rates] of GEAR_EXTRA) if (re.test(item.name) && rates[shopType]) rate = Math.max(rate, rates[shopType]);
+    return rate;
+  }
   let rate = KIND_RATES[item.kind]?.[shopType] || 0;
   if (item.kind === 'gear' || item.kind === 'magic') {
     for (const [re, rates] of GEAR_EXTRA) if (re.test(item.name) && rates[shopType]) rate = Math.max(rate, rates[shopType]);

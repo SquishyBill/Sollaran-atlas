@@ -70,6 +70,7 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
       (s) => h.shops?.(list(s)), err);
     onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
+    onSnapshot(this.col('sales'), (s) => h.sales?.(list(s)), err);
     onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
       (s) => h.haggles?.(list(s)), err);
     // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
@@ -223,6 +224,10 @@ export class FirebaseStore {
   addPurchase(p) { return this.F.addDoc(this.col('purchases'), { ...p, buyerUid: this.uid, at: Date.now(), settled: false }); }
   updatePurchase(id, data) { return this.F.updateDoc(this.ref('purchases', id), data); }
   deletePurchase(id) { return this.F.deleteDoc(this.ref('purchases', id)); }
+  // sales: a player selling the party's trade goods to a shop; the DM settles up like a purchase
+  addSale(x) { return this.F.addDoc(this.col('sales'), { ...x, buyerUid: this.uid, at: Date.now(), settled: false }); }
+  updateSale(id, data) { return this.F.updateDoc(this.ref('sales', id), data); }
+  deleteSale(id) { return this.F.deleteDoc(this.ref('sales', id)); }
 
   // one haggle per player, per shop, per week: the fixed id means the rules refuse a second one
   async addHaggle(x) {
