@@ -972,3 +972,10 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 
 .market-note { margin: 6px 0; font-size: 16px; color: var(--ink-soft); }
 .market-note b { color: var(--ink); }
+
+/* handbook link: gold in the dark Contents drawer, wax-red on the parchment sign-in card */
+.handbook-link { display: inline-block; margin-top: 16px; font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; text-decoration: none; padding-bottom: 2px;
+  color: var(--wax); border-bottom: 1px solid rgba(142, 43, 32, .5); }
+.handbook-link:hover { color: var(--ink); border-bottom-color: var(--ink); }
+.toc-handbook { display: block; text-align: center; margin: 14px 16px 6px; color: var(--gold-hi); border-bottom: 0; }
+.toc-handbook:hover { color: #fff; text-decoration: underline; }
