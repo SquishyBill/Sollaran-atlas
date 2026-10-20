@@ -229,6 +229,11 @@ const IMPORTS = [
   ['Coffee beans (1 lb)', 4, 1, 'cn'], ['Silk, bulk (bale)', 80, 3, 'n'], ['Perfume, magical (vial)', 75, 3, 'r'],
 ];
 
+const GEC = [
+  ['Notarized contract', 5, 1, 's'], ['Appraisal of gems or art', 2, 1, 's'],
+  ['Chest', 5], ['Lock', 10], ['Scale, merchant\u2019s', 5], ['Coin purse', 0.5],
+];
+
 export const SHOP_TYPES = {
   general: {
     label: 'General Store', catalog: GENERAL, nouns: ['Goods', 'Sundries', 'Supply', 'Provisions', 'Trading Post', 'Emporium'],
@@ -346,6 +351,11 @@ export const SHOP_TYPES = {
     adj: ['Silver', 'Singing', 'Sweet', 'Merry', 'Golden', 'Lilting'],
     flavor: ['Someone is always testing an instrument in the back room.', 'Lutes hang on the walls like hams in a smokehouse.', 'The maker hums the same tune every time a customer comes in.'],
   },
+  gec: {
+    label: 'The G.E.C. (Grand Exchange Consortium)', catalog: GEC, fixedName: 'The G.E.C.', nouns: ['Exchange'], adj: ['Grand'],
+    flavor: ['Marble counters, brass cages and clerks in grey who never smile. The Consortium has branches in every great city.',
+      'The air smells of sealing wax and ink. Every coin that crosses the counter is weighed, logged and taxed.'],
+  },
   moneychanger: {
     label: 'Moneychanger & Bank', catalog: MONEYCHANGER, nouns: ['Exchange', 'Counting House', 'Vault', 'Ledger', 'Coin', 'Strongroom'],
     adj: ['Golden', 'Honest', 'Silver', 'Sealed', 'Steady', 'Stone'],
@@ -412,7 +422,7 @@ const newSeed = () => Math.random().toString(36).slice(2, 10);
 export function generateShop(type, size, seed = newSeed()) {
   const t = SHOP_TYPES[type], r = rng(`shop:${seed}`);
   const first = pick(r, FIRST), last = pick(r, LAST);
-  const name = t.namePattern === 'temple' ? `${pick(r, ['Chapel', 'Shrine', 'Temple', 'House'])} of the ${pick(r, t.adj)} ${pick(r, t.nouns)}` : pick(r, [
+  const name = t.fixedName ? t.fixedName : t.namePattern === 'temple' ? `${pick(r, ['Chapel', 'Shrine', 'Temple', 'House'])} of the ${pick(r, t.adj)} ${pick(r, t.nouns)}` : pick(r, [
     () => `The ${pick(r, t.adj)} ${pick(r, t.nouns)}`,
     () => `${last}’s ${pick(r, t.nouns)}`,
     () => `${first}’s ${pick(r, t.nouns)}`,

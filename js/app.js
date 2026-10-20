@@ -1,5 +1,6 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc } from './markdown.js';
+import { COIN_CP, EXCHANGE_FEE_CP, BOXES, ITEM_SIZES, formatCp, exchangeQuote, writQuote, newAccount, newBox, boxUsed, boxFits, settle, payArrears, daysUntilInterest, MONTH_MS } from './gec-data.js';
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
@@ -60,7 +61,7 @@ const glyph = (k, size = 16) =>
 const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
-  renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [],
+  renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   pageId: null, pinId: null,
@@ -122,7 +123,7 @@ async function boot() {
   updateFestBar();
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, sales: onSales, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, sales: onSales, accounts: onAccounts, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
     loot: onLoot, lootTruth: onLootTruth,
     lootLog: (list) => { S.lootLog = list; refreshLootViews(); },
     partyCoins: (c) => { S.partyCoins = c; refreshLootViews(); },
@@ -254,6 +255,7 @@ function onShops(list) {
   if (['shop', 'market', 'pin', 'about'].includes(S.panel?.type)) renderPanel();
 }
 function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
+function onAccounts(list) { S.accounts = list; if (S.panel?.type === 'shop') renderPanel(); }
 function onSales(list) { S.sales = list; if (['shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel(); }
 function onHaggles(list) { S.haggles = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
 function onPlayers(list) { S.players = list; if (S.panel?.type === 'market') renderPanel(); }
@@ -1903,6 +1905,7 @@ function shopView() {
     st.inverse ? h('p', { class: 'muted shop-restock', text: 'A black market: the less the law likes you, the better they treat you.' }) : null,
     haggleBox(shop, st),
     repairBox(shop, st),
+    gecBox(shop, st),
     h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
     st.items.length ? h('table', { class: 'stock' },
       h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
@@ -1981,6 +1984,194 @@ function repairBox(shop, st) {
     item,
     isDM() ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: R.renown, onchange: (e) => { R.renown = e.target.checked; update(); } }), ' Apply the party\u2019s standing here to this quote') : null,
     out);
+}
+
+// ─── The G.E.C. (Grand Exchange Consortium) ─────────────────────────
+// Four services at the Consortium's counter: exchanging coins (a 5 cp fee each time), Writs of Exchange (5%,
+// honored at any other branch), a savings account (3% a month, this branch only) and safety-deposit boxes
+// paid from the account. Accounts, boxes and writs belong to the player who opened them. Money changing hands
+// goes on the ledger for the DM to settle; interest and fees follow real time (a "month" is 30 days).
+function gecBox(shop, st) {
+  if (shop.type !== 'gec' || st.terms.refuses) return null;
+  const G = (S.panel.gec ||= { from: 'gp', to: 'sp', amt: '', writ: '', dep: '', wd: '', boxes: {} });
+  const uid = S.store.uid, now = Date.now(), here = placeKeyOf(shop), where = placeOf(shop.location)?.label || shop.name;
+  const accId = `${shop.id}__${uid}`;
+  const mine = S.accounts.find((x) => x.id === accId || (x.shopId === shop.id && x.uid === uid));
+  const acc = mine ? settle(mine, now) : null;   // brought up to date: interest added, due fees taken
+  const who = () => String(myName() || S.store.displayName || 'A party member').slice(0, 60);
+  const bill = (name, total, key) => S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: key, itemName: name.slice(0, 160), qty: 1, unitPrice: total, total, buyer: who() });
+  const payOut = (name, total) => S.store.addSale({ shopId: shop.id, week: st.week, itemName: name.slice(0, 200), qty: 1, unitPrice: total, total, cost: 0, buyer: who() });
+  const saveAcc = (x) => S.store.saveAccount(accId, { shopId: shop.id, uid, owner: x.owner || who(), balance: Math.round(x.balance), since: x.since, boxes: x.boxes, log: x.log.slice(-30) });
+  const note = (x, text) => { x.log.push({ at: Date.now(), text }); };
+  const run = (fn) => async (e) => {
+    const btn = e?.currentTarget; if (btn) btn.disabled = true;
+    try { await fn(); } catch (err) { toast('Could not do that: ' + err.message); }
+    if (btn?.isConnected) btn.disabled = false;
+  };
+  const section = (title, ...kids) => h('details', { class: 'legend gec', open: true }, h('summary', { text: title }), ...kids);
+  const numIn = (obj, key, ph, step = '1') => h('input', { type: 'number', min: 0, step, value: obj[key], placeholder: ph, onchange: (e) => { obj[key] = e.target.value; renderPanel(); } });
+  const coinSel = (key) => h('select', { onchange: (e) => { G[key] = e.target.value; renderPanel(); } },
+    ['gp', 'sp', 'cp'].map((c) => h('option', { value: c, selected: G[key] === c, text: { gp: 'gold', sp: 'silver', cp: 'copper' }[c] })));
+  const sizeSel = (obj, key) => h('select', { onchange: (e) => { obj[key] = e.target.value; renderPanel(); } },
+    Object.entries(ITEM_SIZES).map(([k, v]) => h('option', { value: k, selected: (obj[key] || 'small') === k, text: `${v.label} (${v.hint})` })));
+
+  // 1. exchanging coins
+  const q = exchangeQuote(G.from, G.to, G.amt);
+  const exchange = section('Exchange coins',
+    h('p', { class: 'muted', text: `1 gp = 10 sp = 100 cp. The Consortium keeps ${EXCHANGE_FEE_CP} cp on every exchange.` }),
+    h('div', { class: 'row gen-pickers' }, field('How many', numIn(G, 'amt', 'coins')), field('From', coinSel('from')), field('Into', coinSel('to'))),
+    q.ok ? h('p', {}, h('strong', { text: `You hand over ${q.gave} and receive ${q.text}.` })) : h('p', { class: 'muted', text: G.amt ? q.reason : '' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Exchange', disabled: !q.ok, onclick: run(async () => {
+      await bill(`Exchange: ${q.gave} \u2192 ${q.text} (${EXCHANGE_FEE_CP} cp fee)`, EXCHANGE_FEE_CP / 100, `exchange|${G.from}|${G.to}`);
+      G.amt = ''; toast('Done. Swap the coins with your DM; the fee is on the ledger.'); renderPanel();
+    }) })));
+
+  // 2. writs of exchange
+  const wq = writQuote(G.writ);
+  const writs = S.loot.filter((x) => x.kind === 'writ');
+  const writBlock = section('Writs of Exchange',
+    h('p', { class: 'muted', text: 'Pay here, and the Consortium writes a paper that any other branch will honor, so you need not carry the gold. It costs 5% more. Whoever holds the writ can cash it, so guard it.' }),
+    h('div', { class: 'row gen-pickers' }, field('A writ for (gold)', numIn(G, 'writ', 'gold'))),
+    wq.ok ? h('p', {}, h('strong', { text: `The writ is for ${formatPrice(wq.amount)}. The fee is ${formatPrice(wq.fee)}, so you pay ${formatPrice(wq.total)}.` }))
+      : h('p', { class: 'muted', text: G.writ ? wq.reason : '' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Buy a writ', disabled: !wq.ok, onclick: run(async () => {
+      await bill(`Writ of Exchange: ${formatPrice(wq.amount)} (fee ${formatPrice(wq.fee)})`, wq.total, 'writ|issue');
+      await S.store.saveLoot({ kind: 'writ', name: `Writ of Exchange (${formatPrice(wq.amount)})`,
+        detail: `Pay the bearer ${formatPrice(wq.amount)} at any Grand Exchange Consortium outside ${where}. Issued at ${where}.`,
+        value: wq.amount, cost: wq.total, qty: 1, status: 'identified', source: `Issued by ${shop.name} in ${where}`,
+        boughtBy: who(), boughtByUid: uid, boughtAt: now, cat: '', fromPlace: here, issuedShop: shop.id });
+      G.writ = ''; toast(`A writ for ${formatPrice(wq.amount)} is in the party\u2019s Loot. Pay ${formatPrice(wq.total)} at the table.`); renderPanel();
+    }) })),
+    writs.length ? h('div', {},
+      h('h4', { class: 'market-place', text: 'Writs in the party\u2019s Loot' }),
+      h('ul', { class: 'sales' }, writs.map((x) => {
+        const sameCity = x.fromPlace === here;
+        return h('li', {}, `${x.name}, issued in ${x.fromPlace || 'an unknown city'}${x.claimedBy ? ` (held by ${x.claimedBy})` : ''} `,
+          sameCity ? h('small', { class: 'muted', text: 'Cash it at a branch in another city.' }) : h('button', { class: 'linklike', text: 'cash it here', onclick: run(async () => {
+            if (!confirm(`Cash ${x.name} at ${shop.name}? The writ is used up, and ${formatPrice(x.value)} is owed to you.`)) return;
+            await S.store.deleteLoot(x.id);
+            await payOut(`Writ of Exchange cashed: ${formatPrice(x.value)} (issued in ${x.fromPlace || 'elsewhere'})`, Number(x.value));
+            toast(`Cashed. ${formatPrice(x.value)} is owed to you; your DM pays it out.`); renderPanel();
+          }) }));
+      }))) : null);
+
+  // 3. savings account
+  let savings;
+  if (!acc) {
+    savings = section('Savings account',
+      h('p', { class: 'muted', text: `Keep gold safe and earn 3% a month. The account is yours alone and works only at this branch, in ${where}.` }),
+      h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Open an account', onclick: run(async () => { await saveAcc(newAccount(shop.id, uid, who(), now)); toast('Account opened.'); }) })));
+  } else {
+    const depCp = Math.round((parseFloat(G.dep) || 0) * 100), wdCp = Math.round((parseFloat(G.wd) || 0) * 100);
+    savings = section('Savings account',
+      h('div', { class: 'bal', text: formatCp(acc.balance) }),
+      h('p', { class: 'muted', text: `3% interest every 30 days; the next is in ${daysUntilInterest(acc, now)} day${daysUntilInterest(acc, now) === 1 ? '' : 's'}. This account works only at this branch.` }),
+      h('div', { class: 'row gen-pickers' },
+        field('Deposit (gold)', numIn(G, 'dep', 'gold', 'any')), field('Withdraw (gold)', numIn(G, 'wd', 'gold', 'any'))),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', text: 'Deposit', disabled: !(depCp > 0), onclick: run(async () => {
+          await bill(`Savings deposit: ${formatCp(depCp)}`, depCp / 100, 'savings|deposit');
+          acc.balance += depCp; note(acc, `Deposited ${formatCp(depCp)}`); await saveAcc(acc);
+          G.dep = ''; toast(`Deposited ${formatCp(depCp)}. Hand the coins to your DM; it is on the ledger.`); renderPanel();
+        }) }),
+        h('button', { class: 'btn small ghost', type: 'button', text: 'Withdraw', disabled: !(wdCp > 0 && wdCp <= acc.balance), onclick: run(async () => {
+          acc.balance -= wdCp; note(acc, `Withdrew ${formatCp(wdCp)}`); await saveAcc(acc);
+          await payOut(`Savings withdrawal: ${formatCp(wdCp)}`, wdCp / 100);
+          G.wd = ''; toast(`Withdrew ${formatCp(wdCp)}. Your DM pays it out; it is on the ledger.`); renderPanel();
+        }) })),
+      wdCp > acc.balance ? h('p', { class: 'repair-no', text: 'The account does not hold that much.' }) : null,
+      acc.log.length ? h('details', { class: 'legend' }, h('summary', { text: 'Account history' }),
+        h('ul', { class: 'sales' }, [...acc.log].reverse().slice(0, 12).map((x) => h('li', { text: `${x.text} \u00b7 ${ago(x.at)}` })))) : null);
+  }
+
+  // 4. safety-deposit boxes
+  let boxes;
+  if (!acc) {
+    boxes = section('Safety-deposit boxes', h('p', { class: 'muted', text: 'Open a savings account first. Box rent is taken from it each month.' }));
+  } else {
+    const stash = S.loot.filter((x) => x.kind === 'goods' && !x.claimedBy);
+    const card = (box) => {
+      const f = (G.boxes[box.id] ||= { name: '', size: 'small', qty: '1', loot: '', lsize: 'small', lqty: '1' });
+      const info = BOXES[box.size], used = boxUsed(box);
+      const put = async (name, size, qty, after) => {
+        if (!name.trim()) throw new Error('Name the item.');
+        if (!(qty >= 1)) throw new Error('Enter how many.');
+        if (!boxFits(box, size, qty)) throw new Error(`That will not fit. The box has ${info.cap - used} unit${info.cap - used === 1 ? '' : 's'} left (small = 1, medium = 2, large = 4).`);
+        const same = box.items.find((i) => i.name === name.trim() && i.size === size);
+        if (same) same.qty += qty; else box.items.push({ name: name.trim().slice(0, 80), qty, size });
+        note(acc, `Put ${qty} \u00d7 ${name.trim()} in a ${info.label.toLowerCase()} box`);
+        await saveAcc(acc);
+        if (after) await after();
+      };
+      const lootPick = stash.find((x) => x.id === f.loot);
+      return h('div', { class: `box-card${box.locked ? ' is-locked' : ''}` },
+        h('h5', { text: `${info.label} box \u00b7 ${used} of ${info.cap} units used` }),
+        h('small', { class: 'muted', text: `${formatCp(info.fee)} a month, paid through ${new Date(box.paidThrough).toLocaleDateString()}.` }),
+        box.locked ? h('div', {},
+          h('p', { class: 'repair-no', text: `Locked: ${box.arrears} month${box.arrears === 1 ? '' : 's'} of rent unpaid (${formatCp(box.arrears * info.fee)}). Your things are safe, but nothing goes in or out until it is paid.` }),
+          h('button', { class: 'btn small', type: 'button', text: 'Pay what is owed', onclick: run(async () => {
+            const res = payArrears(acc, box.id, Date.now());
+            if (!res.ok) throw new Error(res.reason);
+            await saveAcc(res.acc); toast('Paid. The box is open again.'); renderPanel();
+          }) })) : h('div', {},
+          box.items.length ? h('ul', {}, box.items.map((it, i) => h('li', {}, `${it.qty} \u00d7 ${it.name} (${ITEM_SIZES[it.size]?.label.toLowerCase() || it.size}) `,
+            h('button', { class: 'linklike', text: 'take out', onclick: run(async () => {
+              if (!confirm(`Take ${it.qty} \u00d7 ${it.name} out of the box?`)) return;
+              box.items.splice(i, 1); note(acc, `Took ${it.name} out of a ${info.label.toLowerCase()} box`); await saveAcc(acc); renderPanel();
+            }) })))) : h('p', { class: 'muted', text: 'Empty.' }),
+          h('div', { class: 'row gen-pickers' },
+            field('Put in (name)', h('input', { type: 'text', maxlength: 80, value: f.name, placeholder: 'e.g. Longsword +1', onchange: (e) => { f.name = e.target.value; } })),
+            field('How big', sizeSel(f, 'size')), field('How many', numIn(f, 'qty', '1'))),
+          h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Put it in the box', onclick: run(async () => {
+            await put(f.name, f.size || 'small', parseInt(f.qty, 10), null); f.name = ''; f.qty = '1'; renderPanel();
+          }) })),
+          stash.length ? h('div', { class: 'row gen-pickers' },
+            field('Or from the party\u2019s Loot', h('select', { onchange: (e) => { f.loot = e.target.value; renderPanel(); } },
+              [h('option', { value: '', text: 'Choose goods\u2026' }), ...stash.map((x) => h('option', { value: x.id, selected: f.loot === x.id, text: `${x.qty} \u00d7 ${x.name}` }))])),
+            lootPick ? field('How big', sizeSel(f, 'lsize')) : null,
+            lootPick ? field(`How many (of ${lootPick.qty})`, numIn(f, 'lqty', '1')) : null,
+            lootPick ? h('button', { class: 'btn small', type: 'button', text: 'Move it into the box', onclick: run(async () => {
+              const n = Math.min(lootPick.qty, parseInt(f.lqty, 10) || 0);
+              await put(lootPick.name, f.lsize || 'small', n, async () => {
+                const left = (lootPick.qty || 1) - n;
+                if (left <= 0) await S.store.deleteLoot(lootPick.id); else await S.store.saveLoot({ qty: left }, lootPick.id);
+              });
+              f.loot = ''; renderPanel();
+            }) }) : null) : null,
+          !box.items.length ? h('button', { class: 'linklike', text: 'hand the box back (no refund)', onclick: run(async () => {
+            if (!confirm('Hand this box back? The rent already paid is not refunded.')) return;
+            acc.boxes = acc.boxes.filter((b) => b.id !== box.id); note(acc, `Handed back a ${info.label.toLowerCase()} box`); await saveAcc(acc); renderPanel();
+          }) }) : null));
+    };
+    boxes = section('Safety-deposit boxes',
+      h('p', { class: 'muted', text: 'Rent a box to keep things safe. The rent comes out of your savings account each month. A small box holds 4 small items, or 2 medium, or 1 large; a medium box twice that, and a large box four times.' }),
+      acc.boxes.length ? acc.boxes.map(card) : h('p', { class: 'muted', text: 'You have no boxes here.' }),
+      h('div', { class: 'row' }, Object.entries(BOXES).map(([size, b]) => h('button', { class: 'btn small ghost', type: 'button',
+        text: `Rent a ${b.label.toLowerCase()} box (${formatCp(b.fee)})`, disabled: acc.balance < b.fee || acc.boxes.length >= 12,
+        onclick: run(async () => {
+          acc.balance -= b.fee; acc.boxes.push(newBox(size, Date.now())); note(acc, `Rented a ${b.label.toLowerCase()} box: \u2212${formatCp(b.fee)}`);
+          await saveAcc(acc); toast(`A ${b.label.toLowerCase()} box is yours. The first month is paid.`); renderPanel();
+        }) }))),
+      acc.balance < BOXES.small.fee ? h('small', { class: 'muted', text: 'The first month\u2019s rent is taken from the account straight away.' }) : null);
+  }
+
+  // the DM sees every account at this branch
+  const branch = isDM() ? S.accounts.filter((x) => x.shopId === shop.id) : [];
+  const dmList = isDM() ? section(`Accounts at this branch (${branch.length})`,
+    branch.length ? h('ul', { class: 'sales' }, branch.map((x) => {
+      const v = settle(x, now), items = v.boxes.reduce((n, b) => n + b.items.length, 0);
+      return h('li', {}, `${x.owner}: ${formatCp(v.balance)}, ${v.boxes.length} box${v.boxes.length === 1 ? '' : 'es'}${items ? ` holding ${items} item${items === 1 ? '' : 's'}` : ''}${v.boxes.some((b) => b.locked) ? ' (a box is locked)' : ''} `,
+        h('button', { class: 'linklike', text: 'set balance\u2026', onclick: run(async () => {
+          const ans = prompt(`Set ${x.owner}'s balance (in gold, e.g. 12.5):`, String(v.balance / 100));
+          if (ans == null) return;
+          const cp = Math.round(parseFloat(ans) * 100);
+          if (!(cp >= 0)) throw new Error('Enter a number.');
+          await S.store.saveAccount(x.id, { shopId: v.shopId, uid: v.uid, owner: v.owner, balance: cp, since: v.since, boxes: v.boxes, log: [...v.log, { at: Date.now(), text: `The DM set the balance to ${formatCp(cp)}` }].slice(-30) });
+        }) }),
+        v.boxes.some((b) => b.items.length) ? h('ul', {}, v.boxes.flatMap((b) => b.items.map((it) => h('li', { text: `${BOXES[b.size].label} box: ${it.qty} \u00d7 ${it.name}` })))) : null);
+    })) : h('p', { class: 'muted', text: 'No one has opened an account here yet.' })) : null;
+
+  return h('div', { class: 'gec-wrap' }, exchange, writBlock, savings, boxes, dmList);
 }
 
 // Haggling: once per player, per shop, per week. Good rolls knock prices down, bad ones push them up.
@@ -2453,8 +2644,8 @@ function lootRow(x) {
     h('div', { class: 'loot-meta' },
       [x.source ? `Found at ${x.source}` : '', x.claimedBy ? `Claimed by ${x.claimedBy}` : '', x.pendingBy ? (x.status === 'identified' ? `identified in ${x.pendingIn || 'town'} (paid by ${x.pendingBy})` : `sent to be identified by ${x.pendingBy}${x.pendingIn ? ` in ${x.pendingIn}` : ''}`) : ''].filter(Boolean).join(' · ')),
     isDM() ? h('div', { class: 'loot-actions' },
-      !x.claimedBy ? h('button', { class: 'linklike', text: x.kind === 'goods' ? 'give to a character…' : 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
-      x.status === 'identified' && x.kind !== 'hook' ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
+      !x.claimedBy ? h('button', { class: 'linklike', text: x.kind === 'goods' || x.kind === 'writ' ? 'give to a character…' : 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
+      x.status === 'identified' && x.kind !== 'hook' && x.kind !== 'writ' ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
       x.status !== 'identified' ? h('button', { class: 'linklike', text: 'reveal', title: 'Identify it now, for free', onclick: () => revealItem(x, 'Identified').catch((e) => toast(e.message)) }) : null,
       h('button', { class: 'linklike', text: 'remove', onclick: async () => {
         if (!confirm(`Remove "${x.name}" from Loot for good?`)) return;

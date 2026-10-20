@@ -38,6 +38,7 @@ export class LocalStore {
     this.db.shops ||= {};
     this.db.purchases ||= {};
     this.db.sales ||= {};
+    this.db.accounts ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
     for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic']) this.db[k] ||= {};
@@ -63,6 +64,7 @@ export class LocalStore {
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.sales?.(rows(this.db.sales));
+    this.handlers.accounts?.(rows(this.db.accounts).filter((x) => dm || x.uid === this.uid));
     this.handlers.haggles?.(rows(this.db.haggles).filter((x) => dm || x.uid === this.uid));
     this.handlers.players?.(rows(this.db.players).filter((x) => dm || x.id === this.uid));
     this.handlers.loot?.(rows(this.db.loot));
@@ -173,6 +175,8 @@ export class LocalStore {
   async addSale(x) { this.db.sales[rid()] = { ...x, buyerUid: this.uid, at: Date.now(), settled: false }; this.persist(); }
   async updateSale(id, data) { Object.assign(this.db.sales[id], data); this.persist(); }
   async deleteSale(id) { delete this.db.sales[id]; this.persist(); }
+  async saveAccount(id, data) { this.db.accounts[id] = { ...data }; this.persist(); }
+  async deleteAccount(id) { delete this.db.accounts[id]; this.persist(); }
 
   // one haggle per player, per shop, per week (the id makes a second attempt impossible)
   async addHaggle(x) {

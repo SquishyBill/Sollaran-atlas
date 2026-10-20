@@ -71,6 +71,8 @@ export class FirebaseStore {
       (s) => h.shops?.(list(s)), err);
     onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
     onSnapshot(this.col('sales'), (s) => h.sales?.(list(s)), err);
+    // G.E.C. savings accounts and deposit boxes: yours alone (the DM sees everyone's)
+    onSnapshot(this.isDM ? this.col('accounts') : query(this.col('accounts'), where('uid', '==', this.uid)), (s) => h.accounts?.(list(s)), err);
     onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
       (s) => h.haggles?.(list(s)), err);
     // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
@@ -228,6 +230,8 @@ export class FirebaseStore {
   addSale(x) { return this.F.addDoc(this.col('sales'), { ...x, buyerUid: this.uid, at: Date.now(), settled: false }); }
   updateSale(id, data) { return this.F.updateDoc(this.ref('sales', id), data); }
   deleteSale(id) { return this.F.deleteDoc(this.ref('sales', id)); }
+  saveAccount(id, data) { return this.F.setDoc(this.ref('accounts', id), data); }
+  deleteAccount(id) { return this.F.deleteDoc(this.ref('accounts', id)); }
 
   // one haggle per player, per shop, per week: the fixed id means the rules refuse a second one
   async addHaggle(x) {

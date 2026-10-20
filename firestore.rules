@@ -136,9 +136,18 @@ service cloud.firestore {
         && request.resource.data.name is string && request.resource.data.name.size() <= 160
         && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
         && request.resource.data.value is number && request.resource.data.value >= 0
+        && request.resource.data.cost is number && request.resource.data.cost >= 0)
+        // a Writ of Exchange from the G.E.C. (a paper anyone can cash, so it lives in the stash like any item)
+        || (isPlayer()
+        && request.resource.data.kind == 'writ' && request.resource.data.status == 'identified'
+        && request.resource.data.boughtByUid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace', 'issuedShop'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 160
+        && request.resource.data.qty == 1
+        && request.resource.data.value is number && request.resource.data.value >= 1 && request.resource.data.value <= 50000
         && request.resource.data.cost is number && request.resource.data.cost >= 0);
       allow delete: if isDM() || (isPlayer()
-        && resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null);
+        && ((resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null) || resource.data.kind == 'writ'));
       allow update: if isDM()
         || (isPlayer()
           && resource.data.status == 'unidentified' && request.resource.data.status == 'pending'
@@ -147,6 +156,26 @@ service cloud.firestore {
           && resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty'])
           && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty < resource.data.qty);
+    }
+
+    // G.E.C. savings accounts and safety-deposit boxes: one per player per branch (the id is shop__player).
+    // Only the owner and the DM can read or change one. The DM can close an account.
+    function accountOk() {
+      return request.resource.data.keys().hasOnly(['shopId', 'uid', 'owner', 'balance', 'since', 'boxes', 'log'])
+        && request.resource.data.shopId is string
+        && request.resource.data.owner is string && request.resource.data.owner.size() <= 60
+        && request.resource.data.balance is int && request.resource.data.balance >= 0 && request.resource.data.balance <= 1000000000
+        && request.resource.data.since is number
+        && request.resource.data.boxes is list && request.resource.data.boxes.size() <= 12
+        && request.resource.data.log is list && request.resource.data.log.size() <= 30;
+    }
+    match /accounts/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
+      allow create: if isDM() || (isPlayer() && request.resource.data.uid == request.auth.uid
+        && id == request.resource.data.shopId + '__' + request.auth.uid && accountOk());
+      allow update: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid && request.resource.data.shopId == resource.data.shopId && accountOk());
+      allow delete: if isDM();
     }
 
     // Sales: a player selling goods to a shop. Everyone can read them (a shop's weekly appetite is worked

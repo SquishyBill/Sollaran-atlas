@@ -979,3 +979,11 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .handbook-link:hover { color: var(--ink); border-bottom-color: var(--ink); }
 .toc-handbook { display: block; text-align: center; margin: 0 16px 10px; padding: 7px 10px; color: var(--gold-hi); border: 1px solid rgba(201, 164, 92, .45); border-radius: 6px; background: rgba(201, 164, 92, .08); }
 .toc-handbook:hover { color: #fff; background: rgba(201, 164, 92, .18); border-color: var(--gold-hi); }
+
+/* the G.E.C. */
+.gec { margin-top: 10px; }
+.box-card { border: 1px solid rgba(90, 60, 25, .4); border-radius: 6px; padding: 8px 10px; margin: 8px 0; background: rgba(255, 245, 210, .25); }
+.box-card h5 { margin: 0 0 4px; font: 700 13px var(--f-head); letter-spacing: .1em; text-transform: uppercase; color: var(--wax); }
+.box-card.is-locked { border-color: var(--wax); background: rgba(142, 43, 32, .1); }
+.box-card ul { margin: 4px 0; padding-left: 1.1em; }
+.gec .bal { font: 700 24px var(--f-head); color: var(--ink); margin: 2px 0 6px; }
