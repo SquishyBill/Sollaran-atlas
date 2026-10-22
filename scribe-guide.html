@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Chronicler's Guide: Keeping the Session Journal</title>
+<meta name="theme-color" content="#1c120c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cinzel+Decorative:wght@700;900&family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #ead9ad; --paper-lo: #d9c18a; --ink: #2b1a0e; --ink-soft: #5a4129; --wax: #8e2b20; --gold: #c9a45c; --gold-hi: #f0d596; --leather: #1c120c;
+  --rule: rgba(90, 60, 25, .7);
+}
+* { box-sizing: border-box; }
+html { background: var(--leather); }
+body {
+  margin: 0; padding: 18px 0 40px; color: var(--ink); font: 400 19px/1.5 'IM Fell English', Georgia, serif;
+  background: radial-gradient(ellipse at 50% 0%, #3a2616 0%, #1c120c 60%, #120a06 100%) fixed;
+  -webkit-font-smoothing: antialiased;
+}
+svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vertical-align: -.14em; }
+
+/* ── a page of the book ───────────────────────────────────────── */
+.sheet {
+  position: relative; width: min(860px, calc(100vw - 20px)); margin: 22px auto; padding: 54px 62px 60px;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='4'/><feColorMatrix values='0 0 0 0 .35  0 0 0 0 .22  0 0 0 0 .1  0 0 0 .13 0'/></filter><rect width='220' height='220' filter='url(%23n)'/></svg>"),
+    radial-gradient(ellipse at 50% 40%, #f1e4bb 0%, var(--paper) 62%, var(--paper-lo) 100%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .6), inset 0 0 90px rgba(120, 80, 30, .28);
+  counter-increment: sheet;
+}
+.sheet::before { content: ''; position: absolute; inset: 14px; border: 3px double var(--rule); pointer-events: none; }
+.sheet::after { content: ''; position: absolute; inset: 24px; border: 1px solid rgba(90, 60, 25, .4); pointer-events: none; }
+.knot { position: absolute; width: 22px; height: 22px; z-index: 2; color: var(--wax); }
+.knot.tl { top: 5px; left: 5px; } .knot.tr { top: 5px; right: 5px; } .knot.bl { bottom: 5px; left: 5px; } .knot.br { bottom: 5px; right: 5px; }
+.folio { position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; font: 500 13px 'Cinzel', serif; letter-spacing: .25em; color: var(--ink-soft); }
+.folio::before { content: '\2014  ' counter(sheet) '  \2014'; }
+
+/* ── type ─────────────────────────────────────────────────────── */
+h1, h2, h3, h4 { font-family: 'Cinzel', serif; font-weight: 700; margin: 0; color: var(--ink); }
+.chapter-no { text-align: center; font: 500 14px 'Cinzel', serif; letter-spacing: .42em; text-transform: uppercase; color: var(--wax); }
+h2.ch { text-align: center; font: 900 32px/1.15 'Cinzel', serif; letter-spacing: .04em; margin: 6px 0 4px; text-transform: uppercase; }
+.rule { display: block; margin: 8px auto 14px; width: 62%; color: var(--wax); }
+.epigraph { text-align: center; font-style: italic; color: var(--ink-soft); margin: 0 auto 16px; max-width: 34em; }
+p { margin: 0 0 .75em; text-wrap: pretty; }
+.chapter > p.lead::first-letter {
+  font: 900 3.55em/.82 'Cinzel Decorative', serif; color: var(--wax); float: left; padding: .06em .09em 0 0;
+}
+h3 { font-size: 15px; letter-spacing: .16em; text-transform: uppercase; margin: 15px 0 5px; color: var(--wax); border-bottom: 1px solid var(--rule); padding-bottom: 3px; }
+ul, ol { margin: 0 0 .8em; padding-left: 1.3em; } li { margin-bottom: .28em; }
+b, strong { font-weight: 400; color: var(--wax); font-family: 'IM Fell English SC', 'IM Fell English', serif; letter-spacing: .02em; }
+em { color: var(--ink); }
+kbd { font: 500 .78em 'Cinzel', serif; padding: .08em .45em; border: 1px solid var(--rule); border-radius: 4px; background: rgba(255, 255, 255, .28); white-space: nowrap; }
+.num { font-family: 'Cinzel', serif; font-size: .86em; }
+
+.note, .warn { margin: 12px 0; padding: 9px 14px 8px; border: 1px solid var(--rule); background: rgba(255, 245, 210, .34); position: relative; }
+.note::before, .warn::before { content: 'The Adventurer\2019s Note'; display: block; font: 700 12px 'Cinzel', serif; letter-spacing: .2em; text-transform: uppercase; color: var(--wax); margin-bottom: 2px; }
+.warn { border-style: double; border-width: 3px; }
+.warn::before { content: 'Beware'; }
+.note p:last-child, .warn p:last-child { margin-bottom: 0; }
+
+table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: .92em; }
+th { font: 700 11.5px 'Cinzel', serif; letter-spacing: .14em; text-transform: uppercase; text-align: left; color: var(--wax); border-bottom: 2px solid var(--rule); padding: 3px 8px 3px 4px; }
+td { padding: 3px 8px 3px 4px; border-bottom: 1px solid rgba(90, 60, 25, .3); vertical-align: top; }
+td.r, th.r { text-align: right; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.icons td:first-child { width: 2.6em; text-align: center; font-size: 1.35em; color: var(--wax); }
+.icons td:nth-child(2) { white-space: nowrap; width: 8.4em; }
+
+/* ── cover ────────────────────────────────────────────────────── */
+.cover { background: radial-gradient(ellipse at 50% 38%, #3b2716 0%, #24160d 58%, #150c07 100%); color: var(--gold-hi); min-height: 1060px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 70px 70px; }
+.cover::before { border: 4px double var(--gold); inset: 16px; } .cover::after { border: 1px solid rgba(201, 164, 92, .55); inset: 28px; }
+.cover .knot { color: var(--gold); }
+.cover .small { font: 500 15px 'Cinzel', serif; letter-spacing: .5em; text-transform: uppercase; color: var(--gold); }
+.cover h1 { font: 900 66px/1.05 'Cinzel Decorative', serif; color: var(--gold-hi); margin: 26px 0 10px; text-shadow: 0 3px 0 #000, 0 0 30px rgba(201, 164, 92, .3); }
+.cover .sub { font: 700 24px 'Cinzel', serif; letter-spacing: .3em; text-transform: uppercase; color: var(--gold); margin: 8px 0 10px; }
+.cover .seal { width: 150px; height: 150px; margin: 24px 0; color: var(--gold); }
+.cover .seal circle { fill: #8e2b20; stroke: var(--gold); stroke-width: .7; } .cover .seal path { fill: var(--gold-hi); stroke: none; }
+.cover p { max-width: 28em; font-style: italic; color: #e8cf94; margin: 10px auto; }
+.cover .base { position: absolute; left: 0; right: 0; bottom: 56px; font: 500 12px 'Cinzel', serif; letter-spacing: .3em; text-transform: uppercase; color: var(--gold); }
+.cover .rule { color: var(--gold); }
+.cover .folio { display: none; }
+
+/* ── contents ─────────────────────────────────────────────────── */
+.toc { list-style: none; padding: 0; margin: 14px 0; columns: 2; column-gap: 40px; }
+.toc li { break-inside: avoid; margin: 0 0 7px; display: flex; gap: 8px; align-items: baseline; }
+.toc a { color: var(--ink); text-decoration: none; flex: 1; border-bottom: 1px dotted var(--rule); }
+.toc a:hover { color: var(--wax); }
+.toc .n { font: 700 12px 'Cinzel', serif; color: var(--wax); letter-spacing: .1em; width: 2.6em; }
+
+@media (max-width: 720px) {
+  body { font-size: 17.5px; }
+  .sheet { padding: 40px 24px 52px; }
+  h2.ch { font-size: 24px; } .cover h1 { font-size: 40px; } .cover .sub { font-size: 17px; letter-spacing: .2em; }
+  .toc { columns: 1; } .two { grid-template-columns: 1fr; }
+  .cover { min-height: 780px; padding: 50px 28px; }
+}
+
+/* ── printing: every sheet becomes one Letter page ────────────── */
+@page { size: Letter; margin: 0; }
+@media print {
+  html, body { background: #fff !important; }
+  body { padding: 0; font-size: 11.4pt; line-height: 1.38; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { width: 8.5in; height: 11in; margin: 0; padding: .62in .78in .7in; box-shadow: none; break-after: page; page-break-after: always; overflow: hidden; }
+  .sheet:last-child { break-after: auto; page-break-after: auto; }
+  .sheet::before { inset: .24in; } .sheet::after { inset: .34in; }
+  .cover { min-height: 0; }
+  h2.ch { font-size: 26pt; } .cover h1 { font-size: 54pt; }
+  .folio { bottom: .5in; }
+  h3 { margin-top: 10px; } .note, .warn { margin: 8px 0; } p { margin-bottom: .55em; }
+}
+code { font: .86em 'Courier New', monospace; background: rgba(255,255,255,.4); padding: 0 .3em; border: 1px solid rgba(90,60,25,.28); border-radius: 3px; color: var(--ink); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="fl" viewBox="0 0 300 20"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+      <path d="M8 10H118M182 10H292"/><path d="M118 10c10-9 19-9 24 0-5 9-14 9-24 0zM182 10c-10-9-19-9-24 0 5 9 14 9 24 0z"/>
+      <path d="M150 2l8 8-8 8-8-8z" fill="currentColor"/><path d="M8 10c4-4 7-4 10 0M292 10c-4-4-7-4-10 0"/></g></symbol>
+    <symbol id="kn" viewBox="0 0 22 22"><g fill="none" stroke="currentColor" stroke-width="1.4"><path d="M11 2l9 9-9 9-9-9z"/><path d="M11 6l5 5-5 5-5-5z" fill="currentColor"/></g></symbol>
+    <symbol id="seal" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#8e2b20" stroke="#c9a45c" stroke-width=".7"/><circle cx="12" cy="12" r="9.2" fill="none" stroke="#c9a45c" stroke-width=".35"/><path d="M12 3l2 7 7 2-7 2-2 7-2-7-7-2 7-2z" fill="#f0d596"/></symbol>
+    <symbol id="d20" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 7l5 8H7zM12 2v5M3 7l4 8M21 7l-4 8M12 22l-5-7M12 22l5-7"/></symbol>
+    <symbol id="coins" viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4M5 10.5v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4"/></symbol>
+    <symbol id="anvil" viewBox="0 0 24 24"><path d="M3 8h14c2.5 0 3.6 1.6 4.5 3-2 0-4 .6-5 2.2L15 15h-3v3h4v2.5H7V18h4v-3H9c-.8-2-2.4-4-6-4z"/></symbol>
+    <symbol id="flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.2 9.2A2 2 0 0 0 6.5 21h11a2 2 0 0 0 1.7-2.8L14 9V3M7.5 15h9"/></symbol>
+    <symbol id="compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 5l2.3 6.7L12 19l-2.3-7.3zM12 1v2M12 21v2M1 12h2M21 12h2"/></symbol>
+    <symbol id="scroll" viewBox="0 0 24 24"><path d="M6 3h11a2 2 0 0 1 2 2v13a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6a3 3 0 0 1 1-3zM9 8h7M9 12h7M9 16h4"/></symbol>
+  </defs>
+</svg>
+
+
+<section class="sheet cover" id="top">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="small">The Sollaran Archonate</div>
+  <svg class="rule" viewBox="0 0 300 20" width="320" height="22"><use href="#fl"/></svg>
+  <h1>The Chronicler&rsquo;s<br>Guide</h1>
+  <div class="sub">Keeping the Session Journal</div>
+  <svg class="seal" viewBox="0 0 24 24"><use href="#seal"/></svg>
+  <svg class="rule" viewBox="0 0 300 20" width="320" height="22"><use href="#fl"/></svg>
+  <p>For the player who keeps the party&rsquo;s record: how to write each session into the atlas, bring in your old summaries, and keep the chronicle tidy.</p>
+  <div class="base">Written for the Scribe &middot; Ink not included</div>
+</section>
+
+<section class="sheet" id="p1">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Part I</div>
+    <h2 class="ch">Your Role</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">The party has chosen you to keep its chronicle. Each session you write a summary, and it appears in the atlas as an entry in the <b>Session Journal</b>, where everyone can read it, find it by date, and add comments of their own. It replaces the shared document, and it lives beside the maps, people and shops it talks about.</p>
+    <h3>Who sees what</h3>
+    <table>
+      <tr><td><b>The party</b></td><td>Reads every <em>published</em> entry, and may comment on it. They cannot change your words.</td></tr>
+      <tr><td><b>You</b></td><td>Write, edit, publish and delete entries. You also see your own <em>drafts</em>.</td></tr>
+      <tr><td><b>The DM</b></td><td>Can do everything you can, and decides who is the scribe.</td></tr>
+    </table>
+    <h3>Before you begin</h3>
+    <ol>
+      <li>Sign in to the atlas with the <b>Google address your DM gave the atlas</b> for you.</li>
+      <li>Open the journal with the open-book icon <svg class="i" viewBox="0 0 24 24"><path d="M12 6.5C10.4 5 8 4.5 4.5 4.5v13C8 17.5 10.4 18 12 19.5c1.6-1.5 4-2 7.5-2v-13C16 4.5 13.6 5 12 6.5zM12 6.5v13"/></svg> in the bar at the top.</li>
+      <li>You should see a red <b>+ New entry</b> button. If you do not, tell your DM which Google address you use; they add it in the journal panel under <em>Who may write the journal</em>.</li>
+    </ol>
+    <h3>Writing your first entry</h3>
+    <ol>
+      <li>Press <b>+ New entry</b>.</li>
+      <li>Check the <b>session number</b> (the atlas suggests the next one) and the <b>date played</b>. The date is what players see on each folded entry, so make it the day you played.</li>
+      <li>Give it a <b>title</b> that will mean something later, such as <em>The Night at the Roosting Crow</em>.</li>
+      <li>Write the summary in the big box. The next page shows the little formatting you can use.</li>
+      <li>Press <b>Preview</b> to see how it will look, then <b>Write</b> to go back to the text.</li>
+      <li>Press <b>Save as a draft</b> to keep it private for now, or <b>Publish</b> to show it to the party.</li>
+    </ol>
+    <div class="note"><p>You cannot break anything. A draft is seen only by you and the DM, and you can change or delete any entry later.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<section class="sheet" id="p2">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Part II</div>
+    <h2 class="ch">Writing and Formatting</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <p class="lead">Plain sentences are all you need. When you want a little more, the journal understands a few simple marks. Type the left column, and the right is what the party sees.</p>
+    <table>
+      <tr><th>You type</th><th>The party sees</th></tr>
+      <tr><td><code>**Sister Eventide**</code></td><td><b>Sister Eventide</b> in bold</td></tr>
+      <tr><td><code>*the Night Scale*</code></td><td><em>the Night Scale</em> in italics</td></tr>
+      <tr><td><code># The Crossroads</code></td><td>A heading (put it on its own line, with a blank line before it)</td></tr>
+      <tr><td><code>- Bought three rations</code></td><td>A bullet point (start each line with a dash and a space)</td></tr>
+      <tr><td><code>&gt; &ldquo;Trust no one.&rdquo;</code></td><td>A quotation</td></tr>
+      <tr><td><code>[[Emmett]]</code></td><td>A <b>gold link</b> to Emmett that opens its page or entry</td></tr>
+      <tr><td><code>[[Emmett|the village]]</code></td><td>A link that shows the words <em>the village</em></td></tr>
+      <tr><td><code>[words](https://&hellip;)</code></td><td>A link to a web page</td></tr>
+    </table>
+    <p><b>Links to the atlas</b> are the journal&rsquo;s best trick: a name in double square brackets becomes a link to that place, person or shop, as long as the name matches what the atlas calls it. A name the atlas does not know shows up greyed, so you can see when something is misspelled.</p>
+    <h3>Bringing in what you have already written</h3>
+    <ol>
+      <li>Open a summary in your Google Doc, select the session you want, and copy it (<kbd>Ctrl</kbd>+<kbd>C</kbd>).</li>
+      <li>Press <b>+ New entry</b> and click in the big box.</li>
+      <li>Paste (<kbd>Ctrl</kbd>+<kbd>V</kbd>). <b>Bold, italics, headings, lists and links come across</b> and are turned into the marks above. A short message tells you it worked.</li>
+      <li>Set the session number and the date, add the title, and read it through with <b>Preview</b>.</li>
+      <li>Save it as a draft, and publish when you are happy. Do each session as its own entry.</li>
+    </ol>
+    <div class="note"><p>Pictures and fancy tables do not come across, and a table turns into plain lines. If you would rather have <em>no</em> formatting at all, paste with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> instead. Entries always appear in order of session number, whatever order you add them in, so you may do the oldest ones last.</p></div>
+  </div>
+  <div class="folio"></div>
+</section>
+
+<section class="sheet" id="p3">
+  <svg class="knot tl"><use href="#kn"/></svg><svg class="knot tr"><use href="#kn"/></svg><svg class="knot bl"><use href="#kn"/></svg><svg class="knot br"><use href="#kn"/></svg>
+  <div class="chapter">
+    <div class="chapter-no">Part III</div>
+    <h2 class="ch">Drafts, Edits and Good Habits</h2>
+    <svg class="rule" viewBox="0 0 300 20" width="260" height="18"><use href="#fl"/></svg>
+    <h3>Drafts and publishing</h3>
+    <ul>
+      <li><b>Save as a draft</b> keeps the entry to yourself and the DM. It shows a small <em>draft</em> tag, and the party cannot see it or find it in a search.</li>
+      <li><b>Publish</b> makes it visible to the whole party at once.</li>
+      <li>On a published entry, <b>Save changes</b> updates it for everyone straight away. <b>Make it a draft again</b> takes it back out of sight while you fix something.</li>
+      <li><b>Delete</b> is for good, so be sure.</li>
+    </ul>
+    <h3>Finding and reading entries</h3>
+    <p>Entries are listed newest first and folded up, each showing its <b>date and title</b>, so the party can scan for a session. Press one to open it. Entries also turn up in the atlas search.</p>
+    <h3>Comments from the party</h3>
+    <p>Under each entry the other players can leave <b>party notes</b>: &ldquo;I think we walked for two days&rdquo;, &ldquo;She was called Mara, not Mira.&rdquo; Their notes sit beneath your entry and never change it; fix the entry yourself if they are right.</p>
+    <h3>A shape that works (a couple of minutes to read)</h3>
+    <ul>
+      <li><b>Where we started</b>, and where we ended.</li>
+      <li><b>What happened</b>, in the order it happened.</li>
+      <li><b>Who we met</b>, as links to their entries, so the names are easy to find again.</li>
+      <li><b>What we decided, bought or found.</b></li>
+      <li><b>Loose ends</b>: questions, promises, debts and rumors still open.</li>
+    </ul>
+    <h3>If something goes wrong</h3>
+    <table>
+      <tr><th>The trouble</th><th>The remedy</th></tr>
+      <tr><td>I cannot see the <b>+ New entry</b> button.</td><td>Your Google address is not on the scribe list. Ask your DM to add it.</td></tr>
+      <tr><td>My entry does not show for the party.</td><td>It is probably a draft. Open it, press <b>Edit this entry</b>, then <b>Publish</b>.</td></tr>
+      <tr><td>A link looks greyed out.</td><td>The atlas does not know that name. Check the spelling against the page, person or shop.</td></tr>
+      <tr><td>It will not save.</td><td>Give it a title. If it still fails, copy your text somewhere safe and tell your DM.</td></tr>
+    </table>
+  </div>
+  <div class="folio"></div>
+</section>
+
+</body>
+</html>

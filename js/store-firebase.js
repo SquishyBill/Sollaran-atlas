@@ -71,6 +71,19 @@ export class FirebaseStore {
       (s) => h.shops?.(list(s)), err);
     onSnapshot(this.col('purchases'), (s) => h.purchases?.(list(s)), err);
     onSnapshot(this.col('sales'), (s) => h.sales?.(list(s)), err);
+    // The session journal. Who may write is a list of emails the DM keeps (config/scribes). Scribes and the DM
+    // get every entry, drafts included; everyone else gets published entries only. The listener is
+    // re-made when the list shows you are (or are no longer) a scribe.
+    onSnapshot(this.ref('config', 'scribes'), (s) => {
+      const emails = s.exists() ? (s.data().emails || []) : [];
+      h.scribes?.(emails);
+      const mayWrite = this.isDM || emails.includes(String(this.email || '').toLowerCase());
+      if (this._journalUnsub && this._journalMayWrite === mayWrite) return;
+      this._journalUnsub?.();
+      this._journalMayWrite = mayWrite;
+      const src = mayWrite ? this.col('journal') : query(this.col('journal'), where('draft', '==', false));
+      this._journalUnsub = onSnapshot(src, (snap) => h.journal?.(list(snap)), err);
+    }, err);
     // G.E.C. savings accounts and deposit boxes: yours alone (the DM sees everyone's)
     onSnapshot(this.isDM ? this.col('accounts') : query(this.col('accounts'), where('uid', '==', this.uid)), (s) => h.accounts?.(list(s)), err);
     onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
@@ -230,6 +243,14 @@ export class FirebaseStore {
   addSale(x) { return this.F.addDoc(this.col('sales'), { ...x, buyerUid: this.uid, at: Date.now(), settled: false }); }
   updateSale(id, data) { return this.F.updateDoc(this.ref('sales', id), data); }
   deleteSale(id) { return this.F.deleteDoc(this.ref('sales', id)); }
+  // journal entries: { n, date, title, body, draft, author, createdAt, editedAt }
+  async saveJournal(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('journal'), { createdAt: Date.now(), ...data })).id;
+    await this.F.setDoc(this.ref('journal', id), data, { merge: true });
+    return id;
+  }
+  deleteJournal(id) { return this.F.deleteDoc(this.ref('journal', id)); }
+  saveScribes(emails) { return this.F.setDoc(this.ref('config', 'scribes'), { emails }); }
   saveAccount(id, data) { return this.F.setDoc(this.ref('accounts', id), data); }
   deleteAccount(id) { return this.F.deleteDoc(this.ref('accounts', id)); }
 

@@ -22,6 +22,13 @@ service cloud.firestore {
 
     function isDM() { return googleUser() && request.auth.token.email.lower() in dmEmails(); }
 
+    // The scribe(s): players the DM has named (config/scribes holds their emails) who may write the session journal.
+    function isScribe() {
+      return googleUser()
+        && exists(/databases/$(database)/documents/config/scribes)
+        && request.auth.token.email.lower() in get(/databases/$(database)/documents/config/scribes).data.emails;
+    }
+
     function isPlayer() {
       return googleUser()
         && (party().size() == 0 || request.auth.token.email.lower() in party() || isDM());
@@ -216,6 +223,23 @@ service cloud.firestore {
       allow read, write: if isDM();
     }
 
+    // Session journal: scribes and the DM write it; everyone in the party reads what is published.
+    // Drafts (draft == true) are for the scribes and the DM alone.
+    function journalOk() {
+      return request.resource.data.keys().hasOnly(['n', 'date', 'title', 'body', 'draft', 'author', 'createdAt', 'editedAt'])
+        && request.resource.data.n is int && request.resource.data.n >= 0 && request.resource.data.n <= 9999
+        && request.resource.data.date is string && request.resource.data.date.size() <= 12
+        && request.resource.data.title is string && request.resource.data.title.size() <= 160
+        && request.resource.data.body is string && request.resource.data.body.size() <= 100000
+        && request.resource.data.draft is bool
+        && request.resource.data.author is string && request.resource.data.author.size() <= 60;
+    }
+    match /journal/{id} {
+      allow read: if isDM() || isScribe() || (isPlayer() && resource.data.draft == false);
+      allow create, update: if isDM() || (isScribe() && journalOk());
+      allow delete: if isDM() || isScribe();
+    }
+
     // Notes: every player can write their own.
     // Private notes are readable only by their author, not even the DM.
     match /notes/{id} {
@@ -224,7 +248,7 @@ service cloud.firestore {
       allow create: if isPlayer()
         && request.resource.data.keys().hasOnly(['targetType', 'targetId', 'text', 'author', 'private', 'uid', 'createdAt'])
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.targetType in ['pin', 'page', 'person', 'shop']
+        && request.resource.data.targetType in ['pin', 'page', 'person', 'shop', 'journal']
         && request.resource.data.targetId is string
         && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000
         && request.resource.data.author is string && request.resource.data.author.size() <= 60

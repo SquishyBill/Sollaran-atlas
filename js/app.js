@@ -1,5 +1,5 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
-import { renderMarkdown, esc } from './markdown.js';
+import { renderMarkdown, esc, htmlToMarkdown } from './markdown.js';
 import { COIN_CP, EXCHANGE_FEE_CP, BOXES, ITEM_SIZES, formatCp, exchangeQuote, writQuote, newAccount, newBox, boxUsed, boxFits, settle, payArrears, daysUntilInterest, MONTH_MS } from './gec-data.js';
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
@@ -61,7 +61,7 @@ const glyph = (k, size = 16) =>
 const S = {
   store: null,
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
-  renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [],
+  renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [], journal: [], scribes: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   pageId: null, pinId: null,
@@ -123,7 +123,7 @@ async function boot() {
   updateFestBar();
   setupChrome();
   setupMap();
-  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, sales: onSales, accounts: onAccounts, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
+  S.store.subscribe({ pages: onPages, pins: onPins, notes: onNotes, secrets: onSecrets, people: onPeople, renown: onRenown, renownLog: onRenownLog, renownTiers: onRenownTiers, festivals: onFestivals, sales: onSales, accounts: onAccounts, journal: onJournal, scribes: onScribes, shops: onShops, purchases: onPurchases, haggles: onHaggles, players: onPlayers,
     loot: onLoot, lootTruth: onLootTruth,
     lootLog: (list) => { S.lootLog = list; refreshLootViews(); },
     partyCoins: (c) => { S.partyCoins = c; refreshLootViews(); },
@@ -255,6 +255,8 @@ function onShops(list) {
   if (['shop', 'market', 'pin', 'about'].includes(S.panel?.type)) renderPanel();
 }
 function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
+function onJournal(list) { S.journal = list; if (S.panel?.type === 'journal') renderPanel(); }
+function onScribes(list) { S.scribes = (list || []).map((e) => String(e).toLowerCase()); if (S.panel?.type === 'journal') renderPanel(); }
 function onAccounts(list) { S.accounts = list; if (S.panel?.type === 'shop') renderPanel(); }
 function onSales(list) { S.sales = list; if (['shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel(); }
 function onHaggles(list) { S.haggles = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
@@ -797,7 +799,7 @@ function renderPanel() {
   body.replaceChildren();
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
-    sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
+    journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
     shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
@@ -1399,6 +1401,149 @@ function salesBlock(onlyOpen) {
         dm ? h('div', { class: 'ledger-actions' },
           h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!x.settled, onchange: (e) => S.store.updateSale(x.id, { settled: e.target.checked }).catch((err) => toast(err.message)) }), ' Paid out')) : null);
     })));
+}
+
+// ─── the session journal ────────────────────────────────────────────
+// A write-up of each session. The scribe (a player the DM names) and the DM write it; the party reads it.
+// Entries fold away so the dates are easy to scan. Drafts are seen only by the scribe and the DM.
+const canWriteJournal = () => isDM() || S.scribes.includes(String(S.store?.email || '').toLowerCase());
+
+function fmtJournalDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return iso || 'undated';
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function openJournal(entryId) {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'journal', id: 'all', open: new Set(entryId ? [entryId] : []) };
+  renderPanel();
+}
+
+function openJournalEditor(id) {
+  S.panel = { type: 'journalEdit', id: id || 'new' };
+  renderPanel();
+}
+
+function journalView() {
+  const P = S.panel, writer = canWriteJournal();
+  P.open ||= new Set();
+  const entries = [...S.journal].filter((e) => writer || !e.draft)
+    .sort((x, y) => (y.n - x.n) || String(y.date || '').localeCompare(String(x.date || '')) || (y.createdAt || 0) - (x.createdAt || 0));
+
+  const fill = (box, e) => {
+    if (box.dataset.filled) return;
+    box.dataset.filled = '1';
+    box.append(
+      h('div', { class: 'prose', html: md(e.body || '') || '<p class="muted">(Nothing written yet.)</p>' }),
+      h('p', { class: 'j-meta', text: `Written by ${e.author || 'the scribe'}${e.editedAt && e.editedAt - (e.createdAt || 0) > 60000 ? `, edited ${ago(e.editedAt)}` : ''}` }),
+      writer ? h('div', { class: 'row' }, h('button', { class: 'btn small ghost', type: 'button', text: 'Edit this entry', onclick: () => openJournalEditor(e.id) })) : null,
+      notesSection('journal', e.id));
+  };
+  const row = (e) => {
+    const body = h('div', { class: 'j-body' });
+    const d = h('details', { class: 'journal-entry', open: P.open.has(e.id) },
+      h('summary', {},
+        h('span', { class: 'j-head' }, h('span', { class: 'j-date', text: fmtJournalDate(e.date) }), h('span', { class: 'j-title', text: e.title })),
+        h('span', { class: 'j-n' }, `Session ${e.n}`, e.draft ? h('span', { class: 'tag', text: 'draft' }) : null)),
+      body);
+    if (d.open) fill(body, e);
+    d.addEventListener('toggle', () => { d.open ? P.open.add(e.id) : P.open.delete(e.id); if (d.open) fill(body, e); });
+    return d;
+  };
+
+  const scribeBox = isDM() ? h('details', { class: 'legend' },
+    h('summary', { text: 'Who may write the journal' }),
+    h('p', { class: 'muted', text: 'The Google addresses of the players who may write entries, separated by commas. They sign in to the atlas with that address. You can always write too.' }),
+    (() => {
+      const input = h('input', { type: 'text', value: S.scribes.join(', '), placeholder: 'player@gmail.com' });
+      return h('div', {}, input, h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Save the scribes', onclick: async () => {
+        const emails = [...new Set(input.value.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+        if (emails.some((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))) { toast('One of those does not look like an email address.'); return; }
+        try { await S.store.saveScribes(emails); toast(emails.length ? 'Saved. They can write in the journal now.' : 'Saved. Only you can write in the journal.'); }
+        catch (err) { toast('Could not save: ' + err.message); }
+      } })));
+    })()) : null;
+
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>The Chronicle</span>' }),
+    h('h2', { class: 'codex-title', text: 'Session Journal' }),
+    h('p', { class: 'codex-sub', text: `${entries.filter((e) => !e.draft).length} session${entries.filter((e) => !e.draft).length === 1 ? '' : 's'} written up` }),
+    writer ? h('div', { class: 'codex-actions' },
+      h('button', { class: 'btn', type: 'button', text: '+ New entry', onclick: () => openJournalEditor(null) }),
+      h('a', { class: 'btn ghost', href: 'scribe-guide.html', target: '_blank', rel: 'noopener', text: 'How to write it' })) : null,
+    scribeBox,
+    entries.length > 1 ? h('p', { class: 'muted' },
+      h('button', { class: 'linklike', type: 'button', text: 'Open all', onclick: () => { entries.forEach((e) => P.open.add(e.id)); renderPanel(); } }), ' \u00b7 ',
+      h('button', { class: 'linklike', type: 'button', text: 'Close all', onclick: () => { P.open.clear(); renderPanel(); } })) : null,
+    entries.length ? h('div', { class: 'journal-list' }, entries.map(row))
+      : h('p', { class: 'muted', text: writer ? 'No entries yet. Press "+ New entry" to write up the first session.' : 'No sessions have been written up yet.' }));
+}
+
+function journalEditView() {
+  const P = S.panel, isNew = P.id === 'new', e = isNew ? null : S.journal.find((x) => x.id === P.id);
+  if (!canWriteJournal()) return h('p', { class: 'muted', text: 'Only the scribe can write in the journal.' });
+  if (!isNew && !e) return h('p', { class: 'muted', text: 'That entry no longer exists.' });
+  const nextN = S.journal.reduce((m, x) => Math.max(m, x.n || 0), 0) + 1;
+  const t = new Date(), today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  const n = h('input', { type: 'number', min: 0, max: 9999, value: e?.n ?? nextN });
+  const date = h('input', { type: 'date', value: e?.date || today });
+  const title = h('input', { type: 'text', maxlength: 160, value: e?.title || '', placeholder: 'e.g. The Night at the Roosting Crow' });
+  const body = h('textarea', { rows: 18, placeholder: 'What happened this session? Who did we meet, where did we go, what did we decide, what is still unresolved?' });
+  body.value = e?.body || '';
+  const preview = h('div', { class: 'prose journal-preview', hidden: true });
+  const tabWrite = h('button', { class: 'btn small on', type: 'button', text: 'Write' });
+  const tabPrev = h('button', { class: 'btn small ghost', type: 'button', text: 'Preview' });
+  const show = (previewing) => {
+    preview.hidden = !previewing; body.hidden = previewing;
+    tabWrite.classList.toggle('on', !previewing); tabPrev.classList.toggle('on', previewing);
+    tabWrite.classList.toggle('ghost', previewing); tabPrev.classList.toggle('ghost', !previewing);
+    if (previewing) preview.innerHTML = md(body.value) || '<p class="muted">Nothing to preview yet.</p>';
+  };
+  tabWrite.onclick = () => show(false); tabPrev.onclick = () => show(true);
+
+  // pasting from Google Docs (or Word) keeps bold, italics, headings and lists
+  body.addEventListener('paste', (ev) => {
+    const html = ev.clipboardData?.getData('text/html');
+    if (!html || !/<(b|strong|i|em|h[1-6]|li|a)\b|font-weight|font-style/i.test(html)) return;
+    const converted = htmlToMarkdown(html);
+    if (!converted) return;
+    ev.preventDefault();
+    body.setRangeText(converted, body.selectionStart, body.selectionEnd, 'end');
+    toast('Pasted, keeping bold, italics, headings and lists. (Ctrl+Shift+V pastes plain text instead.)');
+  });
+
+  const save = async (draft) => {
+    const data = { n: Math.max(0, parseInt(n.value, 10) || 0), date: date.value || today, title: title.value.trim(), body: body.value, draft,
+      author: String(myName() || S.store.displayName || 'The scribe').slice(0, 60), editedAt: Date.now() };
+    if (!data.title) { toast('Give the entry a title first.'); title.focus(); return; }
+    try {
+      const id = await S.store.saveJournal(data, e?.id);
+      toast(draft ? 'Saved as a draft. Only you and the DM can see it.' : 'Published. The party can read it now.');
+      openJournal(id);
+    } catch (err) { toast('Could not save: ' + err.message); }
+  };
+
+  const published = e && !e.draft;
+  return h('form', { class: 'editor journal-form', onsubmit: (ev) => ev.preventDefault() },
+    h('h2', { class: 'codex-title', text: isNew ? 'New journal entry' : 'Edit journal entry' }),
+    h('div', { class: 'row gen-pickers' }, field('Session number', n), field('Date played', date)),
+    field('Title', title),
+    h('div', { class: 'field' }, h('span', { text: 'The story so far' }),
+      h('div', { class: 'j-tools' }, tabWrite, tabPrev), body, preview,
+      h('small', { html: 'Formatting: <b>**bold**</b>, <em>*italic*</em>, <code># Heading</code>, <code>- list item</code>, <code>&gt; quote</code>, and <code>[[Emmett]]</code> to link to a place or person. Paste from Google Docs and the formatting comes with it.' })),
+    h('div', { class: 'row' },
+      published
+        ? [h('button', { class: 'btn', type: 'button', text: 'Save changes', onclick: () => save(false) }),
+          h('button', { class: 'btn ghost', type: 'button', text: 'Make it a draft again', onclick: () => save(true) })]
+        : [h('button', { class: 'btn', type: 'button', text: 'Publish', onclick: () => save(false) }),
+          h('button', { class: 'btn ghost', type: 'button', text: 'Save as a draft', onclick: () => save(true) })],
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => openJournal(e?.id) }),
+      e ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Delete "${e.title}" for good? Notes under it will be left without a home.`)) return;
+        await S.store.deleteJournal(e.id).catch((err) => toast(err.message));
+        openJournal();
+      } }) : null));
 }
 
 // ─── NPC generator ──────────────────────────────────────────────────
@@ -3351,6 +3496,10 @@ function runSearch(q) {
       label: p.title, sub: `${kindOf(p).label} · ${pageById(p.pageId).title}`, icon: glyph(kindOf(p), 18),
       go: () => openPin(p.id, { fly: true }),
     })),
+    ...S.journal.filter((e) => (!e.draft || canWriteJournal()) && hit(e.title, e.body || '', `session ${e.n}`)).map((e) => ({
+      label: `Session ${e.n}: ${e.title}`, sub: ['Session journal', fmtJournalDate(e.date), e.draft ? 'draft' : ''].filter(Boolean).join(' \u00b7 '),
+      icon: '<span class="res-dot"></span>', go: () => openJournal(e.id),
+    })),
   ].sort((a, b) => hitTitle(b) - hitTitle(a)).slice(0, 40);
   const ul = $('#searchResults');
   ul.replaceChildren(...results.map((r, i) => h('li', {},
@@ -3395,6 +3544,7 @@ function setupChrome() {
   $('#aboutTab').onclick = openAbout;
   $('#searchBtn').onclick = openSearch;
   $('#peopleBtn').onclick = () => (S.panel?.type === 'people' ? closePanel() : openPeople());
+  $('#journalBtn').onclick = () => (S.panel?.type === 'journal' ? closePanel() : openJournal());
   $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
   $('#marketBtn').onclick = () => (S.panel?.type === 'market' ? closePanel() : openMarket());
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
