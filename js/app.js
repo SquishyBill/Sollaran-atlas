@@ -282,7 +282,24 @@ function updateFestBar() {
 }
 const festivalNotes = () => activeFestivals().map((id) => h('p', { class: 'fest-note' }, h('strong', { text: `\u2726 ${FESTIVALS[id].label}` }), FESTIVALS[id].blurb));
 // The town's market for trade goods: what's cheap here and what it will pay well for.
-const placeKeyOf = (shop) => placeOf(shop.location)?.label || String(shop.location || 'somewhere');
+// The settlement a place belongs to, so a district pin on a city's map, a pin that opens that city's map, and the
+// city's own page all count as the same town; inns inside it do too. A pin on a dukedom's own map with no map of
+// its own is a town in itself. (Dukedoms are the top level, and cities and towns sit under them.)
+const WORLD_MAPS = ['sollara-political', 'sollara'];
+function settlementOf(ref) {
+  const r = String(ref || '');
+  let pageId = null, pin = null;
+  if (r.startsWith('pin:')) { pin = pinById(r.slice(4)); if (pin) pageId = pin.linkPage && pageById(pin.linkPage) ? pin.linkPage : pin.pageId; }
+  else if (r.startsWith('page:')) pageId = r.slice(5);
+  const page = pageId && pageById(pageId);
+  if (!page) return { key: r || 'somewhere', label: placeOf(r)?.label || r || 'somewhere' };
+  const chain = [...ancestorsOf(pageId).reverse(), pageId];  // root first: dukedom, city, building (the world maps are not a place to live)
+  while (chain.length > 1 && WORLD_MAPS.includes(chain[0])) chain.shift();
+  if (pin && !pin.linkPage && chain.length <= 1) return { key: `pin:${pin.id}`, label: pin.title };
+  const home = pageById(chain[1] || chain[0]);
+  return { key: `page:${home.id}`, label: home.title };
+}
+const placeKeyOf = (shop) => settlementOf(shop.location).label;
 function marketNote(shop) {
   const pr = regionProfile(placeKeyOf(shop));
   const list = (cats) => cats.map((c) => TRADE_LABEL[c]).join(', ');
@@ -2333,8 +2350,9 @@ function houseLevelPicker(d, key, label, options, flavorOf, hint) {
 
 // the player's savings account at a G.E.C. branch in this shop's town, brought up to date
 function townBank(shop) {
-  const here = placeKeyOf(shop), uid = S.store.uid;
-  const gecs = S.shops.filter((x) => x.type === 'gec' && placeKeyOf(x) === here);
+  const uid = S.store.uid, town = settlementOf(shop.location).key;
+  const picked = shop.bankShopId && S.shops.find((x) => x.id === shop.bankShopId && x.type === 'gec');   // the DM can name the branch
+  const gecs = picked ? [picked] : S.shops.filter((x) => x.type === 'gec' && settlementOf(x.location).key === town);
   const found = S.accounts.filter((x) => x.uid === uid && gecs.some((g) => g.id === x.shopId))
     .map((raw) => ({ raw, acc: settle(raw, Date.now()) })).sort((p, q) => q.acc.balance - p.acc.balance)[0];
   return found ? { gecs, acc: found.acc, accId: found.raw.id, gec: gecs.find((g) => g.id === found.raw.shopId) } : { gecs, acc: null };
@@ -2346,7 +2364,7 @@ function bankLine(shop, bank) {
   if (bank.acc) return h('p', {}, 'Your bankroll: ', h('strong', { text: formatCp(bank.acc.balance) }), h('small', { class: 'muted', text: ` (savings account at ${bank.gec?.name || 'the G.E.C.'})` }));
   return h('p', { class: 'repair-no', text: bank.gecs.length
     ? 'You need a savings account with money in it at the G.E.C. in this town. Open one there first.'
-    : 'There is no G.E.C. in this town, so you have no savings account to play from. Find a town with one.' });
+    : `There is no G.E.C. in ${settlementOf(shop.location).label}, so you have no savings account to pay from.${S.shops.some((x) => x.type === 'gec') ? ` There are branches in ${[...new Set(S.shops.filter((x) => x.type === 'gec').map((x) => settlementOf(x.location).label))].join(', ')}.` : ''}` });
 }
 
 function gamingBox(shop, st) {
@@ -2656,6 +2674,8 @@ function shopEditView() {
   const size = h('select', {}, SIZES.map((s) => h('option', { value: s.id, selected: s.id === shop.size, text: s.name })));
   const edgeSel = h('select', {}, Object.entries(EDGES).map(([k, v]) => h('option', { value: k, selected: (shop.edge || 'moderate') === k, text: v.label })));
   const levelSel = h('select', {}, Object.entries(PLEASURE_LEVELS).map(([k, v]) => h('option', { value: k, selected: (shop.level || 'common') === k, text: v.label })));
+  const bankSel = h('select', {}, [h('option', { value: '', text: 'Automatic (a G.E.C. in the same town)' }),
+    ...S.shops.filter((x) => x.type === 'gec').map((g) => h('option', { value: g.id, selected: shop.bankShopId === g.id, text: `${g.name} · ${settlementOf(g.location).label}` }))]);
   const hidden = h('input', { type: 'checkbox', checked: !!shop.hidden });
   const specials = houseSpecialsEditor(shop.extras || []);
   const overrides = priceOverridesEditor(shop);
@@ -2666,6 +2686,7 @@ function shopEditView() {
     field('Settlement size', size, 'Changing the size changes what the shop stocks from now on.'),
     shop.type === 'gaming' ? field('House edge', edgeSel, 'How much the house keeps, on average, of every coin staked.') : null,
     shop.type === 'pleasure' ? field('Quality of the house', levelSel, 'Sets the comforts, the risk and the prices.') : null,
+    shop.type === 'gaming' || shop.type === 'pleasure' ? field('Paid from the savings account at', bankSel, 'Normally the G.E.C. in the same town. Pick a branch to override that.') : null,
     specials,
     overrides,
     h('label', { class: 'check' }, hidden, ' Hidden from players'),
@@ -2674,6 +2695,7 @@ function shopEditView() {
         try {
           await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked,
             ...(shop.type === 'gaming' ? { edge: edgeSel.value } : {}), ...(shop.type === 'pleasure' ? { level: levelSel.value } : {}),
+            ...(shop.type === 'gaming' || shop.type === 'pleasure' ? { bankShopId: bankSel.value } : {}),
             extras: specials.value(), priceOverrides: overrides.value() }, shop.id);
           const pin = shop.pinId && pinById(shop.pinId);
           if (pin && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
