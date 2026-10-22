@@ -2013,13 +2013,42 @@ function shopsHere(list, ref) {
     isDM() ? h('button', { class: 'btn small ghost', text: '+ Generate a shop here', onclick: () => openShopGen(ref) }) : null);
 }
 
+// A shop panel remembers the screen it was opened from (the Market's list, the ledger, a town's "Shops here"...),
+// so its Back link can return you there. Editing a shop and coming back keeps the same Back link.
+const BACKABLE = ['market', 'pin', 'about', 'people', 'person', 'journal', 'renown', 'renownDetail'];
 function openShop(id) {
   const shop = shopById(id);
   if (!shop) return;
+  const prev = S.panel;
+  let from = null;
+  if (prev && ['shop', 'shopEdit', 'shopGen'].includes(prev.type)) from = prev.from || null;
+  else if (prev && BACKABLE.includes(prev.type)) { from = { ...prev }; delete from.from; }
   S.pinId = shop.pinId && pinById(shop.pinId)?.pageId === S.pageId ? shop.pinId : null;
   highlightPin();
-  S.panel = { type: 'shop', id };
+  S.panel = { type: 'shop', id, from };
   renderPanel();
+}
+function goBackFrom(from) {
+  if (!from) return;
+  if (from.type === 'pin') {
+    const pin = pinById(from.id);
+    if (!pin) { closePanel(); return; }
+    if (pin.pageId !== S.pageId) { openPin(from.id); return; }
+    S.pinId = from.id; highlightPin();
+  } else if (from.type === 'about' && from.id !== S.pageId) { openMarket('shops'); return; }
+  else { S.pinId = null; highlightPin(); }
+  S.panel = { ...from };
+  renderPanel();
+  updateHash();
+}
+function backLabel(from) {
+  if (from.type === 'market') return from.tab === 'ledger' ? '← Back to the ledger' : from.tab === 'loot' ? '← Back to Loot' : '← All shops';
+  if (from.type === 'pin') return `← ${pinById(from.id)?.title || 'Back'}`;
+  if (from.type === 'about') return '← Back to this page';
+  if (from.type === 'person') return `← ${personById(from.id)?.name || 'Back'}`;
+  if (from.type === 'people') return '← All people';
+  if (from.type === 'journal') return '← Back to the journal';
+  return '← Back';
 }
 
 function shopView() {
@@ -2047,7 +2076,11 @@ function shopView() {
     } catch (e) { toast('Could not buy: ' + e.message); }
   };
 
+  const from = S.panel.from;
+  const back = from ? h('button', { class: 'linklike back', type: 'button', text: backLabel(from), onclick: () => goBackFrom(from) }) : null;
+
   return h('div', { class: 'codex' },
+    back,
     h('div', { class: 'codex-kind', html: `${glyph(KINDS.shop, 18)}<span>${esc(t?.label || 'Shop')} · ${esc(sizeById(shop.size).name)}${shop.hidden ? ' · Hidden from players' : ''}</span>` }),
     h('h2', { class: 'codex-title', text: shop.name }),
     place ? h('button', { class: 'linklike', text: `${place.label}${place.sub ? `, ${place.sub}` : ''} →`, onclick: place.go }) : null,
@@ -2089,7 +2122,7 @@ function shopView() {
         await S.store.saveShop({ restockOffset: (shop.restockOffset || 0) + 1 }, shop.id).catch((e) => toast(e.message));
         toast('Fresh stock is on the shelves.');
       } }),
-      h('button', { class: 'btn ghost', type: 'button', text: 'Edit', onclick: () => { S.panel = { type: 'shopEdit', id: shop.id }; renderPanel(); } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Edit', onclick: () => { S.panel = { type: 'shopEdit', id: shop.id, from: S.panel.from }; renderPanel(); } }),
       !shop.pinId || !pinById(shop.pinId) ? h('button', { class: 'btn ghost', type: 'button', text: 'Place on map', onclick: () => startPlacingShop(shop.id) }) : null) : null,
     sales.length ? h('details', { class: 'legend' },
       h('summary', { text: 'Recent purchases' }),
