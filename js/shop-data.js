@@ -1,3 +1,4 @@
+import { EDGES, PLEASURE_LEVELS } from './gaming-data.js';
 // Shop generator: shop types, item catalogs, names, and the rules for stock and renown.
 // Equipment names and prices follow the D&D 5e System Reference Document 5.1 (CC BY 4.0).
 // The SRD gives no prices for magic items; those here are suggestions by rarity.
@@ -234,6 +235,14 @@ const GEC = [
   ['Chest', 5], ['Lock', 10], ['Scale, merchant\u2019s', 5], ['Coin purse', 0.5],
 ];
 
+const GAMING = [
+  ['Ale (mug)', 0.04, 1, 'cn'], ['Wine, common (pitcher)', 0.2, 1, 'cn'], ['Pipe and tobacco', 0.5, 1, 'cn'],
+  ['Dice set', 1], ['Playing cards', 0.5],
+];
+const PLEASURE = [
+  ['Bath and scented oil', 2, 1, 's'], ['Wine, fine (bottle)', 10, 2, 'cn'], ['Perfume (vial)', 5, 1, 'cn'], ['Flowers, bouquet', 0.2, 1, 'cn'],
+];
+
 export const SHOP_TYPES = {
   general: {
     label: 'General Store', catalog: GENERAL, nouns: ['Goods', 'Sundries', 'Supply', 'Provisions', 'Trading Post', 'Emporium'],
@@ -356,6 +365,18 @@ export const SHOP_TYPES = {
     flavor: ['Marble counters, brass cages and clerks in grey who never smile. The Consortium has branches in every great city.',
       'The air smells of sealing wax and ink. Every coin that crosses the counter is weighed, logged and taxed.'],
   },
+  gaming: {
+    label: 'Gaming House', catalog: GAMING, hiddenByDefault: true, nouns: ['Table', 'Wheel', 'Den', 'Hazard', 'Dice', 'Cup'],
+    adj: ['Lucky', 'Gilded', 'Crooked', 'Silver', 'Golden', 'Fortune'],
+    flavor: ['Dice rattle, cards snap and coins change hands.'],
+  },
+  pleasure: {
+    label: 'Pleasure House', catalog: PLEASURE, hiddenByDefault: true, nouns: ['House', 'Lantern', 'Garden', 'Rose', 'Parlor', 'Room'],
+    adj: ['Red', 'Silken', 'Velvet', 'Quiet'],
+    levelAdj: { seedy: ['Back-Alley', 'Sticky', 'Last-Chance', 'Cracked'], common: ['Red', 'Merry', 'Cozy', 'Friendly'],
+      refined: ['Silken', 'Velvet', 'Gilded', 'Jasmine'], opulent: ['Sapphire', 'Crystal', 'Royal', 'Moonlit'] },
+    flavor: ['A house of company and comfort.'],
+  },
   moneychanger: {
     label: 'Moneychanger & Bank', catalog: MONEYCHANGER, nouns: ['Exchange', 'Counting House', 'Vault', 'Ledger', 'Coin', 'Strongroom'],
     adj: ['Golden', 'Honest', 'Silver', 'Sealed', 'Steady', 'Stone'],
@@ -419,11 +440,14 @@ const newSeed = () => Math.random().toString(36).slice(2, 10);
 
 // ─── generating a shop ──────────────────────────────────────────────
 // Returns the parts of a shop that are fixed once saved. Stock is generated per week from shop.seed.
-export function generateShop(type, size, seed = newSeed()) {
+export function generateShop(type, size, seed = newSeed(), opts = {}) {
   const t = SHOP_TYPES[type], r = rng(`shop:${seed}`);
+  const level = type === 'pleasure' ? (opts.level || weighted(r, [['seedy', 3], ['common', 4], ['refined', 2], ['opulent', 1]])) : undefined;
+  const edge = type === 'gaming' ? (opts.edge || weighted(r, [['slight', 3], ['moderate', 4], ['steep', 2], ['rigged', 1]])) : undefined;
+  const adjList = level && t.levelAdj ? t.levelAdj[level] : t.adj;
   const first = pick(r, FIRST), last = pick(r, LAST);
-  const name = t.fixedName ? t.fixedName : t.namePattern === 'temple' ? `${pick(r, ['Chapel', 'Shrine', 'Temple', 'House'])} of the ${pick(r, t.adj)} ${pick(r, t.nouns)}` : pick(r, [
-    () => `The ${pick(r, t.adj)} ${pick(r, t.nouns)}`,
+  const name = t.fixedName ? t.fixedName : t.namePattern === 'temple' ? `${pick(r, ['Chapel', 'Shrine', 'Temple', 'House'])} of the ${pick(r, adjList)} ${pick(r, t.nouns)}` : pick(r, [
+    () => `The ${pick(r, adjList)} ${pick(r, t.nouns)}`,
     () => `${last}’s ${pick(r, t.nouns)}`,
     () => `${first}’s ${pick(r, t.nouns)}`,
     () => `The ${pick(r, t.nouns)} & ${pick(r, t.nouns)}`,
@@ -432,7 +456,8 @@ export function generateShop(type, size, seed = newSeed()) {
   return {
     seed, type, size: Number(size), name,
     proprietor: { name: `${first} ${last}`, race: weighted(r, RACES), quirk: pick(r, QUIRKS) },
-    description: pick(r, t.flavor),
+    description: level ? PLEASURE_LEVELS[level].flavor : edge ? EDGES[edge].flavor : pick(r, t.flavor),
+    ...(level ? { level } : {}), ...(edge ? { edge } : {}),
     priceMod: Math.round((0.9 + r() * 0.25) * 100) / 100, // this shop's own markup, 0.90–1.15
   };
 }

@@ -168,13 +168,15 @@ service cloud.firestore {
     // G.E.C. savings accounts and safety-deposit boxes: one per player per branch (the id is shop__player).
     // Only the owner and the DM can read or change one. The DM can close an account.
     function accountOk() {
-      return request.resource.data.keys().hasOnly(['shopId', 'uid', 'owner', 'balance', 'since', 'boxes', 'log'])
+      return request.resource.data.keys().hasOnly(['shopId', 'uid', 'owner', 'balance', 'since', 'boxes', 'log', 'gamble'])
         && request.resource.data.shopId is string
         && request.resource.data.owner is string && request.resource.data.owner.size() <= 60
         && request.resource.data.balance is int && request.resource.data.balance >= 0 && request.resource.data.balance <= 1000000000
         && request.resource.data.since is number
         && request.resource.data.boxes is list && request.resource.data.boxes.size() <= 12
-        && request.resource.data.log is list && request.resource.data.log.size() <= 30;
+        && request.resource.data.log is list && request.resource.data.log.size() <= 30
+        // the day's winnings at each gaming house (a map of house id -> { day, net })
+        && (!('gamble' in request.resource.data) || (request.resource.data.gamble is map && request.resource.data.gamble.size() <= 20));
     }
     match /accounts/{id} {
       allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);

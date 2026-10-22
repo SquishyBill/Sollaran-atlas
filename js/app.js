@@ -1,6 +1,7 @@
 import { CAMPAIGN, firebaseConfig } from './config.js';
 import { renderMarkdown, esc, htmlToMarkdown } from './markdown.js';
 import { COIN_CP, EXCHANGE_FEE_CP, BOXES, ITEM_SIZES, formatCp, exchangeQuote, writQuote, newAccount, newBox, boxUsed, boxFits, settle, payArrears, daysUntilInterest, MONTH_MS } from './gec-data.js';
+import { EDGES, edgeById, GAMING_LIMITS, MIN_BET, GAMES, gameById, betOf, multiplier, play, resolveBet, today, PLEASURE_LEVELS, levelById, PLEASURE_SERVICES, visit, CURE } from './gaming-data.js';
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
@@ -2051,6 +2052,8 @@ function shopView() {
     haggleBox(shop, st),
     repairBox(shop, st),
     gecBox(shop, st),
+    gamingBox(shop, st),
+    pleasureBox(shop, st),
     h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
     st.items.length ? h('table', { class: 'stock' },
       h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
@@ -2146,7 +2149,7 @@ function gecBox(shop, st) {
   const who = () => String(myName() || S.store.displayName || 'A party member').slice(0, 60);
   const bill = (name, total, key) => S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: key, itemName: name.slice(0, 160), qty: 1, unitPrice: total, total, buyer: who() });
   const payOut = (name, total) => S.store.addSale({ shopId: shop.id, week: st.week, itemName: name.slice(0, 200), qty: 1, unitPrice: total, total, cost: 0, buyer: who() });
-  const saveAcc = (x) => S.store.saveAccount(accId, { shopId: shop.id, uid, owner: x.owner || who(), balance: Math.round(x.balance), since: x.since, boxes: x.boxes, log: x.log.slice(-30) });
+  const saveAcc = (x) => S.store.saveAccount(accId, { shopId: shop.id, uid, owner: x.owner || who(), balance: Math.round(x.balance), since: x.since, boxes: x.boxes, log: x.log.slice(-30), gamble: x.gamble || {} });
   const note = (x, text) => { x.log.push({ at: Date.now(), text }); };
   const run = (fn) => async (e) => {
     const btn = e?.currentTarget; if (btn) btn.disabled = true;
@@ -2311,12 +2314,118 @@ function gecBox(shop, st) {
           if (ans == null) return;
           const cp = Math.round(parseFloat(ans) * 100);
           if (!(cp >= 0)) throw new Error('Enter a number.');
-          await S.store.saveAccount(x.id, { shopId: v.shopId, uid: v.uid, owner: v.owner, balance: cp, since: v.since, boxes: v.boxes, log: [...v.log, { at: Date.now(), text: `The DM set the balance to ${formatCp(cp)}` }].slice(-30) });
+          await S.store.saveAccount(x.id, { shopId: v.shopId, uid: v.uid, owner: v.owner, balance: cp, since: v.since, boxes: v.boxes, gamble: v.gamble || {}, log: [...v.log, { at: Date.now(), text: `The DM set the balance to ${formatCp(cp)}` }].slice(-30) });
         }) }),
         v.boxes.some((b) => b.items.length) ? h('ul', {}, v.boxes.flatMap((b) => b.items.map((it) => h('li', { text: `${BOXES[b.size].label} box: ${it.qty} \u00d7 ${it.name}` })))) : null);
     })) : h('p', { class: 'muted', text: 'No one has opened an account here yet.' })) : null;
 
   return h('div', { class: 'gec-wrap' }, exchange, writBlock, savings, boxes, dmList);
+}
+
+// ─── gaming houses and pleasure houses ──────────────────────────────
+// Both are paid for from the player's savings account at the G.E.C. in the same town: the stake or the price comes out
+// of it, and winnings go back in. The DM reveals these shops when the party finds them (they start hidden).
+function houseLevelPicker(d, key, label, options, flavorOf, hint) {
+  const sel = h('select', { onchange: (e) => { d[key] = e.target.value; d.description = flavorOf(e.target.value); renderPanel(); } },
+    options.map(([k, t]) => h('option', { value: k, selected: d[key] === k, text: t })));
+  return h('div', { class: 'row gen-pickers' }, field(label, sel, hint));
+}
+
+// the player's savings account at a G.E.C. branch in this shop's town, brought up to date
+function townBank(shop) {
+  const here = placeKeyOf(shop), uid = S.store.uid;
+  const gecs = S.shops.filter((x) => x.type === 'gec' && placeKeyOf(x) === here);
+  const found = S.accounts.filter((x) => x.uid === uid && gecs.some((g) => g.id === x.shopId))
+    .map((raw) => ({ raw, acc: settle(raw, Date.now()) })).sort((p, q) => q.acc.balance - p.acc.balance)[0];
+  return found ? { gecs, acc: found.acc, accId: found.raw.id, gec: gecs.find((g) => g.id === found.raw.shopId) } : { gecs, acc: null };
+}
+const saveBank = (bank, acc) => S.store.saveAccount(bank.accId, { shopId: acc.shopId, uid: acc.uid, owner: acc.owner, balance: Math.round(acc.balance),
+  since: acc.since, boxes: acc.boxes, log: acc.log.slice(-30), gamble: acc.gamble || {} });
+
+function bankLine(shop, bank) {
+  if (bank.acc) return h('p', {}, 'Your bankroll: ', h('strong', { text: formatCp(bank.acc.balance) }), h('small', { class: 'muted', text: ` (savings account at ${bank.gec?.name || 'the G.E.C.'})` }));
+  return h('p', { class: 'repair-no', text: bank.gecs.length
+    ? 'You need a savings account with money in it at the G.E.C. in this town. Open one there first.'
+    : 'There is no G.E.C. in this town, so you have no savings account to play from. Find a town with one.' });
+}
+
+function gamingBox(shop, st) {
+  if (shop.type !== 'gaming' || st.terms.refuses) return null;
+  const G = (S.panel.gam ||= { game: 'dice', bet: '', stake: '', last: null });
+  const edge = edgeById(shop.edge), lim = GAMING_LIMITS[shop.size] || GAMING_LIMITS[2], bank = townBank(shop);
+  const game = gameById(G.game);
+  if (!game.bets.some((b) => b.id === G.bet)) G.bet = game.bets[0].id;
+  const bet = betOf(game, G.bet), mult = multiplier(game, bet, edge.pct);
+  const day = today(), tally = (bank.acc?.gamble || {})[shop.id], net = tally?.day === day ? tally.net : 0;
+  const stakeCp = Math.round((parseFloat(G.stake) || 0) * 100);
+  const capReached = net >= lim.win;
+  const problem = !bank.acc ? 'No bankroll.' : capReached ? 'The house will pay you no more today. Come back tomorrow.'
+    : stakeCp < MIN_BET ? `The smallest bet is ${formatCp(MIN_BET)}.` : stakeCp > lim.bet ? `The most this house takes on one bet is ${formatCp(lim.bet)}.`
+    : stakeCp > bank.acc.balance ? 'You do not have that much in your account.' : '';
+  const run = (fn) => async (e) => { const b = e?.currentTarget; if (b) b.disabled = true; try { await fn(); } catch (err) { toast('Could not play: ' + err.message); } if (b?.isConnected) b.disabled = false; };
+
+  return h('details', { class: 'legend gec', open: true },
+    h('summary', { text: 'The tables' }),
+    h('p', { class: 'muted', text: `Stakes come out of your savings account and winnings go back in. This house takes bets from ${formatCp(MIN_BET)} to ${formatCp(lim.bet)}, and will not pay one player more than ${formatCp(lim.win)} in winnings in a day.` }),
+    isDM() ? h('p', { class: 'muted', text: `DM: this house keeps ${edge.label} on average.` }) : null,
+    bankLine(shop, bank),
+    bank.acc ? h('p', { class: 'muted', text: `Won today at this house: ${formatCp(Math.max(0, net))} of ${formatCp(lim.win)}.` }) : null,
+    h('div', { class: 'row gen-pickers' },
+      field('Game', h('select', { onchange: (e) => { G.game = e.target.value; G.bet = ''; G.last = null; renderPanel(); } }, GAMES.map((x) => h('option', { value: x.id, selected: G.game === x.id, text: x.label })))),
+      field('Your bet', h('select', { onchange: (e) => { G.bet = e.target.value; renderPanel(); } }, game.bets.map((b) => h('option', { value: b.id, selected: G.bet === b.id, text: b.label })))),
+      field('Stake (gold)', h('input', { type: 'number', min: 0, step: 'any', value: G.stake, placeholder: 'gold', onchange: (e) => { G.stake = e.target.value; renderPanel(); } }))),
+    h('p', { class: 'muted', text: game.blurb }),
+    h('p', {}, h('strong', { text: `A win returns ${mult.toFixed(2)} times your stake.` }), game.tie ? ' A tie returns your stake.' : ''),
+    problem && G.stake ? h('p', { class: 'repair-no', text: problem }) : null,
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Place the bet', disabled: !!problem, onclick: run(async () => {
+      const res = play(G.game, G.bet);
+      const out = resolveBet({ stake: stakeCp, mult, win: res.win, push: res.push, netToday: net, cap: lim.win });
+      const acc = bank.acc;
+      acc.balance += out.profit;
+      acc.gamble = { ...(acc.gamble || {}), [shop.id]: { day, net: net + out.profit } };
+      const verdict = out.profit > 0 ? `won ${formatCp(out.profit)}` : out.profit < 0 ? `lost ${formatCp(-out.profit)}` : 'got the stake back';
+      acc.log.push({ at: Date.now(), text: `${game.label} at ${shop.name}: ${verdict}` });
+      await saveBank(bank, acc);
+      G.last = { text: res.text, verdict, win: out.profit > 0, capped: out.capped };
+      renderPanel();
+    }) })),
+    G.last ? h('div', { class: `gam-result ${G.last.win ? 'win' : G.last.verdict.startsWith('lost') ? 'loss' : ''}` },
+      h('strong', { text: `You ${G.last.verdict}.` }), G.last.text,
+      G.last.capped ? h('small', { class: 'muted', text: ' The house paid out up to its daily limit for you.' }) : null) : null,
+    h('details', { class: 'legend' }, h('summary', { text: 'What the house pays' }),
+      h('ul', { class: 'sales' }, game.bets.slice(0, 8).map((b) => h('li', { text: `${b.label}: a win returns ${multiplier(game, b, edge.pct).toFixed(2)} \u00d7 your stake` })),
+        game.bets.length > 8 ? h('li', { class: 'muted', text: 'Each single number pays alike.' }) : null)));
+}
+
+function pleasureBox(shop, st) {
+  if (shop.type !== 'pleasure' || st.terms.refuses) return null;
+  const G = (S.panel.visit ||= { last: null });
+  const lv = levelById(shop.level), bank = townBank(shop);
+  const run = (fn) => async (e) => { const b = e?.currentTarget; if (b) b.disabled = true; try { await fn(); } catch (err) { toast('Could not do that: ' + err.message); } if (b?.isConnected) b.disabled = false; };
+  return h('details', { class: 'legend gec', open: true },
+    h('summary', { text: `${lv.label} house \u2014 company and comfort` }),
+    h('p', { class: 'muted', text: `Comforts: ${lv.comforts}. Risk of a nasty surprise: ${lv.danger}.${isDM() ? ` (DM: about ${Math.round(lv.risk * 100)}% a visit.)` : ''} You pay from your savings account at the G.E.C. in this town.` }),
+    bankLine(shop, bank),
+    ...PLEASURE_SERVICES.map((s, i) => {
+      const cost = lv.prices[i], afford = bank.acc && bank.acc.balance >= cost;
+      return h('div', { class: 'visit-row' },
+        h('span', {}, s.label, ' ', h('small', { class: 'muted', text: formatCp(cost) })),
+        h('button', { class: 'btn small', type: 'button', text: 'Go in', disabled: !afford, onclick: run(async () => {
+          if (!confirm(`${s.label} at ${shop.name} for ${formatCp(cost)}?`)) return;
+          const v = visit(shop.level, s.id);
+          const acc = bank.acc;
+          acc.balance -= cost;
+          acc.log.push({ at: Date.now(), text: `${shop.name}, ${s.label.toLowerCase()}: ${formatCp(cost)}. ${v.buff.name}${v.disease ? `; caught ${v.disease.name}` : ''}` });
+          await saveBank(bank, acc);
+          G.last = { cost, service: s.label, v };
+          renderPanel();
+        }) }));
+    }),
+    G.last ? h('div', { class: `gam-result ${G.last.v.disease ? 'loss' : 'win'}` },
+      h('strong', { text: `${G.last.v.buff.name}` }), G.last.v.buff.text,
+      h('small', { class: 'muted', text: ' (Lasts until your next long rest.)' }),
+      G.last.v.disease ? h('p', {}, h('strong', { text: `But you have caught ${G.last.v.disease.name}.` }), G.last.v.disease.text, h('small', { class: 'muted', text: ` ${CURE}` })) : null) : null,
+    h('p', { class: 'muted', text: 'Your DM decides how any ailment plays out. The result is also written in your account history.' }));
 }
 
 // Haggling: once per player, per shop, per week. Good rolls knock prices down, bad ones push them up.
@@ -2500,6 +2609,10 @@ function shopGenView() {
     h('h2', { class: 'codex-title', text: 'Generate a shop' }),
     h('p', { class: 'codex-sub', text: `at ${place ? `${place.label}${place.sub ? `, ${place.sub}` : ''}` : 'this place'}` }),
     h('div', { class: 'row gen-pickers' }, field('Kind of shop', typeSel), field('Settlement size', sizeSel)),
+    d.type === 'gaming' ? houseLevelPicker(d, 'edge', 'House edge', Object.entries(EDGES).map(([k, v]) => [k, v.label]), (k) => EDGES[k].flavor,
+      'How much the house keeps, on average, of every coin staked. Players see the payouts, never this label.') : null,
+    d.type === 'pleasure' ? houseLevelPicker(d, 'level', 'Quality of the house', Object.entries(PLEASURE_LEVELS).map(([k, v]) => [k, v.label]), (k) => PLEASURE_LEVELS[k].flavor,
+      'The finer the house, the better the comforts and the smaller the risk. It also sets the prices.') : null,
     h('small', { class: 'muted', text: 'Bigger settlements stock more items, finer goods and rarer finds.' }),
     h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', text: '↻ Reroll', onclick: () => regenerate(d.type, d.size) })),
     field('Shop name', name),
@@ -2541,6 +2654,8 @@ function shopEditView() {
   const name = h('input', { type: 'text', maxlength: 80, value: shop.name });
   const desc = h('textarea', { rows: 3 }); desc.value = shop.description || '';
   const size = h('select', {}, SIZES.map((s) => h('option', { value: s.id, selected: s.id === shop.size, text: s.name })));
+  const edgeSel = h('select', {}, Object.entries(EDGES).map(([k, v]) => h('option', { value: k, selected: (shop.edge || 'moderate') === k, text: v.label })));
+  const levelSel = h('select', {}, Object.entries(PLEASURE_LEVELS).map(([k, v]) => h('option', { value: k, selected: (shop.level || 'common') === k, text: v.label })));
   const hidden = h('input', { type: 'checkbox', checked: !!shop.hidden });
   const specials = houseSpecialsEditor(shop.extras || []);
   const overrides = priceOverridesEditor(shop);
@@ -2549,6 +2664,8 @@ function shopEditView() {
     field('Shop name', name),
     field('Description', desc),
     field('Settlement size', size, 'Changing the size changes what the shop stocks from now on.'),
+    shop.type === 'gaming' ? field('House edge', edgeSel, 'How much the house keeps, on average, of every coin staked.') : null,
+    shop.type === 'pleasure' ? field('Quality of the house', levelSel, 'Sets the comforts, the risk and the prices.') : null,
     specials,
     overrides,
     h('label', { class: 'check' }, hidden, ' Hidden from players'),
@@ -2556,6 +2673,7 @@ function shopEditView() {
       h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
         try {
           await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked,
+            ...(shop.type === 'gaming' ? { edge: edgeSel.value } : {}), ...(shop.type === 'pleasure' ? { level: levelSel.value } : {}),
             extras: specials.value(), priceOverrides: overrides.value() }, shop.id);
           const pin = shop.pinId && pinById(shop.pinId);
           if (pin && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);

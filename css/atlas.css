@@ -1005,3 +1005,9 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .journal-form textarea { width: 100%; font-size: 17px; line-height: 1.45; }
 .j-tools { display: flex; gap: 6px; margin: 4px 0; }
 .j-tools .on { background: var(--wax); color: #fff; }
+
+/* gaming and pleasure houses */
+.gam-result { margin: 8px 0; padding: 9px 12px; border-left: 3px solid var(--gold); background: rgba(201, 164, 92, .16); }
+.gam-result.win { border-left-color: #3f7a2c; } .gam-result.loss { border-left-color: var(--wax); }
+.gam-result strong { display: block; font: 700 18px var(--f-head); color: var(--ink); }
+.visit-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(90, 60, 25, .25); }

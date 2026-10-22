@@ -54,7 +54,7 @@ export function writQuote(gp) {
 }
 
 // ── savings accounts and boxes ──────────────────────────────────────
-export const newAccount = (shopId, uid, owner, now) => ({ shopId, uid, owner, balance: 0, since: now, boxes: [], log: [] });
+export const newAccount = (shopId, uid, owner, now) => ({ shopId, uid, owner, balance: 0, since: now, boxes: [], log: [], gamble: {} });
 
 export const boxUsed = (box) => (box.items || []).reduce((n, i) => n + (Number(i.qty) || 0) * (ITEM_SIZES[i.size]?.units || 1), 0);
 export const boxFits = (box, size, qty) => boxUsed(box) + qty * (ITEM_SIZES[size]?.units || 1) <= BOXES[box.size].cap;
