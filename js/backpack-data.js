@@ -80,7 +80,7 @@ export const LEDGER_KINDS = {
   buy: 'Bought', writBuy: 'Bought a writ', repair: 'Repairs', service: 'Paid a fee', sell: 'Sold', writ: 'Cashed a writ',
   deposit: 'Savings deposit', withdraw: 'Savings withdrawal', loot: 'Found', split: 'A share of the coins',
   award: 'Given by the DM', set: 'Set by the DM', take: 'Taken by the DM', identify: 'Identified an item',
-  home: 'Deposited at Silvermere', fromHome: 'Withdrawn from Silvermere', start: 'Starting coins',
+  bet: 'Gambling', home: 'Deposited at Silvermere', fromHome: 'Withdrawn from Silvermere', start: 'Starting coins',
 };
 // Kinds that put coins in (the rest take coins out).
 export const INCOME_KINDS = ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'fromHome', 'start'];

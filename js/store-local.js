@@ -220,15 +220,16 @@ export class LocalStore {
       newId: () => rid(),
       read: async (col, id) => (this.db[col]?.[id] ? { id, ...this.db[col][id] } : null),
       purse: async (uid = this.uid, owner = '') => {
-        if (!purses.has(uid)) { const b = this.db.backpacks[uid]; purses.set(uid, { uid, owner: b?.owner || owner, coins: normalizeCoins(b?.coins), exists: !!b }); }
+        if (!purses.has(uid)) { const b = this.db.backpacks[uid]; purses.set(uid, { uid, owner: b?.owner || owner, coins: normalizeCoins(b?.coins), gamble: b?.gamble || {}, exists: !!b }); }
         return purses.get(uid);
       },
       setCoins: (purse, coins, info = {}) => {
         const next = normalizeCoins(coins), logId = rid(), owner = info.owner || purse.owner || '';
         const line = ledgerLine({ uid: purse.uid, owner, kind: info.kind, deltaCp: cpOf(next) - cpOf(purse.coins), balanceCp: cpOf(next), text: info.text, ref: info.ref });
         writes.push(['set', 'backpackLog', logId, line]);
-        writes.push(['set', 'backpacks', purse.uid, { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at }]);
-        purse.coins = next; purse.owner = owner;
+        const gamble = info.gamble || purse.gamble;
+        writes.push(['set', 'backpacks', purse.uid, { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at, ...(gamble && Object.keys(gamble).length ? { gamble } : {}) }]);
+        purse.coins = next; purse.owner = owner; purse.gamble = gamble;
         return logId;
       },
       set: (col, id, data, merge = false) => { writes.push(['set', col, id, data, merge]); return id; },

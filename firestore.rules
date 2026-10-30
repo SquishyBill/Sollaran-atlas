@@ -238,13 +238,34 @@ service cloud.firestore {
         && c.pp is int && c.pp >= 0 && c.gp is int && c.gp >= 0 && c.sp is int && c.sp >= 0 && c.cp is int && c.cp >= 0
         && coinSum(c) <= 1000000000;
     }
+    // The gaming tally: what a player has won (or lost) at each house today, kept in their backpack as
+    // gamble: { <house id>: { day, net } } (copper; day counts days since 1970, UTC) so a house's daily limit can't be
+    // dodged by playing from the backpack instead of the savings account. A bet moves it by exactly what the bet won
+    // or lost, and a win can't take it past the limit for that size of house (the limits in js/gaming-data.js).
+    function winCap(size) { return size == 1 ? 1000 : size == 2 ? 2500 : size == 3 ? 10000 : size == 4 ? 40000 : 150000; }
+    function gambleBefore() { return resource == null ? {} : resource.data.get('gamble', {}); }
+    function betOk(d, house, delta) {
+      let prev = gambleBefore().get(house, {'day': -99, 'net': 0});
+      let now = d.gamble[house];
+      return d.gamble.size() <= 20
+        && d.gamble.diff(gambleBefore()).affectedKeys().hasOnly([house])
+        && now.keys().hasOnly(['day', 'net']) && now.day is int && now.net is int
+        && now.net == (prev.day == now.day ? prev.net : 0) + delta
+        && math.abs(now.day - math.floor(request.time.toMillis() / 86400000)) <= 1
+        && (delta <= 0 || now.net <= winCap(get(/databases/$(database)/documents/shops/$(house)).data.size));
+    }
     function moveOk(d, before, after) {
       let log = getAfter(/databases/$(database)/documents/backpackLog/$(d.lastLog)).data;
       let delta = after - before;
       return log.uid == d.uid && log.deltaCp == delta && log.balanceCp == after
-        && (delta < 0
+        // only a bet can touch the gaming tally, and a bet has to keep it true
+        && (log.kind == 'bet' ? betOk(d, log.ref, delta) : d.get('gamble', {}) == gambleBefore())
+        && (delta == 0
+          ? log.kind == 'bet'
+          : delta < 0
           ? !(log.kind in ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'fromHome', 'start', 'set', 'take'])
-          : (log.kind == 'sell'
+          : (log.kind == 'bet')
+            || (log.kind == 'sell'
               && getAfter(/databases/$(database)/documents/sales/$(log.ref)).data.buyerUid == d.uid
               && math.round(getAfter(/databases/$(database)/documents/sales/$(log.ref)).data.total * 100) == delta)
             || (log.kind == 'writ'
@@ -264,10 +285,12 @@ service cloud.firestore {
       let d = request.resource.data;
       let before = resource == null ? 0 : coinSum(resource.data.coins);
       let after = coinSum(d.coins);
-      return d.keys().hasOnly(['uid', 'owner', 'coins', 'lastLog', 'updatedAt'])
+      let gambled = d.get('gamble', {}) != gambleBefore();
+      return d.keys().hasOnly(['uid', 'owner', 'coins', 'lastLog', 'updatedAt', 'gamble'])
         && d.uid == uid && d.owner is string && d.owner.size() <= 60
         && coinsOk(d.coins)
-        && (after == before || (d.lastLog is string && moveOk(d, before, after)));
+        && d.get('gamble', {}) is map
+        && ((after == before && !gambled) || (d.lastLog is string && moveOk(d, before, after)));
     }
     match /backpacks/{uid} {
       allow read: if isDM() || (isPlayer() && request.auth.uid == uid);

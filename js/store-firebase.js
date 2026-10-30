@@ -301,7 +301,7 @@ export class FirebaseStore {
         purse: async (uid = this.uid, owner = '') => {
           if (!purses.has(uid)) {
             const s = await tx.get(this.ref('backpacks', uid));
-            purses.set(uid, { uid, owner: s.data()?.owner || owner, coins: normalizeCoins(s.data()?.coins), exists: s.exists() });
+            purses.set(uid, { uid, owner: s.data()?.owner || owner, coins: normalizeCoins(s.data()?.coins), gamble: s.data()?.gamble || {}, exists: s.exists() });
           }
           return purses.get(uid);
         },
@@ -309,8 +309,9 @@ export class FirebaseStore {
           const next = normalizeCoins(coins), logId = doc(this.col('backpackLog')).id, owner = info.owner || purse.owner || '';
           const line = ledgerLine({ uid: purse.uid, owner, kind: info.kind, deltaCp: cpOf(next) - cpOf(purse.coins), balanceCp: cpOf(next), text: info.text, ref: info.ref });
           writes.push(['set', this.ref('backpackLog', logId), line]);
-          writes.push(['set', this.ref('backpacks', purse.uid), { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at }]);
-          purse.coins = next; purse.owner = owner;
+          const gamble = info.gamble || purse.gamble;     // what has been won or lost at each gaming house today
+          writes.push(['set', this.ref('backpacks', purse.uid), { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at, ...(gamble && Object.keys(gamble).length ? { gamble } : {}) }]);
+          purse.coins = next; purse.owner = owner; purse.gamble = gamble;
           return logId;
         },
         set: (col, id, data, merge = false) => { writes.push(['set', this.ref(col, id), data, merge]); return id; },

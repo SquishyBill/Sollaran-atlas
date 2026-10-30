@@ -2505,27 +2505,47 @@ function bankLine(shop, bank) {
     : `There is no G.E.C. in ${settlementOf(shop.location).label}, so you have no savings account to pay from.${S.shops.some((x) => x.type === 'gec') ? ` There are branches in ${[...new Set(S.shops.filter((x) => x.type === 'gec').map((x) => settlementOf(x.location).label))].join(', ')}.` : ''}` });
 }
 
+// Where a gaming or pleasure house is paid from: with backpacks on, the backpack or the savings account; otherwise
+// (as before) only the savings account.
+function bankroll(shop, bank, G) {
+  if (!usingBackpack()) return bankLine(shop, bank);
+  const pick = field('Pay from', h('select', { onchange: (e) => { G.from = e.target.value; renderPanel(); } },
+    [['bag', 'Your backpack'], ['account', 'Your savings account']].map(([v, t]) => h('option', { value: v, selected: G.from === v, text: t }))));
+  return h('div', {}, pick, G.from === 'bag'
+    ? h('p', {}, 'In your backpack: ', h('strong', { text: coinText(myPurse()) }))
+    : bankLine(shop, bank));
+}
+const utcDay = () => Math.floor(Date.now() / 86400000);
+// what this player has won (or lost) at a house today from the backpack, in copper
+const bagTally = (houseId) => { const g = backpackOf(myUid())?.gamble?.[houseId]; return g && g.day === utcDay() ? g.net : 0; };
+
 function gamingBox(shop, st) {
   if (shop.type !== 'gaming' || st.terms.refuses) return null;
   const G = (S.panel.gam ||= { game: 'dice', bet: '', stake: '', last: null });
   const edge = edgeById(shop.edge), lim = GAMING_LIMITS[shop.size] || GAMING_LIMITS[2], bank = townBank(shop);
+  const pack = usingBackpack();
+  G.from = pack ? (G.from || 'bag') : 'account';
+  const useBag = pack && G.from === 'bag';          // staking from the backpack, not the savings account
   const game = gameById(G.game);
   if (!game.bets.some((b) => b.id === G.bet)) G.bet = game.bets[0].id;
   const bet = betOf(game, G.bet), mult = multiplier(game, bet, edge.pct);
-  const day = today(), tally = (bank.acc?.gamble || {})[shop.id], net = tally?.day === day ? tally.net : 0;
+  const day = today(), tally = (bank.acc?.gamble || {})[shop.id];
+  // winnings count across both: the house's daily limit is the same whichever way you pay
+  const net = (tally?.day === day ? tally.net : 0) + (pack ? bagTally(shop.id) : 0);
+  const roll = useBag ? cpOf(myPurse()) : (bank.acc?.balance || 0);
   const stakeCp = Math.round((parseFloat(G.stake) || 0) * 100);
   const capReached = net >= lim.win;
-  const problem = !bank.acc ? 'No bankroll.' : capReached ? 'The house will pay you no more today. Come back tomorrow.'
+  const problem = !useBag && !bank.acc ? 'No bankroll.' : capReached ? 'The house will pay you no more today. Come back tomorrow.'
     : stakeCp < MIN_BET ? `The smallest bet is ${formatCp(MIN_BET)}.` : stakeCp > lim.bet ? `The most this house takes on one bet is ${formatCp(lim.bet)}.`
-    : stakeCp > bank.acc.balance ? 'You do not have that much in your account.' : '';
+    : stakeCp > roll ? `You do not have that much in your ${useBag ? 'backpack' : 'account'}.` : '';
   const run = (fn) => async (e) => { const b = e?.currentTarget; if (b) b.disabled = true; try { await fn(); } catch (err) { toast('Could not play: ' + err.message); } if (b?.isConnected) b.disabled = false; };
 
   return h('details', { class: 'legend gec', open: true },
     h('summary', { text: 'The tables' }),
-    h('p', { class: 'muted', text: `Stakes come out of your savings account and winnings go back in. This house takes bets from ${formatCp(MIN_BET)} to ${formatCp(lim.bet)}, and will not pay one player more than ${formatCp(lim.win)} in winnings in a day.` }),
+    h('p', { class: 'muted', text: `Stakes come out of your ${pack ? 'backpack or savings account' : 'savings account'} and winnings go back in. This house takes bets from ${formatCp(MIN_BET)} to ${formatCp(lim.bet)}, and will not pay one player more than ${formatCp(lim.win)} in winnings in a day.` }),
     isDM() ? h('p', { class: 'muted', text: `DM: this house keeps ${edge.label} on average.` }) : null,
-    bankLine(shop, bank),
-    bank.acc ? h('p', { class: 'muted', text: `Won today at this house: ${formatCp(Math.max(0, net))} of ${formatCp(lim.win)}.` }) : null,
+    bankroll(shop, bank, G),
+    (bank.acc || useBag) ? h('p', { class: 'muted', text: `Won today at this house: ${formatCp(Math.max(0, net))} of ${formatCp(lim.win)}.` }) : null,
     h('div', { class: 'row gen-pickers' },
       field('Game', h('select', { onchange: (e) => { G.game = e.target.value; G.bet = ''; G.last = null; renderPanel(); } }, GAMES.map((x) => h('option', { value: x.id, selected: G.game === x.id, text: x.label })))),
       field('Your bet', h('select', { onchange: (e) => { G.bet = e.target.value; renderPanel(); } }, game.bets.map((b) => h('option', { value: b.id, selected: G.bet === b.id, text: b.label })))),
@@ -2536,6 +2556,24 @@ function gamingBox(shop, st) {
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Place the bet', disabled: !!problem, onclick: run(async () => {
       const res = play(G.game, G.bet);
       const out = resolveBet({ stake: stakeCp, mult, win: res.win, push: res.push, netToday: net, cap: lim.win });
+      if (useBag) {
+        // the stake and the winnings go through the backpack, and today's tally for this house is kept with it
+        const verdict = out.profit > 0 ? `won ${formatCp(out.profit)}` : out.profit < 0 ? `lost ${formatCp(-out.profit)}` : 'got the stake back';
+        const utc = utcDay();
+        await S.store.transact(async (t) => {
+          const purse = await t.purse(myUid(), whoAmI());
+          if (cpOf(purse.coins) < stakeCp) throw new Error('You do not have that much in your backpack.');
+          let next;
+          if (out.profit >= 0) next = receiveCoins(purse.coins, out.profit);
+          else { const p = payCoins(purse.coins, -out.profit); if (!p.ok) throw new Error(p.reason); next = p.coins; }
+          const prev = purse.gamble?.[shop.id], prevNet = prev && prev.day === utc ? prev.net : 0;
+          t.setCoins(purse, next, { kind: 'bet', ref: shop.id, text: `${game.label} at ${shop.name}: ${verdict}`,
+            gamble: { ...(purse.gamble || {}), [shop.id]: { day: utc, net: prevNet + out.profit } } });
+        });
+        G.last = { text: res.text, verdict, win: out.profit > 0, capped: out.capped };
+        renderPanel();
+        return;
+      }
       const acc = bank.acc;
       acc.balance += out.profit;
       acc.gamble = { ...(acc.gamble || {}), [shop.id]: { day, net: net + out.profit } };
@@ -2557,18 +2595,27 @@ function pleasureBox(shop, st) {
   if (shop.type !== 'pleasure' || st.terms.refuses) return null;
   const G = (S.panel.visit ||= { last: null });
   const lv = levelById(shop.level), bank = townBank(shop);
+  const pack = usingBackpack();
+  G.from = pack ? (G.from || 'bag') : 'account';
+  const useBag = pack && G.from === 'bag';
   const run = (fn) => async (e) => { const b = e?.currentTarget; if (b) b.disabled = true; try { await fn(); } catch (err) { toast('Could not do that: ' + err.message); } if (b?.isConnected) b.disabled = false; };
   return h('details', { class: 'legend gec', open: true },
     h('summary', { text: `${lv.label} house \u2014 company and comfort` }),
-    h('p', { class: 'muted', text: `Comforts: ${lv.comforts}. Risk of a nasty surprise: ${lv.danger}.${isDM() ? ` (DM: about ${Math.round(lv.risk * 100)}% a visit.)` : ''} You pay from your savings account at the G.E.C. in this town.` }),
-    bankLine(shop, bank),
+    h('p', { class: 'muted', text: `Comforts: ${lv.comforts}. Risk of a nasty surprise: ${lv.danger}.${isDM() ? ` (DM: about ${Math.round(lv.risk * 100)}% a visit.)` : ''} You pay from ${pack ? 'your backpack, or' : ''} your savings account at the G.E.C. in this town.` }),
+    bankroll(shop, bank, G),
     ...PLEASURE_SERVICES.map((s, i) => {
-      const cost = lv.prices[i], afford = bank.acc && bank.acc.balance >= cost;
+      const cost = lv.prices[i], afford = useBag ? cpOf(myPurse()) >= cost : bank.acc && bank.acc.balance >= cost;
       return h('div', { class: 'visit-row' },
         h('span', {}, s.label, ' ', h('small', { class: 'muted', text: formatCp(cost) })),
         h('button', { class: 'btn small', type: 'button', text: 'Go in', disabled: !afford, onclick: run(async () => {
           if (!confirm(`${s.label} at ${shop.name} for ${formatCp(cost)}?`)) return;
           const v = visit(shop.level, s.id);
+          if (useBag) {
+            await spend(cost, { kind: 'service', ref: shop.id, text: `${shop.name}, ${s.label.toLowerCase()}: ${formatCp(cost)}. ${v.buff.name}${v.disease ? `; caught ${v.disease.name}` : ''}` });
+            G.last = { cost, service: s.label, v };
+            renderPanel();
+            return;
+          }
           const acc = bank.acc;
           acc.balance -= cost;
           acc.log.push({ at: Date.now(), text: `${shop.name}, ${s.label.toLowerCase()}: ${formatCp(cost)}. ${v.buff.name}${v.disease ? `; caught ${v.disease.name}` : ''}` });
@@ -2581,7 +2628,7 @@ function pleasureBox(shop, st) {
       h('strong', { text: `${G.last.v.buff.name}` }), G.last.v.buff.text,
       h('small', { class: 'muted', text: ' (Lasts until your next long rest.)' }),
       G.last.v.disease ? h('p', {}, h('strong', { text: `But you have caught ${G.last.v.disease.name}.` }), G.last.v.disease.text, h('small', { class: 'muted', text: ` ${CURE}` })) : null) : null,
-    h('p', { class: 'muted', text: 'Your DM decides how any ailment plays out. The result is also written in your account history.' }));
+    h('p', { class: 'muted', text: `Your DM decides how any ailment plays out. The result is also written in your ${useBag ? 'backpack' : 'account'} history.` }));
 }
 
 // Haggling: once per player, per shop, per week. Good rolls knock prices down, bad ones push them up.
