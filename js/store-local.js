@@ -1,6 +1,7 @@
 // Demo backend: everything lives in this browser's localStorage.
 // Mirrors FirebaseStore's interface and visibility rules so the app code is identical.
 import { SEED } from './seed.js';
+import { cpOf, normalizeCoins, ledgerLine } from './backpack-data.js';
 
 const KEY = 'atlas-sollara-v3';
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -42,7 +43,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -70,6 +71,9 @@ export class LocalStore {
     this.handlers.journal?.(rows(this.db.journal).filter((x) => dm || !x.draft));
     this.handlers.haggles?.(rows(this.db.haggles).filter((x) => dm || x.uid === this.uid));
     this.handlers.players?.(rows(this.db.players).filter((x) => dm || x.id === this.uid));
+    this.handlers.backpacks?.(rows(this.db.backpacks).filter((x) => dm || x.id === this.uid));
+    this.handlers.backpackLog?.(rows(this.db.backpackLog).filter((x) => dm || x.uid === this.uid));
+    this.handlers.backpackCfg?.(this.db.config.backpack || {});
     this.handlers.loot?.(rows(this.db.loot));
     this.handlers.lootLog?.(rows(this.db.lootLog));
     this.handlers.partyCoins?.(this.db.party.coins);
@@ -196,6 +200,50 @@ export class LocalStore {
   }
 
   async deleteHaggle(id) { delete this.db.haggles[id]; this.persist(); }
+
+  // ── backpacks (see FirebaseStore: the same calls, kept in this browser)
+  async ensureBackpack(owner) {
+    if (this.isDM) return;
+    const name = String(owner || '').trim().slice(0, 60), b = this.db.backpacks[this.uid];
+    if (!b) this.db.backpacks[this.uid] = { uid: this.uid, owner: name, coins: normalizeCoins({}), updatedAt: Date.now() };
+    else if (name && b.owner !== name) b.owner = name;
+    else return;
+    this.persist();
+  }
+  async deleteBackpack(uid) { delete this.db.backpacks[uid]; this.persist(); }
+  async saveBackpackConfig(data) { this.db.config.backpack = { ...this.db.config.backpack, ...data }; this.persist(); }
+
+  async transact(fn) {
+    const writes = [], purses = new Map();
+    const t = {
+      uid: this.uid,
+      newId: () => rid(),
+      read: async (col, id) => (this.db[col]?.[id] ? { id, ...this.db[col][id] } : null),
+      purse: async (uid = this.uid, owner = '') => {
+        if (!purses.has(uid)) { const b = this.db.backpacks[uid]; purses.set(uid, { uid, owner: b?.owner || owner, coins: normalizeCoins(b?.coins), exists: !!b }); }
+        return purses.get(uid);
+      },
+      setCoins: (purse, coins, info = {}) => {
+        const next = normalizeCoins(coins), logId = rid(), owner = info.owner || purse.owner || '';
+        const line = ledgerLine({ uid: purse.uid, owner, kind: info.kind, deltaCp: cpOf(next) - cpOf(purse.coins), balanceCp: cpOf(next), text: info.text, ref: info.ref });
+        writes.push(['set', 'backpackLog', logId, line]);
+        writes.push(['set', 'backpacks', purse.uid, { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at }]);
+        purse.coins = next; purse.owner = owner;
+        return logId;
+      },
+      set: (col, id, data, merge = false) => { writes.push(['set', col, id, data, merge]); return id; },
+      add: (col, data) => { const id = rid(); writes.push(['set', col, id, data]); return id; },
+      update: (col, id, data) => { writes.push(['set', col, id, data, true]); },
+      del: (col, id) => { writes.push(['delete', col, id]); },
+    };
+    const result = await fn(t);
+    for (const [op, col, id, data, merge] of writes) {
+      if (op === 'delete') delete this.db[col][id];
+      else this.db[col][id] = merge ? { ...this.db[col][id], ...data } : data;
+    }
+    this.persist();
+    return result;
+  }
 
   // ── loot: the party's stash, the hidden truth about unidentified items, caches, homebrew
   async saveLoot(data, id) {

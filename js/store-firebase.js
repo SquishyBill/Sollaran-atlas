@@ -1,6 +1,7 @@
 // Firebase backend. Players are signed in anonymously (no account needed);
 // the DM signs in with Google. Access control lives in firestore.rules.
 import { firebaseConfig, DM_EMAILS, ENABLE_UPLOADS } from './config.js';
+import { cpOf, normalizeCoins, ledgerLine } from './backpack-data.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
 
@@ -15,9 +16,16 @@ export class FirebaseStore {
     ]);
     this.A = A;
     this.F = F;
-    const app = initializeApp(firebaseConfig);
+    // Tests open the page on localhost with ?emulators, which points it at the Firebase emulators under a demo
+    // project, so it can never touch the real data.
+    const emulated = ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).has('emulators');
+    const app = initializeApp(emulated ? { ...firebaseConfig, projectId: 'demo-atlas' } : firebaseConfig);
     this.auth = A.getAuth(app);
     this.fs = F.getFirestore(app);
+    if (emulated) {
+      A.connectAuthEmulator(this.auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+      F.connectFirestoreEmulator(this.fs, '127.0.0.1', 8080);
+    }
     this.canUpload = ENABLE_UPLOADS;
     if (ENABLE_UPLOADS) {
       this.S = await import(`${SDK}/firebase-storage.js`);
@@ -88,6 +96,12 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('accounts') : query(this.col('accounts'), where('uid', '==', this.uid)), (s) => h.accounts?.(list(s)), err);
     onSnapshot(this.isDM ? this.col('haggles') : query(this.col('haggles'), where('uid', '==', this.uid)),
       (s) => h.haggles?.(list(s)), err);
+    // Backpacks: your own coins (the DM sees everyone's) and the ledger of every move of them.
+    if (this.isDM) onSnapshot(this.col('backpacks'), (s) => h.backpacks?.(list(s)), err);
+    else onSnapshot(this.ref('backpacks', this.uid), (s) => h.backpacks?.(s.exists() ? [{ id: s.id, ...s.data() }] : []), err);
+    onSnapshot(this.isDM ? this.col('backpackLog') : query(this.col('backpackLog'), where('uid', '==', this.uid)), (s) => h.backpackLog?.(list(s)), err);
+    // The DM's switches for backpacks: { on } (players pay and are paid through them) and { home } (the party is at Silvermere).
+    onSnapshot(this.ref('config', 'backpack'), (s) => h.backpackCfg?.(s.exists() ? s.data() : {}), err);
     // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
     // The truth about unidentified items, hidden caches and the homebrew library are the DM's alone.
     onSnapshot(this.col('loot'), (s) => h.loot?.(list(s)), err);
@@ -253,6 +267,66 @@ export class FirebaseStore {
   saveScribes(emails) { return this.F.setDoc(this.ref('config', 'scribes'), { emails }); }
   saveAccount(id, data) { return this.F.setDoc(this.ref('accounts', id), data); }
   deleteAccount(id) { return this.F.deleteDoc(this.ref('accounts', id)); }
+
+  // ── backpacks ───────────────────────────────────────────────────
+  // Every player has one backpack document (their coins; the rules let only them and the DM see it). It is
+  // made when they first open the atlas, so the DM can see who is in the party.
+  async ensureBackpack(owner) {
+    if (this.isDM) return;
+    const { getDoc, setDoc, updateDoc } = this.F;
+    const ref = this.ref('backpacks', this.uid), name = String(owner || '').trim().slice(0, 60);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) await setDoc(ref, { uid: this.uid, owner: name, coins: normalizeCoins({}), updatedAt: Date.now() });
+    else if (name && snap.data().owner !== name) await updateDoc(ref, { owner: name, updatedAt: Date.now() });
+  }
+  deleteBackpack(uid) { return this.F.deleteDoc(this.ref('backpacks', uid)); }
+  saveBackpackConfig(data) { return this.F.setDoc(this.ref('config', 'backpack'), data, { merge: true }); }
+
+  // Several changes as one all-or-nothing step, so a purchase can never take the coins and lose the item (or
+  // the other way round). fn(t) gets:
+  //   t.purse(uid?, owner?)   a backpack: { uid, owner, coins, exists } (all reads happen first)
+  //   t.setCoins(purse, coins, { kind, text, ref, owner? })   change the coins AND write the ledger line the
+  //                           rules require; returns the ledger line's id
+  //   t.read(col, id)         one document, or null
+  //   t.newId(col)            an id for a document you are about to write
+  //   t.set(col, id, data, merge?) / t.add(col, data) / t.update(col, id, data) / t.del(col, id)
+  async transact(fn) {
+    const { runTransaction, doc } = this.F;
+    return runTransaction(this.fs, async (tx) => {
+      const writes = [], purses = new Map();
+      const t = {
+        uid: this.uid,
+        newId: (col) => doc(this.col(col)).id,
+        read: async (col, id) => { const s = await tx.get(this.ref(col, id)); return s.exists() ? { id: s.id, ...s.data() } : null; },
+        purse: async (uid = this.uid, owner = '') => {
+          if (!purses.has(uid)) {
+            const s = await tx.get(this.ref('backpacks', uid));
+            purses.set(uid, { uid, owner: s.data()?.owner || owner, coins: normalizeCoins(s.data()?.coins), exists: s.exists() });
+          }
+          return purses.get(uid);
+        },
+        setCoins: (purse, coins, info = {}) => {
+          const next = normalizeCoins(coins), logId = doc(this.col('backpackLog')).id, owner = info.owner || purse.owner || '';
+          const line = ledgerLine({ uid: purse.uid, owner, kind: info.kind, deltaCp: cpOf(next) - cpOf(purse.coins), balanceCp: cpOf(next), text: info.text, ref: info.ref });
+          writes.push(['set', this.ref('backpackLog', logId), line]);
+          writes.push(['set', this.ref('backpacks', purse.uid), { uid: purse.uid, owner: String(owner).slice(0, 60), coins: next, lastLog: logId, updatedAt: line.at }]);
+          purse.coins = next; purse.owner = owner;
+          return logId;
+        },
+        set: (col, id, data, merge = false) => { writes.push(['set', this.ref(col, id), data, merge]); return id; },
+        add: (col, data) => { const id = doc(this.col(col)).id; writes.push(['set', this.ref(col, id), data]); return id; },
+        update: (col, id, data) => { writes.push(['update', this.ref(col, id), data]); },
+        del: (col, id) => { writes.push(['delete', this.ref(col, id)]); },
+      };
+      const result = await fn(t);
+      for (const [op, ref, data, merge] of writes) {
+        if (op === 'set') merge ? tx.set(ref, data, { merge: true }) : tx.set(ref, data);
+        else if (op === 'update') tx.update(ref, data);
+        else tx.delete(ref);
+      }
+      return result;
+    });
+  }
 
   // one haggle per player, per shop, per week: the fixed id means the rules refuse a second one
   async addHaggle(x) {

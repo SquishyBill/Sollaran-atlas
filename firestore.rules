@@ -12,7 +12,19 @@ service cloud.firestore {
     // Once you have everyone's address, list them (lowercase), e.g.
     //   return ['player.one@gmail.com', 'player.two@gmail.com'];
     // then Publish. No site redeploy needed.
-    function party() { return []; }
+    function party() {
+      return [
+        'dylansander6@gmail.com',
+        'jason@hamburger.bz',
+        'jeffreyrandrews6@gmail.com',
+        'kctrost@gmail.com',
+        'trost5.kt@gmail.com',
+        'kencroes@gmail.com',
+        'medeski1976@gmail.com',
+        'rodney.j.saunders@gmail.com',
+        'sebastian.zedka@gmail.com'
+      ];
+    }
 
     function googleUser() {
       return request.auth != null
@@ -88,18 +100,27 @@ service cloud.firestore {
       allow write: if isDM();
     }
 
+    // A purchase or sale that was paid from (or into) the player's backpack is settled at once. It has to
+    // name the ledger line (logId) written in the same step, so the DM can always match the two up.
+    function paidFromBackpack() {
+      return request.resource.data.settled == true
+        && request.resource.data.get('paid', '') == 'backpack'
+        && request.resource.data.get('logId', '') is string
+        && existsAfter(/databases/$(database)/documents/backpackLog/$(request.resource.data.logId));
+    }
+
     // Purchases: any player can buy (recorded under their own account); everyone can read them
     // (stock is worked out from them); only the DM can mark them settled or void them.
     match /purchases/{id} {
       allow read: if isPlayer();
       allow create: if isPlayer()
-        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemKey', 'itemName', 'qty', 'unitPrice', 'total', 'buyer', 'buyerUid', 'at', 'settled', 'haggle'])
+        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemKey', 'itemName', 'qty', 'unitPrice', 'total', 'buyer', 'buyerUid', 'at', 'settled', 'haggle', 'paid', 'logId'])
         && request.resource.data.buyerUid == request.auth.uid
         && request.resource.data.shopId is string
         && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.buyer is string && request.resource.data.buyer.size() <= 60
-        && request.resource.data.settled == false;
+        && (request.resource.data.settled == false || paidFromBackpack());
       allow update, delete: if isDM();
     }
 
@@ -139,30 +160,44 @@ service cloud.firestore {
       allow create: if isDM() || (isPlayer()
         && request.resource.data.kind == 'goods' && request.resource.data.status == 'identified'
         && request.resource.data.boughtByUid == request.auth.uid
-        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace'])
+        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace', 'holderUid', 'claimedBy', 'claimedAt'])
         && request.resource.data.name is string && request.resource.data.name.size() <= 160
         && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
         && request.resource.data.value is number && request.resource.data.value >= 0
-        && request.resource.data.cost is number && request.resource.data.cost >= 0)
+        && request.resource.data.cost is number && request.resource.data.cost >= 0
+        && heldByBuyerOnly())
         // a Writ of Exchange from the G.E.C. (a paper anyone can cash, so it lives in the stash like any item)
         || (isPlayer()
         && request.resource.data.kind == 'writ' && request.resource.data.status == 'identified'
         && request.resource.data.boughtByUid == request.auth.uid
-        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace', 'issuedShop'])
+        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace', 'issuedShop', 'holderUid', 'claimedBy', 'claimedAt'])
         && request.resource.data.name is string && request.resource.data.name.size() <= 160
         && request.resource.data.qty == 1
         && request.resource.data.value is number && request.resource.data.value >= 1 && request.resource.data.value <= 50000
-        && request.resource.data.cost is number && request.resource.data.cost >= 0);
+        && request.resource.data.cost is number && request.resource.data.cost >= 0
+        && heldByBuyerOnly());
+      // A player can remove (sell, cash in) what is theirs: unclaimed goods, any writ, or anything in their own backpack.
       allow delete: if isDM() || (isPlayer()
-        && ((resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null) || resource.data.kind == 'writ'));
+        && ((resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null)
+          // a writ is a paper whoever holds it can cash, unless it is in somebody's backpack
+          || (resource.data.kind == 'writ' && (!('holderUid' in resource.data) || resource.data.holderUid == request.auth.uid))
+          || (resource.data.kind in ['goods', 'writ'] && resource.data.get('holderUid', null) == request.auth.uid)));
       allow update: if isDM()
         || (isPlayer()
           && resource.data.status == 'unidentified' && request.resource.data.status == 'pending'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'pendingBy', 'pendingAt', 'pendingIn']))
         || (isPlayer()
-          && resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null
+          && resource.data.kind == 'goods'
+          && (resource.data.get('claimedBy', null) == null || resource.data.get('holderUid', null) == request.auth.uid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty'])
           && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty < resource.data.qty);
+    }
+
+    // What a player buys can go straight into their own backpack: if it says who holds it, that must be them.
+    function heldByBuyerOnly() {
+      return (!('holderUid' in request.resource.data) || request.resource.data.holderUid == request.auth.uid)
+        && (!('claimedBy' in request.resource.data) || ('holderUid' in request.resource.data && request.resource.data.claimedBy is string && request.resource.data.claimedBy.size() <= 60))
+        && (!('claimedAt' in request.resource.data) || ('holderUid' in request.resource.data && request.resource.data.claimedAt is number));
     }
 
     // G.E.C. savings accounts and safety-deposit boxes: one per player per branch (the id is shop__player).
@@ -187,19 +222,85 @@ service cloud.firestore {
       allow delete: if isDM();
     }
 
+    // ── Backpacks ───────────────────────────────────────────────────
+    // Each player has one backpack document (backpacks/<their uid>) holding their coins; what they carry
+    // is in loot (marked with holderUid). Only the owner and the DM can read it. A player can change only
+    // their own, and every change to the coins has to come with a matching line in backpackLog, written
+    // in the same step (named in lastLog), so the DM can always see where coins went:
+    //   - coins can go down for any ordinary spend (a purchase, a fee, a deposit...);
+    //   - coins can only go UP by a sale (the sale record must be in the same step), a writ cashed
+    //     (the writ must be used up) or a savings withdrawal (the account must go down by as much).
+    // The DM can change anything. This stops mistakes and casual poking, not a determined cheat: the price
+    // itself is worked out by the page, and the DM can see every move in the ledger.
+    function coinSum(c) { return c.pp * 1000 + c.gp * 100 + c.sp * 10 + c.cp; }
+    function coinsOk(c) {
+      return c is map && c.keys().hasOnly(['pp', 'gp', 'sp', 'cp'])
+        && c.pp is int && c.pp >= 0 && c.gp is int && c.gp >= 0 && c.sp is int && c.sp >= 0 && c.cp is int && c.cp >= 0
+        && coinSum(c) <= 1000000000;
+    }
+    function moveOk(d, before, after) {
+      let log = getAfter(/databases/$(database)/documents/backpackLog/$(d.lastLog)).data;
+      let delta = after - before;
+      return log.uid == d.uid && log.deltaCp == delta && log.balanceCp == after
+        && (delta < 0
+          ? !(log.kind in ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'fromHome', 'start', 'set', 'take'])
+          : (log.kind == 'sell'
+              && getAfter(/databases/$(database)/documents/sales/$(log.ref)).data.buyerUid == d.uid
+              && math.round(getAfter(/databases/$(database)/documents/sales/$(log.ref)).data.total * 100) == delta)
+            || (log.kind == 'writ'
+              && exists(/databases/$(database)/documents/loot/$(log.ref))
+              && !existsAfter(/databases/$(database)/documents/loot/$(log.ref))
+              && math.round(get(/databases/$(database)/documents/loot/$(log.ref)).data.value * 100) == delta)
+            || (log.kind == 'withdraw'
+              && getAfter(/databases/$(database)/documents/accounts/$(log.ref)).data.uid == d.uid
+              && get(/databases/$(database)/documents/accounts/$(log.ref)).data.balance
+                   - getAfter(/databases/$(database)/documents/accounts/$(log.ref)).data.balance
+                   + get(/databases/$(database)/documents/accounts/$(log.ref)).data.balance
+                     * (math.pow(1.0301, math.floor((getAfter(/databases/$(database)/documents/accounts/$(log.ref)).data.since
+                                                     - get(/databases/$(database)/documents/accounts/$(log.ref)).data.since) / 2592000000)) - 1)
+                   >= delta));
+    }
+    function backpackOk(uid) {
+      let d = request.resource.data;
+      let before = resource == null ? 0 : coinSum(resource.data.coins);
+      let after = coinSum(d.coins);
+      return d.keys().hasOnly(['uid', 'owner', 'coins', 'lastLog', 'updatedAt'])
+        && d.uid == uid && d.owner is string && d.owner.size() <= 60
+        && coinsOk(d.coins)
+        && (after == before || (d.lastLog is string && moveOk(d, before, after)));
+    }
+    match /backpacks/{uid} {
+      allow read: if isDM() || (isPlayer() && request.auth.uid == uid);
+      allow create, update: if isDM() || (isPlayer() && request.auth.uid == uid && backpackOk(uid));
+      allow delete: if isDM();
+    }
+    match /backpackLog/{id} {
+      allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
+      allow create: if isDM() || (isPlayer()
+        && request.resource.data.keys().hasOnly(['uid', 'owner', 'kind', 'deltaCp', 'balanceCp', 'text', 'ref', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.owner is string && request.resource.data.owner.size() <= 60
+        && request.resource.data.kind is string && request.resource.data.kind.size() <= 20
+        && request.resource.data.deltaCp is int && request.resource.data.balanceCp is int && request.resource.data.balanceCp >= 0
+        && request.resource.data.text is string && request.resource.data.text.size() <= 240
+        && request.resource.data.ref is string && request.resource.data.ref.size() <= 120
+        && request.resource.data.at is number);
+      allow update, delete: if isDM();
+    }
+
     // Sales: a player selling goods to a shop. Everyone can read them (a shop's weekly appetite is worked
     // out from them); only the DM can mark one settled or void it.
     match /sales/{id} {
       allow read: if isPlayer();
       allow create: if isPlayer()
-        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemName', 'qty', 'unitPrice', 'total', 'cost', 'buyer', 'buyerUid', 'at', 'settled'])
+        && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemName', 'qty', 'unitPrice', 'total', 'cost', 'buyer', 'buyerUid', 'at', 'settled', 'paid', 'logId'])
         && request.resource.data.buyerUid == request.auth.uid
         && request.resource.data.shopId is string
         && request.resource.data.itemName is string && request.resource.data.itemName.size() <= 200
         && request.resource.data.qty is int && request.resource.data.qty > 0 && request.resource.data.qty <= 1000
         && request.resource.data.total is number && request.resource.data.total >= 0 && request.resource.data.total <= 100000
         && request.resource.data.buyer is string && request.resource.data.buyer.size() <= 60
-        && request.resource.data.settled == false;
+        && (request.resource.data.settled == false || paidFromBackpack());
       allow update, delete: if isDM();
     }
     match /lootLog/{id} {

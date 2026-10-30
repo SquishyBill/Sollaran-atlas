@@ -5,6 +5,7 @@ import { EDGES, edgeById, GAMING_LIMITS, MIN_BET, GAMES, gameById, betOf, multip
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
+import { normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -65,6 +66,7 @@ const S = {
   renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [], journal: [], scribes: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
+  backpacks: [], backpackLog: [], backpackCfg: {},
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -131,7 +133,10 @@ async function boot() {
     caches: (list) => { S.caches = list; refreshLootViews(); },
     magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
     magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
+    backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg,
     ping: onPing, error: onError });
+  // every player has a backpack from their first visit, so the DM can see who is in the party
+  if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
 }
 
 // Full-screen welcome: sign in with Google, or (when the party list is on) a polite refusal.
@@ -818,7 +823,7 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
@@ -1282,13 +1287,19 @@ function personEditor() {
 // or are owed to the player (recorded in the ledger, like a purchase).
 const gpToCoins = (gp) => { const cp = Math.round(gp * 100); return { pp: 0, gp: Math.floor(cp / 100), sp: Math.floor((cp % 100) / 10), cp: cp % 10 }; };
 
+// What a purchase becomes in Loot. mine: it goes straight into the buyer's backpack instead of the party stash.
+function goodsDoc(shop, item, qty, buyer, mine) {
+  const place = placeOf(shop.location), now = Date.now();
+  return { kind: 'goods', name: item.name, detail: '', value: item.price, cost: item.cost, qty, status: 'identified',
+    source: `Bought at ${shop.name}${place ? ` in ${place.label}` : ''}`, boughtBy: buyer, boughtByUid: S.store.uid, boughtAt: now, foundAt: now,
+    cat: tradeCategory(item.name), fromPlace: placeKeyOf(shop),
+    ...(mine ? { holderUid: myUid(), claimedBy: buyer, claimedAt: now } : {}) };
+}
+
 // Put a purchase into the party stash. Returns true if it landed.
 async function stashGoods(shop, item, qty, buyer) {
   try {
-    const place = placeOf(shop.location);
-    await S.store.saveLoot({ kind: 'goods', name: item.name, detail: '', value: item.price, cost: item.cost, qty, status: 'identified',
-      source: `Bought at ${shop.name}${place ? ` in ${place.label}` : ''}`, boughtBy: buyer, boughtByUid: S.store.uid, boughtAt: Date.now(),
-      cat: tradeCategory(item.name), fromPlace: placeKeyOf(shop) });
+    await S.store.saveLoot(goodsDoc(shop, item, qty, buyer, false));
     return true;
   } catch (e) { toast('Bought, but it couldn\u2019t be added to the party\u2019s Loot: ' + e.message); return false; }
 }
@@ -1317,7 +1328,7 @@ function sellView() {
   const P = S.panel, x = S.loot.find((l) => l.id === P.id), dm = isDM();
   const back = h('button', { class: 'linklike back', text: '\u2190 Back to Loot', onclick: () => openMarket('loot') });
   if (!x) return h('div', { class: 'codex' }, back, h('p', { class: 'muted', text: 'That item is no longer in Loot.' }));
-  if (!dm && (x.kind !== 'goods' || x.claimedBy)) return h('div', { class: 'codex' }, back, h('p', { class: 'muted', text: 'Only your DM can sell that.' }));
+  if (!dm && (x.kind !== 'goods' || (x.claimedBy && !heldMine(x)))) return h('div', { class: 'codex' }, back, h('p', { class: 'muted', text: 'Only your DM can sell that.' }));
   const have = x.qty || 1;
   const listed = Number(x.value) || 0, fromCatalog = listed ? null : catalogValue(x.name);
   const base = listed || fromCatalog || (x.kind === 'gear' ? 1 : 0);
@@ -1349,8 +1360,8 @@ function sellView() {
       o.standing.refuses ? null : h('small', { class: 'muted', text: note }),
       gain != null && !problem ? h('p', { class: gain >= 0 ? 'muted' : 'repair-no', text: gain >= 0 ? `A profit of ${formatPrice(gain)} on what was paid.` : `A loss of ${formatPrice(-gain)} on what was paid.` }) : null,
       problem ? h('p', { class: 'repair-no', text: problem }) : null,
-      dm && x.claimedBy ? h('p', { class: 'muted', text: `${x.claimedBy} claimed this, so the money is theirs. It isn\u2019t added to the party purse.` }) : null,
-      !dm ? h('p', { class: 'muted', text: 'The gold is paid to you at the table; your DM settles it from the ledger.' }) : null,
+      dm && x.claimedBy ? h('p', { class: 'muted', text: `${x.claimedBy} claimed this, so the money is theirs${x.holderUid ? ' and goes into their backpack' : ''}. It isn\u2019t added to the party purse.` }) : null,
+      !dm ? h('p', { class: 'muted', text: usingBackpack() ? 'The gold goes straight into your backpack.' : 'The gold is paid to you at the table; your DM settles it from the ledger.' }) : null,
       h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', text: 'Sell it', disabled: !!problem, onclick: () => doSell(x, shop, qty, total, o.unit, place) })));
   }
   const cat = x.cat || tradeCategory(x.name);
@@ -1379,6 +1390,30 @@ async function doSell(x, shop, qty, total, unit, place) {
   if (!confirm(`Sell ${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name} to ${shop.name} for ${formatPrice(total)}?`)) return;
   try {
     const left = (x.qty || 1) - qty;
+    const buyerName = String(myName() || S.store.displayName || 'A party member').slice(0, 60);
+    if (!isDM() && usingBackpack()) {
+      // the goods leave, the receipt is written and the gold arrives in the backpack, all in one step
+      await earn(gpToCp(total), { kind: 'sell', text: `Sold ${qty > 1 ? `${qty} × ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''}`, ref: (t) => t.newId('sales') }, (t, logId, saleId) => {
+        if (left <= 0) t.del('loot', x.id); else t.update('loot', x.id, { qty: left });
+        t.set('sales', saleId, { shopId: shop.id, week: shopWeek(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
+          buyer: buyerName, buyerUid: myUid(), at: Date.now(), settled: true, paid: 'backpack', logId });
+      });
+      toast(`Sold for ${formatPrice(total)}. It is in your backpack.`);
+      openMarket('loot');
+      return;
+    }
+    if (isDM() && x.holderUid) {
+      // the DM sells something a character carries: the gold goes into that character's backpack
+      await S.store.transact(async (t) => {
+        const purse = await t.purse(x.holderUid, x.claimedBy || '');
+        if (left <= 0) t.del('loot', x.id); else t.update('loot', x.id, { qty: left });
+        t.setCoins(purse, receiveCoins(purse.coins, gpToCp(total)), { kind: 'sell', text: `Sold ${qty > 1 ? `${qty} × ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''}`, owner: x.claimedBy || purse.owner });
+      });
+      await S.store.addLootLog(`${x.claimedBy} sold ${qty > 1 ? `${qty} × ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''} for ${formatPrice(total)}, paid into their backpack.`).catch(() => {});
+      toast(`Sold for ${formatPrice(total)}. It is in ${x.claimedBy}’s backpack.`);
+      openMarket('loot');
+      return;
+    }
     if (isDM()) {
       if (left <= 0) await S.store.deleteLoot(x.id); else await S.store.saveLoot({ qty: left }, x.id);
       if (!x.claimedBy) await S.store.savePartyCoins(addCoins(S.partyCoins, gpToCoins(total)));
@@ -2067,10 +2102,20 @@ function shopView() {
     const qty = parseInt(answer, 10);
     if (!(qty > 0) || qty > max) { toast(`Enter a number from 1 to ${max}.`); return; }
     const total = Math.round(item.cost * qty * 100) / 100;
-    if (!confirm(`Buy ${qty} × ${item.name} from ${shop.name} for ${formatPrice(total)}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+    const pack = usingBackpack();
+    if (!confirm(`Buy ${qty} × ${item.name} from ${shop.name} for ${formatPrice(total)}?\n\n${pack ? `It comes out of your backpack (you have ${coinText(myPurse())}).` : 'It goes on the ledger; settle the gold with your DM.'}`)) return;
     const buyer = myName() || S.store.displayName || 'A party member';
     try {
       const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
+      if (pack) {
+        // coins out, the goods into the backpack and the receipt, all in one step
+        await spend(gpToCp(total), { kind: 'buy', text: `Bought ${qty} × ${item.name} at ${shop.name}`, ref: (t) => t.newId('purchases') }, (t, logId, purchaseId) => {
+          t.set('purchases', purchaseId, { shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer, buyerUid: myUid(), at: Date.now(), settled: true, paid: 'backpack', logId, ...extra });
+          if (!item.service) t.add('loot', goodsDoc(shop, item, qty, buyer, true));
+        });
+        toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}.${item.service ? ' Paid from your backpack.' : ' It’s in your backpack.'}`);
+        return;
+      }
       await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: item.name, qty, unitPrice: item.cost, total, buyer, ...extra });
       toast(`Bought ${qty} × ${item.name} for ${formatPrice(total)}. It’s on the ledger.${item.service ? '' : await stashGoods(shop, item, qty, buyer) ? ' It’s in the party’s Loot.' : ''}`);
     } catch (e) { toast('Could not buy: ' + e.message); }
@@ -2143,11 +2188,20 @@ function repairBox(shop, st) {
   const pay = async (q, cost) => {
     const rar = REPAIR_RARITIES.find((x) => x.id === R.rarity);
     const what = `${R.item.trim() ? R.item.trim() + ' \u2014 ' : ''}${rar.label.toLowerCase()} ${R.kind}, ${R.slots} slot${R.slots > 1 ? 's' : ''}${R.slots === 3 ? ' (broken)' : ''}`;
-    if (!confirm(`Pay ${formatPrice(cost)} to have ${what} repaired at ${shop.name}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+    const pack = usingBackpack();
+    if (!confirm(`Pay ${formatPrice(cost)} to have ${what} repaired at ${shop.name}?\n\n${pack ? `It comes out of your backpack (you have ${coinText(myPurse())}).` : 'It goes on the ledger; settle the gold with your DM.'}`)) return;
     const buyer = myName() || S.store.displayName || 'A party member';
     try {
       const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
-      await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: `repair|${R.rarity}|${R.slots}`, itemName: `Repair: ${what}`.slice(0, 160), qty: 1, unitPrice: cost, total: cost, buyer, ...extra });
+      const record = { shopId: shop.id, week: st.week, itemKey: `repair|${R.rarity}|${R.slots}`, itemName: `Repair: ${what}`.slice(0, 160), qty: 1, unitPrice: cost, total: cost, buyer, ...extra };
+      if (pack) {
+        await spend(gpToCp(cost), { kind: 'repair', text: `Repairs at ${shop.name}`, ref: (t) => t.newId('purchases') }, (t, logId, purchaseId) => {
+          t.set('purchases', purchaseId, { ...record, buyerUid: myUid(), at: Date.now(), settled: true, paid: 'backpack', logId });
+        });
+        toast(`Repaired. ${formatPrice(cost)} came out of your backpack.`);
+        return;
+      }
+      await S.store.addPurchase(record);
       toast(`Repaired. ${formatPrice(cost)} is on the ledger.`);
     } catch (e) { toast('Could not arrange it: ' + e.message); }
   };
@@ -2199,8 +2253,12 @@ function gecBox(shop, st) {
   const who = () => String(myName() || S.store.displayName || 'A party member').slice(0, 60);
   const bill = (name, total, key) => S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: key, itemName: name.slice(0, 160), qty: 1, unitPrice: total, total, buyer: who() });
   const payOut = (name, total) => S.store.addSale({ shopId: shop.id, week: st.week, itemName: name.slice(0, 200), qty: 1, unitPrice: total, total, cost: 0, buyer: who() });
-  const saveAcc = (x) => S.store.saveAccount(accId, { shopId: shop.id, uid, owner: x.owner || who(), balance: Math.round(x.balance), since: x.since, boxes: x.boxes, log: x.log.slice(-30), gamble: x.gamble || {} });
+  const accData = (x) => ({ shopId: shop.id, uid, owner: x.owner || who(), balance: Math.round(x.balance), since: x.since, boxes: x.boxes, log: x.log.slice(-30), gamble: x.gamble || {} });
+  const saveAcc = (x) => S.store.saveAccount(accId, accData(x));
   const note = (x, text) => { x.log.push({ at: Date.now(), text }); };
+  const pack = usingBackpack();     // with backpacks on, coins come from and go to the backpack, not the DM's table
+  // the receipt a service leaves on the player's own ledger (already settled, because the backpack paid it)
+  const receipt = (t, purchaseId, logId, name, total, key) => t.set('purchases', purchaseId, { shopId: shop.id, week: st.week, itemKey: key, itemName: name.slice(0, 160), qty: 1, unitPrice: total, total, buyer: who(), buyerUid: uid, at: Date.now(), settled: true, paid: 'backpack', logId });
   const run = (fn) => async (e) => {
     const btn = e?.currentTarget; if (btn) btn.disabled = true;
     try { await fn(); } catch (err) { toast('Could not do that: ' + err.message); }
@@ -2220,24 +2278,49 @@ function gecBox(shop, st) {
     h('div', { class: 'row gen-pickers' }, field('How many', numIn(G, 'amt', 'coins')), field('From', coinSel('from')), field('Into', coinSel('to'))),
     q.ok ? h('p', {}, h('strong', { text: `You hand over ${q.gave} and receive ${q.text}.` })) : h('p', { class: 'muted', text: G.amt ? q.reason : '' }),
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Exchange', disabled: !q.ok, onclick: run(async () => {
+      if (pack) {
+        // the coins are changed in the backpack itself, and the fee is taken
+        const n = Math.floor(Number(G.amt));
+        await S.store.transact(async (t) => {
+          const purse = await t.purse(uid, who());
+          if ((purse.coins[G.from] || 0) < n) throw new Error(`You do not have ${n} ${G.from} in your backpack (you have ${coinText(purse.coins)}).`);
+          const next = { ...purse.coins, [G.from]: purse.coins[G.from] - n };
+          for (const c of ['gp', 'sp', 'cp']) next[c] = (next[c] || 0) + (q.coins[c] || 0);
+          const purchaseId = t.newId('purchases');
+          const logId = t.setCoins(purse, next, { kind: 'service', text: `Exchanged ${q.gave} for ${q.text} at ${where}`, ref: purchaseId });
+          receipt(t, purchaseId, logId, `Exchange: ${q.gave} \u2192 ${q.text} (${EXCHANGE_FEE_CP} cp fee)`, EXCHANGE_FEE_CP / 100, `exchange|${G.from}|${G.to}`);
+        });
+        G.amt = ''; toast('Done. The coins are changed in your backpack, less the fee.'); renderPanel();
+        return;
+      }
       await bill(`Exchange: ${q.gave} \u2192 ${q.text} (${EXCHANGE_FEE_CP} cp fee)`, EXCHANGE_FEE_CP / 100, `exchange|${G.from}|${G.to}`);
       G.amt = ''; toast('Done. Swap the coins with your DM; the fee is on the ledger.'); renderPanel();
     }) })));
 
   // 2. writs of exchange
   const wq = writQuote(G.writ);
-  const writs = S.loot.filter((x) => x.kind === 'writ');
+  // with backpacks, a writ in someone else's backpack is theirs to cash, not yours
+  const writs = S.loot.filter((x) => x.kind === 'writ' && (!x.holderUid || x.holderUid === uid || isDM()));
   const writBlock = section('Writs of Exchange',
     h('p', { class: 'muted', text: 'Pay here, and the Consortium writes a paper that any other branch will honor, so you need not carry the gold. It costs 5% more. Whoever holds the writ can cash it, so guard it.' }),
     h('div', { class: 'row gen-pickers' }, field('A writ for (gold)', numIn(G, 'writ', 'gold'))),
     wq.ok ? h('p', {}, h('strong', { text: `The writ is for ${formatPrice(wq.amount)}. The fee is ${formatPrice(wq.fee)}, so you pay ${formatPrice(wq.total)}.` }))
       : h('p', { class: 'muted', text: G.writ ? wq.reason : '' }),
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Buy a writ', disabled: !wq.ok, onclick: run(async () => {
-      await bill(`Writ of Exchange: ${formatPrice(wq.amount)} (fee ${formatPrice(wq.fee)})`, wq.total, 'writ|issue');
-      await S.store.saveLoot({ kind: 'writ', name: `Writ of Exchange (${formatPrice(wq.amount)})`,
+      const writDoc = { kind: 'writ', name: `Writ of Exchange (${formatPrice(wq.amount)})`,
         detail: `Pay the bearer ${formatPrice(wq.amount)} at any Grand Exchange Consortium outside ${where}. Issued at ${where}.`,
         value: wq.amount, cost: wq.total, qty: 1, status: 'identified', source: `Issued by ${shop.name} in ${where}`,
-        boughtBy: who(), boughtByUid: uid, boughtAt: now, cat: '', fromPlace: here, issuedShop: shop.id });
+        boughtBy: who(), boughtByUid: uid, boughtAt: now, cat: '', fromPlace: here, issuedShop: shop.id };
+      if (pack) {
+        await spend(gpToCp(wq.total), { kind: 'writBuy', text: `Bought a writ for ${formatPrice(wq.amount)} at ${where}`, ref: (t) => t.newId('purchases') }, (t, logId, purchaseId) => {
+          receipt(t, purchaseId, logId, `Writ of Exchange: ${formatPrice(wq.amount)} (fee ${formatPrice(wq.fee)})`, wq.total, 'writ|issue');
+          t.add('loot', { ...writDoc, foundAt: now, holderUid: uid, claimedBy: who(), claimedAt: now });
+        });
+        G.writ = ''; toast(`A writ for ${formatPrice(wq.amount)} is in your backpack. ${formatPrice(wq.total)} came out of your coins.`); renderPanel();
+        return;
+      }
+      await bill(`Writ of Exchange: ${formatPrice(wq.amount)} (fee ${formatPrice(wq.fee)})`, wq.total, 'writ|issue');
+      await S.store.saveLoot(writDoc);
       G.writ = ''; toast(`A writ for ${formatPrice(wq.amount)} is in the party\u2019s Loot. Pay ${formatPrice(wq.total)} at the table.`); renderPanel();
     }) })),
     writs.length ? h('div', {},
@@ -2246,7 +2329,13 @@ function gecBox(shop, st) {
         const sameCity = x.fromPlace === here;
         return h('li', {}, `${x.name}, issued in ${x.fromPlace || 'an unknown city'}${x.claimedBy ? ` (held by ${x.claimedBy})` : ''} `,
           sameCity ? h('small', { class: 'muted', text: 'Cash it at a branch in another city.' }) : h('button', { class: 'linklike', text: 'cash it here', onclick: run(async () => {
-            if (!confirm(`Cash ${x.name} at ${shop.name}? The writ is used up, and ${formatPrice(x.value)} is owed to you.`)) return;
+            if (!confirm(`Cash ${x.name} at ${shop.name}? The writ is used up, and ${formatPrice(x.value)} ${pack ? 'goes into your backpack' : 'is owed to you'}.`)) return;
+            if (pack) {
+              // the writ is used up and its value paid into the backpack, in one step
+              await earn(gpToCp(x.value), { kind: 'writ', text: `Cashed ${x.name} at ${where} (issued in ${x.fromPlace || 'elsewhere'})`, ref: x.id }, (t) => { t.del('loot', x.id); });
+              toast(`Cashed. ${formatPrice(x.value)} is in your backpack.`); renderPanel();
+              return;
+            }
             await S.store.deleteLoot(x.id);
             await payOut(`Writ of Exchange cashed: ${formatPrice(x.value)} (issued in ${x.fromPlace || 'elsewhere'})`, Number(x.value));
             toast(`Cashed. ${formatPrice(x.value)} is owed to you; your DM pays it out.`); renderPanel();
@@ -2268,11 +2357,27 @@ function gecBox(shop, st) {
         field('Deposit (gold)', numIn(G, 'dep', 'gold', 'any')), field('Withdraw (gold)', numIn(G, 'wd', 'gold', 'any'))),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', type: 'button', text: 'Deposit', disabled: !(depCp > 0), onclick: run(async () => {
+          if (pack) {
+            // the coins leave the backpack and the balance rises, in one step
+            await spend(depCp, { kind: 'deposit', text: `Savings deposit at ${where}: ${formatCp(depCp)}`, ref: accId }, (t) => {
+              acc.balance += depCp; note(acc, `Deposited ${formatCp(depCp)}`); t.set('accounts', accId, accData(acc));
+            });
+            G.dep = ''; toast(`Deposited ${formatCp(depCp)} from your backpack.`); renderPanel();
+            return;
+          }
           await bill(`Savings deposit: ${formatCp(depCp)}`, depCp / 100, 'savings|deposit');
           acc.balance += depCp; note(acc, `Deposited ${formatCp(depCp)}`); await saveAcc(acc);
           G.dep = ''; toast(`Deposited ${formatCp(depCp)}. Hand the coins to your DM; it is on the ledger.`); renderPanel();
         }) }),
         h('button', { class: 'btn small ghost', type: 'button', text: 'Withdraw', disabled: !(wdCp > 0 && wdCp <= acc.balance), onclick: run(async () => {
+          if (pack) {
+            // the balance falls and the coins arrive in the backpack, in one step
+            await earn(wdCp, { kind: 'withdraw', text: `Savings withdrawal at ${where}: ${formatCp(wdCp)}`, ref: accId }, (t) => {
+              acc.balance -= wdCp; note(acc, `Withdrew ${formatCp(wdCp)}`); t.set('accounts', accId, accData(acc));
+            });
+            G.wd = ''; toast(`Withdrew ${formatCp(wdCp)} into your backpack.`); renderPanel();
+            return;
+          }
           acc.balance -= wdCp; note(acc, `Withdrew ${formatCp(wdCp)}`); await saveAcc(acc);
           await payOut(`Savings withdrawal: ${formatCp(wdCp)}`, wdCp / 100);
           G.wd = ''; toast(`Withdrew ${formatCp(wdCp)}. Your DM pays it out; it is on the ledger.`); renderPanel();
@@ -2854,6 +2959,161 @@ function marketView() {
 // and unidentified magic items. Players see an unidentified item only by its description; what it
 // really is lives in lootTruth (DM only). When a player pays a shop to identify something, the item
 // is marked "being studied" and the DM's browser reveals it the next time the DM opens the atlas.
+// ─── backpacks ──────────────────────────────────────────────────────
+// Every character carries one backpack: their coins, and the things they own (loot marked with their uid).
+// While the DM has backpacks switched on, what a player buys, sells, banks or is given goes through it, and
+// every move of the coins is written to a ledger the DM can read. With backpacks off, everything works the
+// old way (gold settled with the DM at the table). Each change is one all-or-nothing step (store.transact),
+// so a purchase can never take the coins and lose the item, or the other way round.
+const backpackOn = () => !!S.backpackCfg?.on;
+const usingBackpack = () => backpackOn() && !isDM();     // the DM is not a player and has no backpack
+const myUid = () => S.store.uid;
+const whoAmI = () => String(myName() || S.store.displayName || 'A party member').slice(0, 60);
+const backpackOf = (uid) => S.backpacks.find((b) => b.uid === uid || b.id === uid) || null;
+const myPurse = () => normalizeCoins(backpackOf(myUid())?.coins);
+const heldMine = (x) => heldBy(x, myUid(), whoAmI());
+
+function onBackpacks(list) { S.backpacks = list; refreshBackpackViews(); }
+function onBackpackLog(list) { S.backpackLog = list; if (S.panel?.type === 'backpack') renderPanel(); }
+function onBackpackCfg(cfg) { S.backpackCfg = cfg || {}; refreshBackpackViews(); }
+function refreshBackpackViews() {
+  const btn = $('#backpackBtn');
+  if (btn) btn.title = isDM() ? 'Backpacks: the party’s coins and things' : `Your backpack: ${coinText(myPurse())}`;
+  if (['backpack', 'shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel();
+}
+
+// Pay from, or be paid into, the backpack. info: { kind, text, ref } (ref may be a function of the step, for an
+// id made there). work(t, logId, ref) adds the other writes that go with it (the item, the receipt).
+async function backpackMove(sign, cp, info, work) {
+  return S.store.transact(async (t) => {
+    const purse = await t.purse(myUid(), whoAmI());
+    let next;
+    if (sign < 0) {
+      const paid = payCoins(purse.coins, cp);
+      if (!paid.ok) throw new Error(paid.reason);
+      next = paid.coins;
+    } else next = receiveCoins(purse.coins, cp);
+    const ref = typeof info.ref === 'function' ? info.ref(t) : (info.ref || '');
+    const logId = t.setCoins(purse, next, { ...info, ref });
+    return work ? work(t, logId, ref) : null;
+  });
+}
+const spend = (cp, info, work) => backpackMove(-1, cp, info, work);
+const earn = (cp, info, work) => backpackMove(1, cp, info, work);
+
+function openBackpack(id) {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'backpack', id: id || (isDM() ? 'all' : 'me') };
+  renderPanel();
+}
+
+const historyLine = (l) => h('li', { text: `${l.deltaCp >= 0 ? '+' : '−'}${formatCp(Math.abs(l.deltaCp))} ${l.text} · now ${formatCp(l.balanceCp)} · ${ago(l.at)}` });
+
+function backpackView() {
+  const dm = isDM();
+  if (dm && S.panel.id === 'all') return backpackRoster();
+  const uid = dm ? S.panel.id : myUid();
+  const b = backpackOf(uid);
+  const owner = b?.owner || (dm ? '' : whoAmI());
+  const purse = normalizeCoins(b?.coins), value = cpOf(purse);
+  const items = S.loot.filter((x) => heldBy(x, uid, owner)).sort((p, q) => (q.claimedAt || q.boughtAt || 0) - (p.claimedAt || p.boughtAt || 0));
+  const log = S.backpackLog.filter((l) => l.uid === uid).sort((p, q) => q.at - p.at).slice(0, 60);
+  return h('div', { class: 'codex' },
+    dm ? h('button', { class: 'linklike back', type: 'button', text: '← All backpacks', onclick: () => openBackpack('all') }) : null,
+    h('div', { class: 'codex-kind', html: '<span>Backpack</span>' }),
+    h('h2', { class: 'codex-title', text: dm ? `${owner || 'A player'}’s backpack` : 'Your backpack' }),
+    !backpackOn() ? h('p', { class: 'muted', text: dm ? 'Backpacks are switched off, so players still settle gold with you at the table.' : 'Backpacks are not in use yet. Until your DM switches them on, gold is still settled at the table.' }) : null,
+    h('div', { class: 'loot-coins' },
+      h('span', { class: 'coin-icon', 'aria-hidden': 'true', html: glyph(KINDS.shop, 22) }),
+      h('div', {}, h('strong', { id: 'bpCoins', text: coinText(purse) }), h('small', { text: value ? `about ${formatCp(value)} in all` : 'The coin purse is empty.' })),
+      dm ? h('div', { class: 'row coin-actions' },
+        h('button', { class: 'btn small ghost', text: 'Give coins', onclick: () => dmCoins(uid, owner, 'give') }),
+        h('button', { class: 'btn small ghost', text: 'Take coins', onclick: () => dmCoins(uid, owner, 'take') }),
+        h('button', { class: 'btn small ghost', text: 'Set coins', onclick: () => dmCoins(uid, owner, 'set') })) : null),
+    !dm ? h('p', { class: 'muted', text: 'What you buy lands here, and what you sell or bank comes out of it. Visit a shop to spend, or a G.E.C. branch to bank your coins.' }) : null,
+    !dm ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Go to the Market', onclick: () => openMarket('shops') })) : null,
+    h('h3', { class: 'notes-title', text: `${dm ? 'Carrying' : 'You are carrying'}${items.length ? ` (${items.length})` : ''}` }),
+    items.length ? h('ol', { class: 'loot-list' }, items.map(lootRow)) : h('p', { class: 'muted', text: 'Nothing yet.' }),
+    log.length ? h('details', { class: 'legend', open: true },
+      h('summary', { text: `History (${log.length})` }),
+      h('ul', { class: 'sales', id: 'bpHistory' }, log.map(historyLine))) : null);
+}
+
+// DM: everyone's backpack at a glance, the on/off switch, and the clean-up of old claims.
+function backpackRoster() {
+  const list = [...S.backpacks].sort((a, b) => (a.owner || '').localeCompare(b.owner || ''));
+  const unlinked = S.loot.filter((x) => x.claimedBy && !x.holderUid);
+  const total = list.reduce((n, b) => n + cpOf(b.coins), 0);
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>Backpacks</span>' }),
+    h('h2', { class: 'codex-title', text: 'The party’s backpacks' }),
+    h('div', { class: 'loot-coins' },
+      h('div', {}, h('strong', { id: 'bpSwitch', text: backpackOn() ? 'Backpacks are ON for players' : 'Backpacks are OFF' }),
+        h('small', { text: backpackOn() ? 'Players pay, are paid and bank through their backpacks.' : 'Players settle gold with you at the table, as before.' })),
+      h('div', { class: 'row coin-actions' }, h('button', { class: 'btn small ghost', id: 'bpToggle', text: backpackOn() ? 'Switch off' : 'Switch on', onclick: toggleBackpacks }))),
+    list.length ? h('ol', { class: 'loot-list', id: 'bpRoster' }, list.map((b) => {
+      const n = S.loot.filter((x) => heldBy(x, b.uid, b.owner)).length;
+      return h('li', { class: 'loot-item' },
+        h('div', { class: 'loot-main' }, h('strong', { text: b.owner || 'A player' }), h('span', { class: 'loot-value', text: coinText(b.coins) })),
+        h('div', { class: 'loot-meta', text: `${n} item${n === 1 ? '' : 's'}` }),
+        h('div', { class: 'loot-actions' },
+          h('button', { class: 'linklike', text: 'open', onclick: () => openBackpack(b.uid) }),
+          h('button', { class: 'linklike', text: 'give coins', onclick: () => dmCoins(b.uid, b.owner, 'give') }),
+          h('button', { class: 'linklike', text: 'take coins', onclick: () => dmCoins(b.uid, b.owner, 'take') }),
+          h('button', { class: 'linklike', text: 'set coins', onclick: () => dmCoins(b.uid, b.owner, 'set') })));
+    })) : h('p', { class: 'muted', text: 'Nobody has opened the atlas since backpacks arrived. Each player gets a backpack the first time they do.' }),
+    list.length ? h('p', { class: 'muted', text: `Carried by the party in all: ${formatCp(total)}.` }) : null,
+    unlinked.length ? h('div', {},
+      h('p', { class: 'muted', text: `${unlinked.length} claimed item${unlinked.length === 1 ? ' is' : 's are'} not tied to a backpack yet (they were claimed by name).` }),
+      h('div', { class: 'row' }, h('button', { class: 'btn small ghost', id: 'bpLink', text: 'Match them to backpacks by name', onclick: linkClaimedItems }))) : null,
+    h('p', { class: 'muted', text: 'The ledger of every coin that moves is in each player’s history (open their backpack).' }));
+}
+
+async function toggleBackpacks() {
+  const turningOn = !backpackOn();
+  const msg = turningOn
+    ? 'Switch backpacks ON?\n\nFrom now on, what players buy comes out of their backpack, and what they sell or bank goes into it. Give each player their starting coins first (open a backpack, then "Give coins"), or they will not be able to buy anything.'
+    : 'Switch backpacks OFF?\n\nPlayers go back to settling gold with you at the table. Coins already in backpacks stay there.';
+  if (!confirm(msg)) return;
+  await S.store.saveBackpackConfig({ on: turningOn }).catch((e) => toast('Could not switch it: ' + e.message));
+  await S.store.addLootLog(turningOn ? 'Backpacks switched on.' : 'Backpacks switched off.').catch(() => {});
+}
+
+// Items the DM claimed for a character by typing their name now follow that character's backpack.
+async function linkClaimedItems() {
+  const names = new Map(S.backpacks.map((b) => [String(b.owner || '').trim().toLowerCase(), b]));
+  const todo = S.loot.filter((x) => x.claimedBy && !x.holderUid);
+  const missed = new Set();
+  let done = 0;
+  for (const x of todo) {
+    const b = names.get(String(x.claimedBy).trim().toLowerCase());
+    if (!b) { missed.add(x.claimedBy); continue; }
+    try { await S.store.saveLoot({ holderUid: b.uid }, x.id); done++; } catch (e) { toast('Could not link ' + x.name + ': ' + e.message); }
+  }
+  toast(`Matched ${done} item${done === 1 ? '' : 's'}.${missed.size ? ` No backpack yet for: ${[...missed].join(', ')}.` : ''}`);
+}
+
+// DM: give, take or set a character's coins (always with a line in the ledger).
+async function dmCoins(uid, owner, mode) {
+  const cur = normalizeCoins(backpackOf(uid)?.coins);
+  const ask = { give: `Give ${owner || 'them'} how much? e.g. "120 gp 40 sp"`, take: `Take how much from ${owner || 'them'}? They hold ${coinText(cur)}.`, set: `Set ${owner || 'their'} coins to how much? They hold ${coinText(cur)}. e.g. "50 gp"` }[mode];
+  const amount = parseCoins(prompt(ask, mode === 'set' ? coinText(cur).replace('No coins', '0 gp') : ''));
+  if (!amount) return;
+  const why = mode === 'set' ? '' : (prompt('Why? (optional; it goes in their history)', '') || '').trim().slice(0, 120);
+  try {
+    await S.store.transact(async (t) => {
+      const purse = await t.purse(uid, owner);
+      let next;
+      if (mode === 'give') next = addPurse(purse.coins, amount);
+      else if (mode === 'take') { const r = takeFromPurse(purse.coins, amount); if (!r.ok) throw new Error(r.reason); next = r.coins; }
+      else next = normalizeCoins(amount);
+      const kind = { give: 'award', take: 'take', set: 'set' }[mode];
+      t.setCoins(purse, next, { kind, owner, text: `${LEDGER_KINDS[kind]}${why ? `: ${why}` : ''}` });
+    });
+    toast(`${{ give: 'Gave', take: 'Took', set: 'Set' }[mode]} ${coinText(amount)}${mode === 'take' ? ' from' : mode === 'set' ? ' for' : ' to'} ${owner || 'them'}.`);
+  } catch (e) { toast('Could not do that: ' + e.message); }
+}
+
 const COIN_KEYS = ['pp', 'gp', 'sp', 'cp'];
 const coinText = (c) => COIN_KEYS.filter((k) => c?.[k]).map((k) => `${Number(c[k]).toLocaleString()} ${k}`).join(', ') || 'No coins';
 const addCoins = (a, b, sign = 1) => Object.fromEntries(COIN_KEYS.map((k) => [k, Math.max(0, (Number(a?.[k]) || 0) + sign * (Number(b?.[k]) || 0))]));
@@ -2864,13 +3124,15 @@ function parseCoins(text) {
   return found ? out : null;
 }
 const lootById = (id) => S.loot.find((x) => x.id === id);
-const partyNames = () => [...new Set([...S.players.map((p) => p.name), ...S.loot.map((x) => x.claimedBy)].filter(Boolean))].sort();
+const partyNames = () => [...new Set([...S.backpacks.map((b) => b.owner), ...S.players.map((p) => p.name), ...S.loot.map((x) => x.claimedBy)].filter(Boolean))].sort();
+// the backpack a typed name belongs to (ignoring capitals and stray spaces)
+const backpackByName = (name) => S.backpacks.find((b) => b.owner && String(b.owner).trim().toLowerCase() === String(name || '').trim().toLowerCase()) || null;
 
 function onLoot(list) { S.loot = list; processIdentifications(); refreshLootViews(); }
 function onLootTruth(list) { S.lootTruth = Object.fromEntries(list.map((x) => [x.id, x])); processIdentifications(); refreshLootViews(); }
 function refreshLootViews() {
   if (S.panel?.type === 'market' && S.panel.tab === 'loot') renderPanel();
-  else if (['pin', 'about'].includes(S.panel?.type)) renderPanel();
+  else if (['pin', 'about', 'backpack', 'shop'].includes(S.panel?.type)) renderPanel();   // a shop shows writs; a backpack shows what is carried
 }
 
 // DM's browser only: reveal anything a player has paid to identify.
@@ -2895,22 +3157,31 @@ async function revealItem(item, how) {
 }
 
 // Put a pile of generated loot into the party's stash.
-async function giveLoot(pile, source) {
-  if (COIN_KEYS.some((k) => pile.coins?.[k])) await S.store.savePartyCoins(addCoins(S.partyCoins, pile.coins));
+// holder (optional): a backpack, { uid, owner }. The coins and things go straight into that character's backpack
+// instead of the party's stash.
+async function giveLoot(pile, source, holder) {
+  const hasCoins = COIN_KEYS.some((k) => pile.coins?.[k]);
+  if (hasCoins && holder) {
+    await S.store.transact(async (t) => {
+      const purse = await t.purse(holder.uid, holder.owner);
+      t.setCoins(purse, addPurse(purse.coins, pile.coins), { kind: 'loot', text: `Found${source ? ` at ${source}` : ''}: ${coinText(pile.coins)}`, owner: holder.owner });
+    });
+  } else if (hasCoins) await S.store.savePartyCoins(addCoins(S.partyCoins, pile.coins));
+  const mine = holder ? { holderUid: holder.uid, claimedBy: holder.owner, claimedAt: Date.now() } : {};
   for (const line of pile.lines) {
     if (line.kind === 'magic' && line.magic) {
       const m = line.magic;
-      const id = await S.store.saveLoot({ kind: 'magic', name: m.label || 'A curious item', detail: m.unidentified || '', value: null, qty: line.qty || 1, status: 'unidentified', source });
+      const id = await S.store.saveLoot({ kind: 'magic', name: m.label || 'A curious item', detail: m.unidentified || '', value: null, qty: line.qty || 1, status: 'unidentified', source, ...mine });
       await S.store.saveLootTruth(id, { name: m.name, detail: m.detail || '', rarity: m.rarity || '', value: m.value ?? null, type: m.type || '', homebrewId: m.homebrewId || '' });
     } else {
-      await S.store.saveLoot({ kind: line.kind, name: line.name, detail: line.detail || '', value: line.value || null, qty: line.qty || 1, status: 'identified', source });
+      await S.store.saveLoot({ kind: line.kind, name: line.name, detail: line.detail || '', value: line.value || null, qty: line.qty || 1, status: 'identified', source, ...mine });
     }
   }
   const things = [
-    COIN_KEYS.some((k) => pile.coins?.[k]) ? coinText(pile.coins) : '',
+    hasCoins ? coinText(pile.coins) : '',
     ...pile.lines.map((l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.kind === 'magic' ? (l.magic?.label || 'a curious item').replace(/^A /, 'a ') : l.name}`),
   ].filter(Boolean);
-  await S.store.addLootLog(`Found${source ? ` at ${source}` : ''}: ${things.join('; ') || 'nothing of value'}.`);
+  await S.store.addLootLog(`${holder ? `${holder.owner} found` : 'Found'}${source ? ` at ${source}` : ''}: ${things.join('; ') || 'nothing of value'}.`);
 }
 
 // ── the Loot tab ────────────────────────────────────────────────────
@@ -2970,7 +3241,7 @@ function lootRow(x) {
         await S.store.deleteLoot(x.id).catch((e) => toast(e.message));
         await S.store.addLootLog(`Removed from Loot: ${x.name}.`).catch(() => {});
       } })) : null,
-    !isDM() && x.kind === 'goods' && !x.claimedBy ? h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) })) : null);
+    !isDM() && x.kind === 'goods' && (!x.claimedBy || heldMine(x)) ? h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) })) : null);
 }
 
 async function claimItem(x) {
@@ -2984,13 +3255,15 @@ async function claimItem(x) {
     qty = n;
   }
   try {
+    // a name that matches a backpack puts the item in that character's backpack
+    const holder = backpackByName(who) ? { holderUid: backpackByName(who).uid } : {};
     if (qty === (x.qty || 1)) {
-      await S.store.saveLoot({ claimedBy: who.trim(), claimedAt: Date.now() }, x.id);
+      await S.store.saveLoot({ claimedBy: who.trim(), claimedAt: Date.now(), ...holder }, x.id);
     } else {
       // split the stack: the claimed part becomes its own entry (with its secret identity copied)
       await S.store.saveLoot({ qty: x.qty - qty }, x.id);
       const { id, ...rest } = x;
-      const newId = await S.store.saveLoot({ ...rest, qty, claimedBy: who.trim(), claimedAt: Date.now() });
+      const newId = await S.store.saveLoot({ ...rest, qty, claimedBy: who.trim(), claimedAt: Date.now(), ...holder });
       if (S.lootTruth[x.id]) { const { id: _t, ...truth } = S.lootTruth[x.id]; await S.store.saveLootTruth(newId, truth); }
     }
     await S.store.addLootLog(`${who.trim()} claimed ${qty > 1 ? `${qty} × ` : ''}${x.name}.`);
@@ -2998,7 +3271,7 @@ async function claimItem(x) {
 }
 
 async function unclaimItem(x) {
-  await S.store.saveLoot({ claimedBy: null, claimedAt: null }, x.id).catch((e) => toast(e.message));
+  await S.store.saveLoot({ claimedBy: null, claimedAt: null, holderUid: null }, x.id).catch((e) => toast(e.message));
   await S.store.addLootLog(`${x.name} went back into Loot (was ${x.claimedBy}’s).`).catch(() => {});
 }
 
@@ -3008,7 +3281,18 @@ async function takeCoins() {
   const amount = parseCoins(prompt(`How much does ${who.trim()} take? e.g. "50 gp" or "2 pp 15 gp 4 sp"\n\nIn Loot: ${coinText(S.partyCoins)}`));
   if (!amount) return;
   if (COIN_KEYS.some((k) => amount[k] > (S.partyCoins[k] || 0))) { toast('There isn’t that much in Loot.'); return; }
-  await S.store.savePartyCoins(addCoins(S.partyCoins, amount, -1)).catch((e) => toast(e.message));
+  const b = backpackByName(who);
+  if (b) {
+    // out of the party's coins and into that character's backpack, in one step
+    try {
+      await S.store.transact(async (t) => {
+        const purse = await t.purse(b.uid, b.owner);
+        t.set('party', 'coins', addCoins(S.partyCoins, amount, -1));
+        t.setCoins(purse, addPurse(purse.coins, amount), { kind: 'loot', text: `Took ${coinText(amount)} from the party’s coins`, owner: b.owner });
+      });
+      toast(`${b.owner} took ${coinText(amount)}. It is in their backpack.`);
+    } catch (e) { toast('Could not do that: ' + e.message); return; }
+  } else await S.store.savePartyCoins(addCoins(S.partyCoins, amount, -1)).catch((e) => toast(e.message));
   await S.store.addLootLog(`${who.trim()} took ${coinText(amount)}.`).catch(() => {});
 }
 
@@ -3029,6 +3313,24 @@ async function splitCoins() {
   const total = Object.fromEntries(COIN_KEYS.map((k) => [k, share[k] * names.length]));
   const left = addCoins(S.partyCoins, total, -1);
   if (!confirm(`Each of ${names.join(', ')} gets ${coinText(share)}.${COIN_KEYS.some((k) => left[k]) ? `\n${coinText(left)} stays in Loot (it doesn’t divide evenly).` : ''}`)) return;
+  const packs = names.map(backpackByName);
+  if (packs.some(Boolean)) {
+    // each name that has a backpack gets their share in it; the party's coins go down by what was handed out
+    const unmatched = names.filter((_, i) => !packs[i]);
+    if (unmatched.length && !confirm(`No backpack for ${unmatched.join(', ')}. Their share stays in Loot. Carry on?`)) return;
+    const matched = packs.filter(Boolean);
+    const handed = Object.fromEntries(COIN_KEYS.map((k) => [k, share[k] * matched.length]));
+    try {
+      await S.store.transact(async (t) => {
+        const purses = [];
+        for (const b of matched) purses.push(await t.purse(b.uid, b.owner));
+        t.set('party', 'coins', addCoins(S.partyCoins, handed, -1));
+        purses.forEach((p) => t.setCoins(p, addPurse(p.coins, share), { kind: 'split', text: `Coins split ${names.length} ways: ${coinText(share)} each`, owner: p.owner }));
+      });
+    } catch (e) { toast('Could not split them: ' + e.message); return; }
+    await S.store.addLootLog(`Coins split ${names.length} ways: ${matched.map((b) => b.owner).join(', ')} each took ${coinText(share)}, into their backpacks.`).catch(() => {});
+    return;
+  }
   await S.store.savePartyCoins(left).catch((e) => toast(e.message));
   await S.store.addLootLog(`Coins split ${names.length} ways: ${names.join(', ')} each took ${coinText(share)}.`).catch(() => {});
 }
@@ -3112,6 +3414,8 @@ function lootGenView() {
   const title = h('input', { type: 'text', maxlength: 80, value: S.panel.title || '', placeholder: 'e.g. The bandit captain’s strongbox' });
   const total = coinValue(d.coins) + d.lines.reduce((n, l) => n + (Number(l.value) || 0) * (l.qty || 1), 0);
   const pile = () => ({ coins: { ...d.coins }, lines: d.lines.map((l) => ({ ...l })) });
+  const giveTo = h('select', { id: 'giveTo', onchange: (e) => { S.panel.giveTo = e.target.value; const b = backpackOf(e.target.value); $('#giveLootBtn').textContent = b ? `Give to ${b.owner}` : 'Give to the party now'; } },
+    [h('option', { value: '', text: 'The party’s Loot (shared)' }), ...[...S.backpacks].sort((a, b) => (a.owner || '').localeCompare(b.owner || '')).map((b) => h('option', { value: b.uid, selected: S.panel.giveTo === b.uid, text: `${b.owner || 'A player'}’s backpack` }))]);
   return h('div', { class: 'codex editor' },
     h('button', { class: 'linklike back', text: '← Loot', onclick: () => openMarket('loot') }),
     h('h2', { class: 'codex-title', text: S.panel.cacheId ? 'Hidden cache' : 'Generate loot' }),
@@ -3125,14 +3429,17 @@ function lootGenView() {
         addMagic)),
     h('p', { class: 'muted', text: `Worth about ${formatPrice(total)} (magic items at their listed value).` }),
     h('div', { class: 'gen-actions' },
-      h('button', { class: 'btn', type: 'button', text: 'Give to the party now', onclick: async (e) => {
-        e.currentTarget.disabled = true;
+      // who gets it: the party's shared stash, or straight into one character's backpack
+      S.backpacks.length ? field('Give it to', giveTo) : null,
+      h('button', { class: 'btn', id: 'giveLootBtn', type: 'button', text: backpackOf(S.panel.giveTo) ? `Give to ${backpackOf(S.panel.giveTo).owner}` : 'Give to the party now', onclick: async (e) => {
+        const btn = e.currentTarget, holder = backpackOf(giveTo.value);
+        btn.disabled = true;
         try {
-          await giveLoot(pile(), placeOf(placeSel.value)?.label || title.value.trim() || '');
+          await giveLoot(pile(), placeOf(placeSel.value)?.label || title.value.trim() || '', holder);
           if (S.panel.cacheId) await S.store.deleteCache(S.panel.cacheId);
-          toast('Added to the party’s Loot.');
+          toast(holder ? `Added to ${holder.owner}’s backpack.` : 'Added to the party’s Loot.');
           openMarket('loot');
-        } catch (err) { toast('Could not add it: ' + err.message); e.currentTarget.disabled = false; }
+        } catch (err) { toast('Could not add it: ' + err.message); btn.disabled = false; }
       } }),
       h('div', { class: 'row' },
         placeSel, title,
@@ -3222,13 +3529,23 @@ async function buyIdentification(shop, st, item) {
   if (answer == null) return;
   const chosen = candidates[parseInt(answer, 10) - 1];
   if (!chosen) { toast(`Enter a number from 1 to ${candidates.length}.`); return; }
-  if (!confirm(`Pay ${formatPrice(item.cost)} to have "${chosen.name}" identified at ${shop.name}?\n\nIt goes on the ledger; settle the gold with your DM.`)) return;
+  const pack = usingBackpack();
+  if (!confirm(`Pay ${formatPrice(item.cost)} to have "${chosen.name}" identified at ${shop.name}?\n\n${pack ? `It comes out of your backpack (you have ${coinText(myPurse())}).` : 'It goes on the ledger; settle the gold with your DM.'}`)) return;
   const buyer = myName() || S.store.displayName || 'A party member';
   const where = placeOf(shop.location)?.label || shop.name;
   try {
     const extra = st.myHaggle && st.myHaggle.mult !== 1 ? { haggle: st.myHaggle.mult } : {};
-    await S.store.addPurchase({ shopId: shop.id, week: st.week, itemKey: item.key, itemName: `Identify: ${chosen.name}`, qty: 1, unitPrice: item.cost, total: item.cost, buyer, ...extra });
-    await S.store.requestIdentify(chosen.id, { pendingBy: buyer, pendingAt: Date.now(), pendingIn: where });
+    const record = { shopId: shop.id, week: st.week, itemKey: item.key, itemName: `Identify: ${chosen.name}`, qty: 1, unitPrice: item.cost, total: item.cost, buyer, ...extra };
+    const study = { pendingBy: buyer, pendingAt: Date.now(), pendingIn: where };
+    if (pack) {
+      await spend(gpToCp(item.cost), { kind: 'identify', text: `Identified ${chosen.name} at ${shop.name}`, ref: (t) => t.newId('purchases') }, (t, logId, purchaseId) => {
+        t.set('purchases', purchaseId, { ...record, buyerUid: myUid(), at: Date.now(), settled: true, paid: 'backpack', logId });
+        t.update('loot', chosen.id, { status: 'pending', ...study });
+      });
+    } else {
+      await S.store.addPurchase(record);
+      await S.store.requestIdentify(chosen.id, study);
+    }
     if (isDM()) await processIdentifications();
     toast(isDM() ? 'Identified.' : `${shop.proprietor?.name || 'The sage'} takes it away to study. It’ll be identified soon.`);
   } catch (e) { toast('Could not arrange it: ' + e.message); }
@@ -3720,6 +4037,8 @@ function setupChrome() {
   $('#journalBtn').onclick = () => (S.panel?.type === 'journal' ? closePanel() : openJournal());
   $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
   $('#marketBtn').onclick = () => (S.panel?.type === 'market' ? closePanel() : openMarket());
+  $('#backpackBtn').onclick = () => (S.panel?.type === 'backpack' ? closePanel() : openBackpack());
+  refreshBackpackViews();
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);
   $('#torchBtn').onclick = () => {

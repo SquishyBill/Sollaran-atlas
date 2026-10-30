@@ -92,6 +92,27 @@ Everything lives under **Market → Loot**.
 - **Unidentified magic items** show players only a description. A player can pay **Identify an item** (20 gp, at Arcane Curios and Temples). The item shows “being studied”, and the DM’s browser reveals it the next time the DM opens the atlas. The DM can **reveal** anything for free (e.g. an *identify* spell at the table).
 - **My magic items (DM):** your homebrew, mixed into loot by rarity (mix / prefer / only). Tick “in shops” to let one appear under the counter in big-city Arcane Curios, Exotic Imports and Black Markets.
 
+## Backpacks
+
+Every character carries one **backpack**: their coins (platinum, gold, silver, copper) and the things they own. It's made the first time a player opens the atlas. Open it with the backpack button in the top bar.
+
+**The switch.** Backpacks are **off** until you turn them on, so nothing changes for the players until you're ready. As the DM, open the backpack button (you see everyone's), give each player their starting coins (**Give coins**), then press **Switch on**. Switch it off again and everything goes back to settling gold with you at the table; coins already in backpacks stay put.
+
+**With backpacks on**, a player's gold moves by itself, each change as one all-or-nothing step (a purchase can never take the coins and lose the item):
+
+- **Buying** takes the price from the backpack and puts the goods in it. Repairs, identification and exchange fees come out of it too. If they can't afford it, nothing happens.
+- **Selling** takes the goods out and pays the gold in.
+- **The G.E.C.:** deposits come out of the backpack and withdrawals go back in; coins are exchanged in the backpack (less the fee); writs are bought with its coins and cashed into it. A writ in someone's backpack can only be cashed by them.
+- **Paying makes change by itself.** Platinum is only spent when it has to be.
+
+**The DM's tools.** Open a player's backpack to see what they carry and their **History**: every coin that moves is a line there (what, how much, and what was left). **Give coins / Take coins / Set coins** always leave a line too. In Loot, **give to a character…** puts an item in a character's backpack (type their name; capitals don't matter), **Take coins** and **Split evenly** move the party's coins into backpacks, and **Generate loot** can be given straight to one character ("Give it to"). **Match them to backpacks by name** ties items claimed in the past (by typing a name) to that player's backpack.
+
+**How safe is it?** The database rules (in `firestore.rules`) keep each player's coins their own: only they and the DM can see them; a player can't change their coins without a matching ledger line in the same step; and coins only go **up** through a sale, a cashed writ or a savings withdrawal. That stops mistakes and casual poking. It doesn't stop a determined cheat, because the page works out prices and the G.E.C. balances can still be edited by someone who knows how. Every move is in the History for you to see.
+
+## Tests
+
+The atlas has tests that run on the Firebase **emulators** (a pretend copy on your own computer, never your real data). From this folder: `cd tests`, `npm install` once, then `node run.mjs` runs everything, or `node run.mjs unit`, `rules` or `e2e` for one kind. The browser tests (`e2e`) open the real page as a DM and two players.
+
 ## Who's signed in, and locking it to your party
 
 Firebase keeps the list for you: **Authentication → Users** shows every Google account that has signed in, with first and last sign-in dates.
