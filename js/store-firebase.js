@@ -100,7 +100,7 @@ export class FirebaseStore {
     if (this.isDM) onSnapshot(this.col('backpacks'), (s) => h.backpacks?.(list(s)), err);
     else onSnapshot(this.ref('backpacks', this.uid), (s) => h.backpacks?.(s.exists() ? [{ id: s.id, ...s.data() }] : []), err);
     onSnapshot(this.isDM ? this.col('backpackLog') : query(this.col('backpackLog'), where('uid', '==', this.uid)), (s) => h.backpackLog?.(list(s)), err);
-    // The DM's switches for backpacks: { on } (players pay and are paid through them) and { home } (the party is at Silvermere).
+    // The DM's switch for backpacks: { on } (players pay and are paid through them).
     onSnapshot(this.ref('config', 'backpack'), (s) => h.backpackCfg?.(s.exists() ? s.data() : {}), err);
     // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
     // The truth about unidentified items, hidden caches and the homebrew library are the DM's alone.

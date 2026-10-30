@@ -2392,7 +2392,7 @@ function gecBox(shop, st) {
   if (!acc) {
     boxes = section('Safety-deposit boxes', h('p', { class: 'muted', text: 'Open a savings account first. Box rent is taken from it each month.' }));
   } else {
-    const stash = S.loot.filter((x) => x.kind === 'goods' && !x.claimedBy);
+    const stash = S.loot.filter((x) => x.kind === 'goods' && (!x.claimedBy || heldMine(x)));   // the party's stash, and what is in your own backpack
     const card = (box) => {
       const f = (G.boxes[box.id] ||= { name: '', size: 'small', qty: '1', loot: '', lsize: 'small', lqty: '1' });
       const info = BOXES[box.size], used = boxUsed(box);
@@ -2429,8 +2429,8 @@ function gecBox(shop, st) {
             await put(f.name, f.size || 'small', parseInt(f.qty, 10), null); f.name = ''; f.qty = '1'; renderPanel();
           }) })),
           stash.length ? h('div', { class: 'row gen-pickers' },
-            field('Or from the party\u2019s Loot', h('select', { onchange: (e) => { f.loot = e.target.value; renderPanel(); } },
-              [h('option', { value: '', text: 'Choose goods\u2026' }), ...stash.map((x) => h('option', { value: x.id, selected: f.loot === x.id, text: `${x.qty} \u00d7 ${x.name}` }))])),
+            field('Or from your backpack or the party\u2019s Loot', h('select', { onchange: (e) => { f.loot = e.target.value; renderPanel(); } },
+              [h('option', { value: '', text: 'Choose goods\u2026' }), ...stash.map((x) => h('option', { value: x.id, selected: f.loot === x.id, text: `${x.qty} \u00d7 ${x.name}${heldMine(x) ? ' (in your backpack)' : ' (party Loot)'}` }))])),
             lootPick ? field('How big', sizeSel(f, 'lsize')) : null,
             lootPick ? field(`How many (of ${lootPick.qty})`, numIn(f, 'lqty', '1')) : null,
             lootPick ? h('button', { class: 'btn small', type: 'button', text: 'Move it into the box', onclick: run(async () => {

@@ -65,7 +65,7 @@ export function takeCoins(purse, take) {
   return pay(p, cpOf(t));
 }
 
-// Whole gold only, for places that count nothing smaller (Silvermere): how much of a purse can be handed
+// Whole gold only, for places that count nothing smaller: how much of a purse can be handed
 // over as whole gold, and what stays behind.
 export function wholeGold(purse, wantedGp) {
   const have = Math.floor(cpOf(purse) / COIN_CP.gp);
@@ -80,10 +80,10 @@ export const LEDGER_KINDS = {
   buy: 'Bought', writBuy: 'Bought a writ', repair: 'Repairs', service: 'Paid a fee', sell: 'Sold', writ: 'Cashed a writ',
   deposit: 'Savings deposit', withdraw: 'Savings withdrawal', loot: 'Found', split: 'A share of the coins',
   award: 'Given by the DM', set: 'Set by the DM', take: 'Taken by the DM', identify: 'Identified an item',
-  bet: 'Gambling', home: 'Deposited at Silvermere', fromHome: 'Withdrawn from Silvermere', start: 'Starting coins',
+  bet: 'Gambling', start: 'Starting coins',
 };
 // Kinds that put coins in (the rest take coins out).
-export const INCOME_KINDS = ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'fromHome', 'start'];
+export const INCOME_KINDS = ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'start'];
 
 export function ledgerLine({ uid, owner, kind, deltaCp, balanceCp, text, ref = '' }, at = Date.now()) {
   return { uid, owner: String(owner || '').slice(0, 60), kind, deltaCp: Math.round(deltaCp), balanceCp: Math.round(balanceCp),
