@@ -1020,6 +1020,18 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .visit-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(90, 60, 25, .25); }
 
 /* the calendar */
+.icon-btn.alert::after { content: ''; position: absolute; top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--wax); box-shadow: 0 0 0 2px #26170e; }
+.icon-btn { position: relative; }
+.cal-day.rem::before { content: ''; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; background: var(--wax); transform: rotate(45deg); }
+.cal-due { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--wax); border-left-width: 4px; border-radius: 6px; background: rgba(142, 43, 32, .1); }
+.cal-due > strong, .cal-reminders summary { font: 700 12px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--wax); }
+.cal-rem { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 5px 0; border-top: 1px solid rgba(90, 60, 25, .25); }
+.cal-rem:first-of-type { border-top: 0; }
+.cal-rem > div:first-child { min-width: 0; }
+.cal-rem small { display: block; color: var(--ink-soft); font-size: 14px; }
+.cal-rem p { margin: 2px 0 0; font-size: 15px; }
+.cal-rem .row { margin: 0; flex: none; }
+.cal-rem.done b { text-decoration: line-through; opacity: .6; }
 .icon-btn[hidden] { display: none; }
 #calNum { fill: var(--gold-hi); stroke: none; font: 700 8.5px var(--f-head); }
 .cal { --summer: #c58a2a; --autumn: #a4501f; --winter: #4a6c92; --spring: #5f8a47; }
