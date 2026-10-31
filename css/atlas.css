@@ -940,6 +940,13 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .gen-line .gl-main input { width: 100%; padding: 4px 6px; font-size: 15px; }
 .gen-line .gl-main small { display: block; font-size: 13px; color: var(--ink-faint); font-style: italic; }
 .gen-line .linklike { font-size: 18px; text-decoration: none; padding: 0 4px; }
+.gen-line .gl-assign { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.gen-line .gl-to, .coin-dest .gl-to { flex: 1; min-width: 0; max-width: 260px; padding: 3px 4px; font-size: 14px; }
+.coin-dest { margin-top: 6px; }
+.split-who { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 2px; font-size: 15px; }
+.drop-summary { padding: 8px 12px; border: 1px solid rgba(90, 60, 25, .35); border-radius: 6px; background: rgba(255, 245, 210, .35); }
+.drop-summary ul { margin: 4px 0 0; padding-left: 1.2em; }
+.drop-summary li { margin-bottom: 2px; }
 .gen-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid rgba(90, 60, 25, .25); }
 .gen-actions .row select, .gen-actions .row input { flex: 1; min-width: 140px; }
 @media (max-width: 760px) { .gen-line { grid-template-columns: auto 46px 1fr auto auto; } .coin-actions { margin-left: 0; } }

@@ -5,7 +5,7 @@ import { EDGES, edgeById, GAMING_LIMITS, MIN_BET, GAMES, gameById, betOf, multip
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
-import { normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
+import { normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -3231,6 +3231,61 @@ async function giveLoot(pile, source, holder) {
   await S.store.addLootLog(`${holder ? `${holder.owner} found` : 'Found'}${source ? ` at ${source}` : ''}: ${things.join('; ') || 'nothing of value'}.`);
 }
 
+// ── assigning generated loot, then dropping it ─────────────────────
+const sortedBackpacks = () => [...S.backpacks].sort((a, b) => (a.owner || '').localeCompare(b.owner || ''));
+const lootLineName = (l) => `${l.qty > 1 ? `${l.qty} \u00d7 ` : ''}${l.kind === 'magic' ? (l.magic?.label || 'a curious item').replace(/^A /, 'a ') : l.name}`;
+// A choice of who gets something: value '' means "whatever is chosen above" (the first option's wording is passed in),
+// 'party' the shared Loot, or a character's uid. extra: more options after the first (like "shared evenly").
+const recipientSelect = (value, firstLabel, onPick, extra = []) => h('select', { class: 'gl-to', onchange: (e) => onPick(e.target.value) },
+  [h('option', { value: '', selected: !value, text: firstLabel }), ...extra,
+    h('option', { value: 'party', selected: value === 'party', text: 'The party\u2019s Loot' }),
+    ...sortedBackpacks().map((b) => h('option', { value: b.uid, selected: value === b.uid, text: b.owner || 'A player' }))]);
+
+// Who gets what: a Map from '' (the party's shared Loot) or a character's uid to { coins, lines }.
+// defaultTo is the "give everything to" choice; a line's own choice (l.to) overrides it, and the coins have theirs (d.coinsTo).
+function lootPlan(d, defaultTo) {
+  const plan = new Map();
+  const slot = (key) => { if (!plan.has(key)) plan.set(key, { coins: normalizeCoins({}), lines: [] }); return plan.get(key); };
+  const dest = (to) => { const v = to === 'party' ? '' : (to || defaultTo || ''); return v && backpackOf(v) ? v : ''; };
+  const coins = normalizeCoins(d.coins);
+  if (d.coinsTo === 'split') {
+    const who = (d.splitAmong || []).filter((uid) => backpackOf(uid));
+    const { share, left } = splitEvenly(coins, who.length);
+    if (who.length && cpOf(share)) { who.forEach((uid) => { slot(uid).coins = share; }); slot('').coins = addPurse(slot('').coins, left); }
+    else slot('').coins = coins;
+  } else slot(dest(d.coinsTo)).coins = addPurse(slot(dest(d.coinsTo)).coins, coins);
+  for (const l of d.lines) slot(dest(l.to)).lines.push(l);
+  for (const [key, share] of [...plan]) if (!cpOf(share.coins) && !share.lines.length) plan.delete(key);
+  return plan;
+}
+
+// Drop the whole plan in one all-or-nothing step: coins into backpacks, things into backpacks or the party's Loot.
+async function dropLoot(plan, source) {
+  const now = Date.now(), told = [];
+  let partyCoins = null;
+  await S.store.transact(async (t) => {
+    const purses = new Map();
+    for (const key of plan.keys()) if (key) { const b = backpackOf(key); if (!b) throw new Error('One of those characters has no backpack yet.'); purses.set(key, await t.purse(b.uid, b.owner)); }
+    for (const [key, share] of plan) {
+      const holder = key ? backpackOf(key) : null, hasCoins = cpOf(share.coins) > 0;
+      if (hasCoins && holder) { const purse = purses.get(key); t.setCoins(purse, addPurse(purse.coins, share.coins), { kind: 'loot', text: `Found${source ? ` at ${source}` : ''}: ${coinText(share.coins)}`, owner: holder.owner }); }
+      else if (hasCoins) partyCoins = share.coins;
+      const mine = holder ? { holderUid: holder.uid, claimedBy: holder.owner, claimedAt: now } : {};
+      for (const line of share.lines) {
+        if (line.kind === 'magic' && line.magic) {
+          const m = line.magic;
+          const id = t.add('loot', { foundAt: now, kind: 'magic', name: m.label || 'A curious item', detail: m.unidentified || '', value: null, qty: line.qty || 1, status: 'unidentified', source: source || '', ...mine });
+          t.set('lootTruth', id, { name: m.name, detail: m.detail || '', rarity: m.rarity || '', value: m.value ?? null, type: m.type || '', homebrewId: m.homebrewId || '' });
+        } else t.add('loot', { foundAt: now, kind: line.kind, name: line.name, detail: line.detail || '', value: line.value || null, qty: line.qty || 1, status: 'identified', source: source || '', ...mine });
+      }
+      told.push(`${holder ? holder.owner : 'the party\u2019s Loot'}: ${[hasCoins ? coinText(share.coins) : '', ...share.lines.map(lootLineName)].filter(Boolean).join(', ')}`);
+    }
+    if (partyCoins) t.set('party', 'coins', addCoins(S.partyCoins, partyCoins));
+    t.add('lootLog', { text: `Found${source ? ` at ${source}` : ''}. ${told.join('; ') || 'Nothing of value'}.`, at: now });
+  });
+  return told;
+}
+
 // ── the Loot tab ────────────────────────────────────────────────────
 function lootTab() {
   const unclaimed = S.loot.filter((x) => !x.claimedBy).sort((a, b) => (b.foundAt || 0) - (a.foundAt || 0));
@@ -3429,6 +3484,15 @@ function lootGenView() {
     [['mix', 'Mix in my homebrew'], ['prefer', 'Prefer my homebrew'], ['only', 'Only my homebrew']].map(([k, v]) => h('option', { value: k, selected: k === d.homebrewMode, text: v }))) : null;
   const coinInputs = COIN_KEYS.map((k) => h('label', { class: 'coin-input' }, h('input', { type: 'number', min: 0, value: d.coins[k] || 0, onchange: (e) => { d.coins[k] = Math.max(0, parseInt(e.target.value, 10) || 0); } }), ` ${k}`));
   const kindLabel = { gem: 'gem', art: 'art', gear: 'item', hook: 'story hook', magic: 'magic' };
+  // split some of a stack off into its own line, so it can go to someone else
+  const splitLine = (i) => {
+    const l = d.lines[i], have = l.qty || 1;
+    const n = parseInt(prompt(`Split how many off the ${have}?`, '1'), 10);
+    if (!(n >= 1 && n < have)) return;
+    l.qty = have - n;
+    d.lines.splice(i + 1, 0, { ...l, qty: n, id: `split-${Date.now()}` });
+    renderPanel();
+  };
   const lines = h('ol', { class: 'gen-lines' }, d.lines.map((l, i) => h('li', { class: `gen-line ${l.kind}` },
     h('span', { class: `grade ${l.kind === 'magic' ? 'rare' : l.kind === 'hook' ? 'house' : 'fine'}`, text: kindLabel[l.kind] || l.kind }),
     h('input', { type: 'number', class: 'gl-qty', min: 1, value: l.qty || 1, title: 'How many', onchange: (e) => { l.qty = Math.max(1, parseInt(e.target.value, 10) || 1); } }),
@@ -3438,8 +3502,12 @@ function lootGenView() {
           h('strong', { text: l.magic.name }), ` (${l.magic.rarity}${l.magic.homebrewId ? ', homebrew' : ''}, ${formatPrice(l.magic.value || 0)})`,
           h('small', { text: `Players will see: “${l.magic.label}. ${l.magic.unidentified}”` }))
         : h('input', { type: 'text', value: l.name, onchange: (e) => { l.name = e.target.value; } }),
-      l.kind !== 'magic' && l.kind !== 'hook' && l.kind !== 'gear' ? h('small', { text: `${formatPrice(l.value || 0)} each` }) : null),
-    h('button', { class: 'linklike', type: 'button', text: '↻', title: 'Reroll this line', onclick: () => { d.lines[i] = rerollLine(l, optsOf()); renderPanel(); } }),
+      l.kind !== 'magic' && l.kind !== 'hook' && l.kind !== 'gear' ? h('small', { text: `${formatPrice(l.value || 0)} each` }) : null,
+      // who gets it: a character, or the party's Loot (blank follows the choice at the foot)
+      S.backpacks.length ? h('div', { class: 'gl-assign' },
+        recipientSelect(l.to || '', 'As chosen below', (v) => { l.to = v; renderPanel(); }),
+        (l.qty || 1) > 1 ? h('button', { class: 'linklike', type: 'button', text: 'split\u2026', title: 'Split some of this stack off, to give to someone else', onclick: () => splitLine(i) }) : null) : null),
+    h('button', { class: 'linklike', type: 'button', text: '↻', title: 'Reroll this line', onclick: () => { d.lines[i] = { ...rerollLine(l, optsOf()), ...(l.to ? { to: l.to } : {}) }; renderPanel(); } }),
     h('button', { class: 'linklike', type: 'button', text: '×', title: 'Remove', onclick: () => { d.lines.splice(i, 1); renderPanel(); } }))));
   const addMagic = h('select', { onchange: (e) => {
     const [src, key] = e.target.value.split(':');
@@ -3460,8 +3528,11 @@ function lootGenView() {
   const placeSel = h('select', {}, places.map(([v, t]) => h('option', { value: v, selected: v === ref, text: t })));
   const title = h('input', { type: 'text', maxlength: 80, value: S.panel.title || '', placeholder: 'e.g. The bandit captain’s strongbox' });
   const total = coinValue(d.coins) + d.lines.reduce((n, l) => n + (Number(l.value) || 0) * (l.qty || 1), 0);
-  const pile = () => ({ coins: { ...d.coins }, lines: d.lines.map((l) => ({ ...l })) });
-  const giveTo = h('select', { id: 'giveTo', onchange: (e) => { S.panel.giveTo = e.target.value; const b = backpackOf(e.target.value); $('#giveLootBtn').textContent = b ? `Give to ${b.owner}` : 'Give to the party now'; } },
+  const plan = lootPlan(d, S.panel.giveTo || '');
+  const recipients = [...plan.keys()].filter(Boolean);
+  const giveLabel = recipients.length === 0 ? 'Give to the party now' : recipients.length === 1 && plan.size === 1 ? `Give to ${backpackOf(recipients[0]).owner}` : 'Give it out now';
+  const pile = () => ({ coins: { ...d.coins }, lines: d.lines.map(({ to, ...l }) => ({ ...l })) });   // (a hidden cache keeps no assignments)
+  const giveTo = h('select', { id: 'giveTo', onchange: (e) => { S.panel.giveTo = e.target.value; renderPanel(); } },
     [h('option', { value: '', text: 'The party’s Loot (shared)' }), ...[...S.backpacks].sort((a, b) => (a.owner || '').localeCompare(b.owner || '')).map((b) => h('option', { value: b.uid, selected: S.panel.giveTo === b.uid, text: `${b.owner || 'A player'}’s backpack` }))]);
   return h('div', { class: 'codex editor' },
     h('button', { class: 'linklike back', text: '← Loot', onclick: () => openMarket('loot') }),
@@ -3469,7 +3540,13 @@ function lootGenView() {
     h('div', { class: 'row gen-pickers' }, field('Party level', level), field('How much', mode)),
     h('div', { class: 'row gen-pickers' }, field('Where it’s found', setting), hb ? field('Magic items', hb) : null),
     h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', text: '↻ Reroll everything', onclick: reroll })),
-    h('div', { class: 'field' }, h('span', { text: 'Coins' }), h('div', { class: 'row coin-row' }, coinInputs)),
+    h('div', { class: 'field' }, h('span', { text: 'Coins' }), h('div', { class: 'row coin-row' }, coinInputs),
+      S.backpacks.length ? h('div', { class: 'coin-dest' },
+        recipientSelect(d.coinsTo || '', 'As chosen below', (v) => { d.coinsTo = v; if (v === 'split' && !d.splitAmong) d.splitAmong = S.backpacks.map((b) => b.uid); renderPanel(); },
+          [h('option', { value: 'split', selected: d.coinsTo === 'split', text: 'Shared evenly between\u2026' })]),
+        d.coinsTo === 'split' ? h('div', { class: 'split-who' }, sortedBackpacks().map((b) => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: (d.splitAmong || []).includes(b.uid), onchange: (e) => { const set = new Set(d.splitAmong || []); if (e.target.checked) set.add(b.uid); else set.delete(b.uid); d.splitAmong = [...set]; renderPanel(); } }),
+          ` ${b.owner || 'A player'}`))) : null) : null),
     h('div', { class: 'field' }, h('span', { text: `Items (${d.lines.length})` }), lines,
       h('div', { class: 'row' },
         h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a line', onclick: () => { d.lines.push({ id: `add-${Date.now()}`, kind: 'gear', qty: 1, name: '', value: 0 }); renderPanel(); } }),
@@ -3477,16 +3554,22 @@ function lootGenView() {
     h('p', { class: 'muted', text: `Worth about ${formatPrice(total)} (magic items at their listed value).` }),
     h('div', { class: 'gen-actions' },
       // who gets it: the party's shared stash, or straight into one character's backpack
-      S.backpacks.length ? field('Give it to', giveTo) : null,
-      h('button', { class: 'btn', id: 'giveLootBtn', type: 'button', text: backpackOf(S.panel.giveTo) ? `Give to ${backpackOf(S.panel.giveTo).owner}` : 'Give to the party now', onclick: async (e) => {
-        const btn = e.currentTarget, holder = backpackOf(giveTo.value);
+      S.backpacks.length ? field('Everything goes to', giveTo, 'Anything you do not choose for above goes here.') : null,
+      // who gets what, before you press the button
+      S.backpacks.length ? h('div', { class: 'drop-summary', id: 'dropSummary' },
+        h('strong', { text: 'Who gets what' }),
+        plan.size ? h('ul', {}, [...plan].map(([key, share]) => h('li', {},
+          h('b', { text: key ? backpackOf(key).owner : 'The party\u2019s Loot' }), ': ',
+          [cpOf(share.coins) ? coinText(share.coins) : '', ...share.lines.map(lootLineName)].filter(Boolean).join(', ')))) : h('p', { class: 'muted', text: 'Nothing to give out.' })) : null,
+      h('button', { class: 'btn', id: 'giveLootBtn', type: 'button', text: giveLabel, onclick: async (e) => {
+        const btn = e.currentTarget;
         btn.disabled = true;
         try {
-          await giveLoot(pile(), placeOf(placeSel.value)?.label || title.value.trim() || '', holder);
+          await dropLoot(lootPlan(d, S.panel.giveTo || ''), placeOf(placeSel.value)?.label || title.value.trim() || '');
           if (S.panel.cacheId) await S.store.deleteCache(S.panel.cacheId);
-          toast(holder ? `Added to ${holder.owner}’s backpack.` : 'Added to the party’s Loot.');
+          toast(plan.size === 1 && [...plan.keys()][0] ? `Added to ${backpackOf([...plan.keys()][0]).owner}\u2019s backpack.` : plan.size > 1 || [...plan.keys()].some(Boolean) ? 'Handed out: ' + [...plan.keys()].map((k) => (k ? backpackOf(k).owner : 'the party\u2019s Loot')).join(', ') + '.' : 'Added to the party\u2019s Loot.');
           openMarket('loot');
-        } catch (err) { toast('Could not add it: ' + err.message); btn.disabled = false; }
+        } catch (err) { toast('Could not give it out: ' + err.message); btn.disabled = false; }
       } }),
       h('div', { class: 'row' },
         placeSel, title,

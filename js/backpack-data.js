@@ -95,3 +95,12 @@ const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || 
 // A loot item is in someone's backpack when they hold it, by account or (for items claimed before backpacks
 // existed) by the name the DM claimed it for.
 export const heldBy = (item, uid, name) => (!!item.holderUid && item.holderUid === uid) || (!item.holderUid && !!item.claimedBy && sameName(item.claimedBy, name));
+
+// Share a pile of coins evenly between some people, counted in copper so almost nothing is left over: each gets
+// the same share (as gold, silver and copper) and whatever will not divide (a copper or two) is left in the pile.
+export function splitEvenly(coins, people) {
+  const n = Math.max(0, Math.floor(Number(people) || 0)), total = cpOf(coins);
+  if (!n || !total) return { share: normalizeCoins({}), left: normalizeCoins(coins), each: 0 };
+  const each = Math.floor(total / n);
+  return { share: coinsOf(each), left: coinsOf(total - each * n), each };
+}
