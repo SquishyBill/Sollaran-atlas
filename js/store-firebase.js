@@ -79,6 +79,7 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('holidays') : query(this.col('holidays'), where('hidden', '==', false)),
       (s) => h.holidays?.(list(s)), err);
     if (this.isDM) onSnapshot(this.col('calendarLog'), (s) => h.calendarLog?.(list(s)), err);
+    if (this.isDM) onSnapshot(this.col('reminders'), (s) => h.reminders?.(list(s)), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -259,6 +260,13 @@ export class FirebaseStore {
   }
   deleteHoliday(id) { return this.F.deleteDoc(this.ref('holidays', id)); }
   async addCalendarLog(x) { return (await this.F.addDoc(this.col('calendarLog'), { ...x, at: Date.now(), by: this.displayName || '' })).id; }
+  // the DM's own reminders, pinned to a day
+  async saveReminder(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('reminders'), { createdAt: Date.now(), ...data })).id;
+    await this.F.setDoc(this.ref('reminders', id), data, { merge: true });
+    return id;
+  }
+  deleteReminder(id) { return this.F.deleteDoc(this.ref('reminders', id)); }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 
   // ── shops and their purchase ledger

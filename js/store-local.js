@@ -43,7 +43,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -66,6 +66,7 @@ export class LocalStore {
     this.handlers.calendar?.(this.db.config.calendar || null);
     this.handlers.holidays?.(rows(this.db.holidays).filter((x) => dm || !x.hidden));
     if (dm) this.handlers.calendarLog?.(rows(this.db.calendarLog));
+    if (dm) this.handlers.reminders?.(rows(this.db.reminders));
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.sales?.(rows(this.db.sales));
@@ -181,6 +182,13 @@ export class LocalStore {
   }
   async deleteHoliday(id) { delete this.db.holidays[id]; this.persist(); }
   async addCalendarLog(x) { const id = 'cl-' + rid(); this.db.calendarLog[id] = { ...x, at: Date.now(), by: 'The DM' }; this.persist(); return id; }
+  async saveReminder(data, id) {
+    if (!id) { id = 'rem-' + rid(); this.db.reminders[id] = { createdAt: Date.now() }; }
+    Object.assign(this.db.reminders[id], data);
+    this.persist();
+    return id;
+  }
+  async deleteReminder(id) { delete this.db.reminders[id]; this.persist(); }
   async updateCalendarLog(id, data) { Object.assign(this.db.calendarLog[id] || {}, data); this.persist(); }
 
   // ── shops and their purchase ledger

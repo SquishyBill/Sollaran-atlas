@@ -68,7 +68,7 @@ const S = {
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
-  calendar: null, holidays: [], calendarLog: [],
+  calendar: null, holidays: [], calendarLog: [], reminders: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -136,7 +136,7 @@ async function boot() {
     magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
     magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
-    calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog,
+    calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
     ping: onPing, error: onError });
   startCalendarClock();
   // every player has a backpack from their first visit, so the DM can see who is in the party
@@ -827,7 +827,7 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
@@ -1501,7 +1501,7 @@ function journalView() {
     const body = h('div', { class: 'j-body' });
     const d = h('details', { class: 'journal-entry', open: P.open.has(e.id) },
       h('summary', {},
-        h('span', { class: 'j-head' }, h('span', { class: 'j-date', text: fmtJournalDate(e.date) }), h('span', { class: 'j-title', text: e.title })),
+        h('span', { class: 'j-head' }, h('span', { class: 'j-date', text: `${fmtJournalDate(e.date)}${Number.isInteger(e.gameDay) ? ` \u00b7 ${CAL.formatDate(e.gameDay, true)}` : ''}` }), h('span', { class: 'j-title', text: e.title })),
         h('span', { class: 'j-n' }, `Session ${e.n}`, e.draft ? h('span', { class: 'tag', text: 'draft' }) : null)),
       body);
     if (d.open) fill(body, e);
@@ -1545,6 +1545,10 @@ function journalEditView() {
   const t = new Date(), today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
   const n = h('input', { type: 'number', min: 0, max: 9999, value: e?.n ?? nextN });
   const date = h('input', { type: 'date', value: e?.date || today });
+  const gd0 = e ? (Number.isInteger(e.gameDay) ? CAL.dateOf(e.gameDay) : null) : (calDay() != null ? CAL.dateOf(calDay()) : null);
+  const gMonth = h('select', { id: 'jgMonth' }, h('option', { value: '', text: 'No in-game date' }), ...CAL.MONTHS.map((m, i) => h('option', { value: i + 1, text: `${i + 1}. ${m.name}`, selected: gd0?.month === i + 1 })));
+  const gDay = h('select', { id: 'jgDay' }, ...Array.from({ length: 28 }, (_, i) => h('option', { value: i + 1, text: String(i + 1), selected: (gd0?.dom || 1) === i + 1 })));
+  const gCycle = h('input', { type: 'number', id: 'jgCycle', min: 1, max: 99999, value: gd0?.cycle ?? 742 });
   const title = h('input', { type: 'text', maxlength: 160, value: e?.title || '', placeholder: 'e.g. The Night at the Roosting Crow' });
   const body = h('textarea', { rows: 18, placeholder: 'What happened this session? Who did we meet, where did we go, what did we decide, what is still unresolved?' });
   body.value = e?.body || '';
@@ -1571,7 +1575,8 @@ function journalEditView() {
   });
 
   const save = async (draft) => {
-    const data = { n: Math.max(0, parseInt(n.value, 10) || 0), date: date.value || today, title: title.value.trim(), body: body.value, draft,
+    const data = { n: Math.max(0, parseInt(n.value, 10) || 0), date: date.value || today, gameDay: gMonth.value ? CAL.toDayNumber(Number(gCycle.value) || 742, Number(gMonth.value), Number(gDay.value)) : null,
+      title: title.value.trim(), body: body.value, draft,
       author: String(myName() || S.store.displayName || 'The scribe').slice(0, 60), editedAt: Date.now() };
     if (!data.title) { toast('Give the entry a title first.'); title.focus(); return; }
     try {
@@ -1585,6 +1590,7 @@ function journalEditView() {
   return h('form', { class: 'editor journal-form', onsubmit: (ev) => ev.preventDefault() },
     h('h2', { class: 'codex-title', text: isNew ? 'New journal entry' : 'Edit journal entry' }),
     h('div', { class: 'row gen-pickers' }, field('Session number', n), field('Date played', date)),
+    h('div', { class: 'row gen-pickers' }, field('In-game month', gMonth, 'Filled in from the calendar. Choose "No in-game date" to leave it off.'), field('Day', gDay), field('Cycle', gCycle)),
     field('Title', title),
     h('div', { class: 'field' }, h('span', { text: 'The story so far' }),
       h('div', { class: 'j-tools' }, tabWrite, tabPrev), body, preview,
@@ -1632,6 +1638,7 @@ function calChanged(fromClock) {
   calSeen = d;
   updateCalButton();
   updateFestBar();
+  if (remAnnounced) announceReminders(!!fromClock);
   refreshCalViews(fromClock);
 }
 function refreshCalViews(fromClock) {
@@ -1657,7 +1664,9 @@ function updateCalButton() {
   btn.hidden = d == null && !isDM();
   const dt = d == null ? null : CAL.dateOf(d);
   $('#calNum').textContent = dt ? String(dt.dom) : '';
-  btn.title = dt ? `${CAL.formatDate(dt)}${S.calendar?.paused ? ' (paused)' : ''}` : 'The calendar (not started yet)';
+  const due = dueNow().length;
+  btn.classList.toggle('alert', due > 0);
+  btn.title = dt ? `${CAL.formatDate(dt)}${S.calendar?.paused ? ' (paused)' : ''}${due ? ` \u00b7 ${due} reminder${due === 1 ? '' : 's'} due` : ''}` : 'The calendar (not started yet)';
 }
 
 function openCalendar(opts = {}) {
@@ -1680,7 +1689,8 @@ async function moveCalendar(days, note) {
     const passed = days > 0 ? CAL.holidaysBetween(from, next.day, calHolidays()) : [];
     const id = await logCalendar({ kind: 'advance', days: next.day - from, from, to: next.day, note: String(note || '').slice(0, 160), passed: passed.map((x) => x.holiday.name).slice(0, 8) });
     const weeks = CAL.dateOf(next.day).week - CAL.dateOf(from).week;
-    toast(`${days > 0 ? 'Moved on' : 'Moved back'} ${Math.abs(next.day - from)} day${Math.abs(next.day - from) === 1 ? '' : 's'} to ${CAL.formatDate(next.day, true)}.${weeks > 0 ? ' The shops have restocked.' : ''}${passed.length ? ` Passed: ${passed.map((x) => x.holiday.name).join(', ')}.` : ''}`,
+    const rems = days > 0 ? CAL.remindersBetween(from, next.day, S.reminders) : [];
+    toast(`${days > 0 ? 'Moved on' : 'Moved back'} ${Math.abs(next.day - from)} day${Math.abs(next.day - from) === 1 ? '' : 's'} to ${CAL.formatDate(next.day, true)}.${weeks > 0 ? ' The shops have restocked.' : ''}${passed.length ? ` Passed: ${passed.map((x) => x.holiday.name).join(', ')}.` : ''}${rems.length ? ` Reminders due: ${rems.map((r) => r.title).join('; ')}.` : ''}`,
       'Undo', () => undoMove(id));
   } catch (e) { toast('Could not move the date: ' + e.message); }
 }
@@ -1728,6 +1738,7 @@ function calendarView() {
     h('p', { class: 'cal-season', text: `${season.name} · ${season.title}` }),
     S.calendar.paused ? h('p', { class: 'cal-paused', text: 'The calendar is paused.' }) : null));
   wrap.append(h('p', { class: 'cal-note', text: `${CAL.WEEKDAYS[dt.weekday].name}: ${CAL.WEEKDAYS[dt.weekday].blurb} ${dt.weekday === 0 ? 'A new week begins, and the shops restock.' : `The shops restock in ${CAL.daysToFirstday(d)} day${CAL.daysToFirstday(d) === 1 ? '' : 's'}, on Firstday.`}` }));
+  if (isDM() && dueNow().length) wrap.append(h('div', { class: 'cal-due', id: 'calDue' }, h('strong', { text: 'Reminders due' }), ...dueNow().map((r) => remRow(r, d))));
   if (todays.length) wrap.append(...todays.map((x) => h('div', { class: 'fest-note cal-today-hol' }, holidayEmblem(x), h('div', {}, h('strong', { text: `✦ ${x.name}` }), x.blurb || ''))));
 
   // the month shown, with ‹ › to look at others
@@ -1773,7 +1784,7 @@ function calendarView() {
       : [h('p', { class: 'muted', text: 'No holidays in sight.' })])));
 
   wrap.append(holidayList(hols));
-  if (isDM()) wrap.append(calendarDM(d, dt));
+  if (isDM()) wrap.append(reminderList(d), calendarDM(d, dt));
   return wrap;
 }
 
@@ -1797,8 +1808,8 @@ function monthGrid(cycle, month, today, sel, hols) {
     ...CAL.WEEKDAYS.map((w, i) => h('span', { class: 'cal-wd', title: w.name, text: CAL.ordinal(i + 1) })));
   for (let i = 0; i < CAL.MONTH_DAYS; i++) {
     const n = first + i, here = CAL.holidaysOn(n, hols);
-    const cls = ['cal-day', n === today ? 'today' : '', n < today ? 'past' : '', n === sel ? 'sel' : '', here.length ? 'hol' : '', i % 7 === 0 ? 'fd' : ''].filter(Boolean).join(' ');
-    grid.append(h('button', { type: 'button', class: cls, 'data-n': n, 'aria-label': `${dayText(n)}${here.length ? `: ${here.map((x) => x.name).join(', ')}` : ''}${n === today ? ' (today)' : ''}`,
+    const cls = ['cal-day', n === today ? 'today' : '', n < today ? 'past' : '', n === sel ? 'sel' : '', here.length ? 'hol' : '', i % 7 === 0 ? 'fd' : '', isDM() && CAL.remindersOn(S.reminders, n).length ? 'rem' : ''].filter(Boolean).join(' ');
+    grid.append(h('button', { type: 'button', class: cls, 'data-n': n, 'aria-label': `${dayText(n)}${here.length ? `: ${here.map((x) => x.name).join(', ')}` : ''}${n === today ? ' (today)' : ''}${cls.includes(' rem') || cls.endsWith('rem') ? ' (reminder)' : ''}`,
       title: here.length ? here.map((x) => x.name).join(', ') : dayText(n), style: here.length ? `--hc:${here[0].color || '#b8862b'}` : null,
       onclick: () => { S.panel.sel = n; renderPanel(); } },
     h('span', { text: String(i + 1) }), here.length ? h('i', { class: 'cal-dot', 'aria-hidden': 'true' }) : null));
@@ -1814,9 +1825,11 @@ function selectedDay(n, today, hols) {
     h('p', { class: 'muted', text: `${CAL.WEEKDAYS[dt.weekday].name}: ${CAL.WEEKDAYS[dt.weekday].blurb}` }),
     ...here.map((x) => h('div', { class: 'cal-hol-item', style: `--hc:${x.color || '#b8862b'}` }, holidayEmblem(x), h('div', {}, h('b', { text: x.name }),
       x.span > 1 ? h('small', { text: ` ${x.span} days` }) : null, x.hidden && isDM() ? h('small', { text: ' hidden from players' }) : null, x.blurb ? h('p', { text: x.blurb }) : null))),
+    ...(isDM() ? CAL.remindersOn(S.reminders, n).map((r) => remRow(r, today)) : []),
     isDM() ? h('div', { class: 'row' },
       n !== today ? h('button', { class: 'btn small ghost', type: 'button', text: 'Make this today', onclick: () => { if (confirm(`Set the date to ${CAL.formatDate(n)}?`)) setCalendar(dt.cycle, dt.month, dt.dom, 'Set from the calendar'); } }) : null,
-      h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a holiday here', onclick: () => openHolidayEditor(null, { month: dt.month, day: dt.dom, cycle: dt.cycle }) })) : null);
+      h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a holiday here', onclick: () => openHolidayEditor(null, { month: dt.month, day: dt.dom, cycle: dt.cycle }) }),
+      h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a reminder here', onclick: () => openReminderEditor(null, { month: dt.month, day: dt.dom, cycle: dt.cycle }) })) : null);
 }
 
 function holidayList(hols) {
@@ -1857,6 +1870,71 @@ function calendarDM(d, dt) {
     history.length ? h('details', { class: 'legend' }, h('summary', { text: 'History of the date' }),
       h('ul', { class: 'sales cal-history' }, ...history.map((x) => h('li', { class: x.undone ? 'undone' : '', text:
         `${kindText[x.kind] || x.kind}${x.kind === 'advance' || x.kind === 'undo' ? ` ${x.days > 0 ? '+' : ''}${x.days} day${Math.abs(x.days) === 1 ? '' : 's'}` : ''} → ${CAL.formatDate(x.to, true)}${x.note ? `. ${x.note}` : ''}${x.passed?.length ? `. Passed: ${x.passed.join(', ')}` : ''} · ${ago(x.at)}` })))) : null);
+}
+
+// ── the DM's reminders: a note pinned to a day, for the DM alone ────
+const dueNow = () => (isDM() && calDay() != null ? CAL.dueReminders(S.reminders, calDay()) : []);
+let remAnnounced = null, remSaid = false;     // the reminders already announced; null until the first list arrives
+function onReminders(list) {
+  S.reminders = list;
+  remAnnounced ||= new Set();
+  announceReminders(false);
+  updateCalButton();
+  if (S.panel?.type === 'calendar') renderPanel();
+}
+// Tell the DM about reminders that have come due: when the atlas opens, and when the date reaches them by itself.
+function announceReminders(say) {
+  if (!remSaid && calDay() != null) { say = true; remSaid = true; }
+  const fresh = dueNow().filter((r) => !remAnnounced.has(r.id));
+  fresh.forEach((r) => remAnnounced.add(r.id));
+  if (say && fresh.length) toast(`Reminder${fresh.length > 1 ? 's' : ''} due: ${fresh.map((r) => r.title).join('; ')}.`, 'Open the calendar', () => openCalendar());
+}
+function remWhen(r, today) {
+  const d = r.day - today;
+  return d === 0 ? 'Today' : d > 0 ? `In ${d} day${d === 1 ? '' : 's'}, ${dayText(r.day)}` : `Due ${-d} day${d === -1 ? '' : 's'} ago, ${dayText(r.day)}`;
+}
+function remRow(r, today) {
+  return h('div', { class: `cal-rem${r.done ? ' done' : ''}` },
+    h('div', {}, h('b', { text: r.title }), h('small', { text: remWhen(r, today) }), r.note ? h('p', { text: r.note }) : null),
+    h('div', { class: 'row' },
+      r.done ? null : h('button', { class: 'btn small', type: 'button', text: 'Done', title: 'Mark it done', onclick: () => S.store.saveReminder({ done: true, doneAt: Date.now() }, r.id).catch((e) => toast(e.message)) }),
+      h('button', { class: 'linklike', type: 'button', text: 'edit', onclick: () => openReminderEditor(r) })));
+}
+function reminderList(today) {
+  const open = [...S.reminders].filter((r) => !r.done).sort((a, b) => a.day - b.day), done = S.reminders.filter((r) => r.done).sort((a, b) => b.day - a.day).slice(0, 10);
+  return h('details', { class: 'legend cal-reminders', open: open.length > 0 }, h('summary', { text: `Reminders (${open.length})` }),
+    h('p', { class: 'muted', text: 'Notes pinned to a date, for you alone. The calendar button shows a dot when one is due, and moving the date tells you which you went over.' }),
+    open.length ? h('div', {}, ...open.map((r) => remRow(r, today))) : h('p', { class: 'muted', text: 'None waiting.' }),
+    done.length ? h('details', { class: 'legend' }, h('summary', { text: `Done (${done.length})` }), h('div', {}, ...done.map((r) => remRow(r, today)))) : null,
+    h('button', { class: 'btn small ghost', id: 'remAdd', type: 'button', text: '+ Add a reminder', onclick: () => openReminderEditor(null) }));
+}
+function openReminderEditor(rem, preset) { S.panel = { type: 'reminderEdit', id: rem?.id || 'new', preset: rem ? null : preset || null }; renderPanel(); }
+function reminderEditView() {
+  const P = S.panel, isNew = P.id === 'new', r = isNew ? null : S.reminders.find((y) => y.id === P.id);
+  if (!isDM()) return h('p', { class: 'muted', text: 'Only the DM has reminders.' });
+  if (!isNew && !r) return h('p', { class: 'muted', text: 'That reminder no longer exists.' });
+  const at = r ? CAL.dateOf(r.day) : P.preset || (calDay() != null ? CAL.dateOf(calDay()) : { month: 1, dom: 1, day: 1, cycle: 742 });
+  const pre = { month: at.month, dom: at.dom ?? at.day, cycle: at.cycle };
+  const title = h('input', { type: 'text', id: 'remTitle', maxlength: 100, value: r?.title || '', placeholder: 'e.g. The cult finishes its ritual' });
+  const note = h('textarea', { id: 'remNote', rows: 4, maxlength: 400, placeholder: 'What should you remember?' }); note.value = r?.note || '';
+  const month = h('select', { id: 'remMonth' }, ...CAL.MONTHS.map((m, i) => h('option', { value: i + 1, text: `${i + 1}. ${m.name}`, selected: i + 1 === pre.month })));
+  const day = h('select', { id: 'remDay' }, ...Array.from({ length: 28 }, (_, i) => h('option', { value: i + 1, text: String(i + 1), selected: i + 1 === pre.dom })));
+  const cycle = h('input', { type: 'number', id: 'remCycle', min: 1, max: 99999, value: pre.cycle });
+  const inDays = h('input', { type: 'number', id: 'remInDays', min: 0, max: 100000, placeholder: 'e.g. 12' });
+  const back = () => openCalendar();
+  const save = async () => {
+    const data = CAL.reminderFrom({ title: title.value, note: note.value, month: month.value, dom: day.value, cycle: cycle.value, inDays: inDays.value, done: r?.done }, calDay());
+    if (data.error) { toast(data.error); return; }
+    try { await S.store.saveReminder(data, r?.id); toast('Reminder saved.'); back(); } catch (e) { toast('Could not save: ' + e.message); }
+  };
+  return h('form', { class: 'editor', onsubmit: (ev) => ev.preventDefault() },
+    h('h2', { class: 'codex-title', text: isNew ? 'New reminder' : 'Edit reminder' }),
+    field('Title', title), field('Note', note),
+    h('div', { class: 'row gen-pickers' }, field('Month', month), field('Day', day), field('Cycle', cycle)),
+    field('Or: days from today', inDays, 'If you fill this in, it is used instead of the date above.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', id: 'remSave', type: 'button', text: 'Save', onclick: save }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: back }),
+      r ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => { if (!confirm(`Delete "${r.title}"?`)) return; await S.store.deleteReminder(r.id).catch((e) => toast(e.message)); back(); } }) : null));
 }
 
 // Add or change a holiday (DM).
@@ -4504,7 +4582,7 @@ function runSearch(q) {
       go: () => openPin(p.id, { fly: true }),
     })),
     ...S.journal.filter((e) => (!e.draft || canWriteJournal()) && hit(e.title, e.body || '', `session ${e.n}`)).map((e) => ({
-      label: `Session ${e.n}: ${e.title}`, sub: ['Session journal', fmtJournalDate(e.date), e.draft ? 'draft' : ''].filter(Boolean).join(' \u00b7 '),
+      label: `Session ${e.n}: ${e.title}`, sub: ['Session journal', fmtJournalDate(e.date), Number.isInteger(e.gameDay) ? CAL.formatDate(e.gameDay, true) : '', e.draft ? 'draft' : ''].filter(Boolean).join(' \u00b7 '),
       icon: '<span class="res-dot"></span>', go: () => openJournal(e.id),
     })),
   ].sort((a, b) => hitTitle(b) - hitTitle(a)).slice(0, 40);

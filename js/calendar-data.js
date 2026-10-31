@@ -178,3 +178,31 @@ export function holidayFrom(input) {
   }
   return out;
 }
+
+// ── the DM's reminders ──────────────────────────────────────────────
+// A reminder is pinned to a day for the DM alone: { title, note, day (the day count), done }. It is due once the date
+// reaches that day, and stays due until it is marked done.
+export const dueReminders = (list, n) => (list || []).filter((r) => !r.done && Number.isInteger(r.day) && r.day <= n).sort((a, b) => a.day - b.day);
+export const remindersOn = (list, n) => (list || []).filter((r) => !r.done && r.day === n);
+// Reminders a jump from day `from` to day `to` went over (or landed on).
+export const remindersBetween = (from, to, list) => (list || []).filter((r) => !r.done && r.day > from && r.day <= to).sort((a, b) => a.day - b.day);
+
+// A reminder the DM typed in, tidied for saving (or an error string). Give the date as { cycle, month, day }, or
+// as `inDays` (days from `today`).
+export function reminderFrom(input, today) {
+  const title = String(input?.title || '').trim().slice(0, 100);
+  if (!title) return { error: 'Give the reminder a title.' };
+  let day;
+  if (input.inDays !== '' && input.inDays != null && Number.isFinite(Number(input.inDays))) {
+    if (!Number.isInteger(today)) return { error: 'Start the calendar first.' };
+    day = today + Math.round(Number(input.inDays));
+    if (day < 0) return { error: 'That is before the first day of the calendar.' };
+  } else {
+    const month = Math.floor(Number(input.month)), dom = Math.floor(Number(input.dom)), cycle = Math.floor(Number(input.cycle));
+    if (!(month >= 1 && month <= CYCLE_MONTHS)) return { error: 'The month must be 1 to 12.' };
+    if (!(dom >= 1 && dom <= MONTH_DAYS)) return { error: 'The day must be 1 to 28.' };
+    if (!(cycle >= 1)) return { error: 'Give the cycle.' };
+    day = toDayNumber(cycle, month, dom);
+  }
+  return { title, note: String(input.note || '').trim().slice(0, 400), day, done: !!input.done };
+}
