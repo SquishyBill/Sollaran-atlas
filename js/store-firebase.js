@@ -108,6 +108,8 @@ export class FirebaseStore {
     onSnapshot(this.isDM ? this.col('backpackLog') : query(this.col('backpackLog'), where('uid', '==', this.uid)), (s) => h.backpackLog?.(list(s)), err);
     // The DM's switch for backpacks: { on } (players pay and are paid through them).
     onSnapshot(this.ref('config', 'backpack'), (s) => h.backpackCfg?.(s.exists() ? s.data() : {}), err);
+    // Who is in the party (a name for each player), so players can give to each other.
+    onSnapshot(this.col('roster'), (s) => h.roster?.(list(s)), err);
     // Loot: the party's stash, its history and coins (everyone), plus homebrew items allowed in shops.
     // The truth about unidentified items, hidden caches and the homebrew library are the DM's alone.
     onSnapshot(this.col('loot'), (s) => h.loot?.(list(s)), err);
@@ -296,6 +298,10 @@ export class FirebaseStore {
     const snap = await getDoc(ref);
     if (!snap.exists()) await setDoc(ref, { uid: this.uid, owner: name, coins: normalizeCoins({}), updatedAt: Date.now() });
     else if (name && snap.data().owner !== name) await updateDoc(ref, { owner: name, updatedAt: Date.now() });
+    if (name) {
+      const rref = this.ref('roster', this.uid), r = await getDoc(rref);
+      if (!r.exists() || r.data().name !== name) await setDoc(rref, { uid: this.uid, name });
+    }
   }
   deleteBackpack(uid) { return this.F.deleteDoc(this.ref('backpacks', uid)); }
   saveBackpackConfig(data) { return this.F.setDoc(this.ref('config', 'backpack'), data, { merge: true }); }
@@ -322,6 +328,16 @@ export class FirebaseStore {
             purses.set(uid, { uid, owner: s.data()?.owner || owner, coins: normalizeCoins(s.data()?.coins), gamble: s.data()?.gamble || {}, exists: s.exists() });
           }
           return purses.get(uid);
+        },
+        // Hand coins to another player. Their purse is not read (it is theirs alone); the coins are added to it, and
+        // the rules check that the giver's backpack went down by the same amount in this same step.
+        giftCoins: (toUid, toOwner, coins, info = {}) => {
+          const give = normalizeCoins(coins), logId = doc(this.col('backpackLog')).id;
+          const line = ledgerLine({ uid: toUid, owner: toOwner, kind: 'gift', deltaCp: cpOf(give), balanceCp: 0, text: info.text, ref: this.uid });
+          writes.push(['set', this.ref('backpackLog', logId), line]);
+          const add = Object.fromEntries(['pp', 'gp', 'sp', 'cp'].filter((k) => give[k]).map((k) => [`coins.${k}`, this.F.increment(give[k])]));
+          writes.push(['update', this.ref('backpacks', toUid), { ...add, lastLog: logId, updatedAt: line.at }]);
+          return logId;
         },
         setCoins: (purse, coins, info = {}) => {
           const next = normalizeCoins(coins), logId = doc(this.col('backpackLog')).id, owner = info.owner || purse.owner || '';

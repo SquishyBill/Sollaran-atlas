@@ -81,9 +81,10 @@ export const LEDGER_KINDS = {
   deposit: 'Savings deposit', withdraw: 'Savings withdrawal', loot: 'Found', split: 'A share of the coins',
   award: 'Given by the DM', set: 'Set by the DM', take: 'Taken by the DM', identify: 'Identified an item',
   bet: 'Gambling', start: 'Starting coins',
+  give: 'Gave coins', gift: 'Received coins', giveItem: 'Gave an item', giftItem: 'Received an item',
 };
 // Kinds that put coins in (the rest take coins out).
-export const INCOME_KINDS = ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'start'];
+export const INCOME_KINDS = ['sell', 'writ', 'withdraw', 'loot', 'split', 'award', 'start', 'gift'];
 
 export function ledgerLine({ uid, owner, kind, deltaCp, balanceCp, text, ref = '' }, at = Date.now()) {
   return { uid, owner: String(owner || '').slice(0, 60), kind, deltaCp: Math.round(deltaCp), balanceCp: Math.round(balanceCp),

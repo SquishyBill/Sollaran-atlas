@@ -6,7 +6,7 @@ import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, AT
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 import * as CAL from './calendar-data.js';
-import { normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
+import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -67,7 +67,7 @@ const S = {
   renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [], journal: [], scribes: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
-  backpacks: [], backpackLog: [], backpackCfg: {},
+  backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
@@ -135,7 +135,7 @@ async function boot() {
     caches: (list) => { S.caches = list; refreshLootViews(); },
     magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
     magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
-    backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg,
+    backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog,
     ping: onPing, error: onError });
   startCalendarClock();
@@ -3325,7 +3325,19 @@ const myPurse = () => normalizeCoins(backpackOf(myUid())?.coins);
 const heldMine = (x) => heldBy(x, myUid(), whoAmI());
 
 function onBackpacks(list) { S.backpacks = list; refreshBackpackViews(); }
-function onBackpackLog(list) { S.backpackLog = list; if (S.panel?.type === 'backpack') renderPanel(); }
+function onBackpackLog(list) {
+  S.backpackLog = list;
+  if (S.panel?.type === 'backpack') renderPanel();
+  if (!isDM()) noteGifts(list);
+}
+// Tell a player what other players have given them, once, the next time they have the atlas open.
+function noteGifts(list) {
+  const seen = Number(lsGet('atlas-gifts-seen')) || 0;
+  const fresh = list.filter((l) => ['gift', 'giftItem'].includes(l.kind) && l.at > seen).sort((a, b) => a.at - b.at);
+  if (!fresh.length) return;
+  lsSet('atlas-gifts-seen', String(fresh[fresh.length - 1].at));
+  toast(fresh.map((l) => l.text).join(' '));
+}
 function onBackpackCfg(cfg) { S.backpackCfg = cfg || {}; refreshBackpackViews(); }
 function refreshBackpackViews() {
   const btn = $('#backpackBtn');
@@ -3358,7 +3370,9 @@ function openBackpack(id) {
   renderPanel();
 }
 
-const historyLine = (l) => h('li', { text: `${l.deltaCp >= 0 ? '+' : '−'}${formatCp(Math.abs(l.deltaCp))} ${l.text} · now ${formatCp(l.balanceCp)} · ${ago(l.at)}` });
+const historyLine = (l) => ['giveItem', 'giftItem'].includes(l.kind) ? h('li', { text: `${l.text} \u00b7 ${ago(l.at)}` })
+  : l.kind === 'gift' ? h('li', { text: `+${formatCp(l.deltaCp)} ${l.text} \u00b7 ${ago(l.at)}` })
+  : h('li', { text: `${l.deltaCp >= 0 ? '+' : '−'}${formatCp(Math.abs(l.deltaCp))} ${l.text} · now ${formatCp(l.balanceCp)} · ${ago(l.at)}` });
 
 function backpackView() {
   const dm = isDM();
@@ -3382,7 +3396,8 @@ function backpackView() {
         h('button', { class: 'btn small ghost', text: 'Take coins', onclick: () => dmCoins(uid, owner, 'take') }),
         h('button', { class: 'btn small ghost', text: 'Set coins', onclick: () => dmCoins(uid, owner, 'set') })) : null),
     !dm ? h('p', { class: 'muted', text: 'What you buy lands here, and what you sell or bank comes out of it. Visit a shop to spend, or a G.E.C. branch to bank your coins.' }) : null,
-    !dm ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Go to the Market', onclick: () => openMarket('shops') })) : null,
+    !dm ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Go to the Market', onclick: () => openMarket('shops') }),
+      backpackOn() ? h('button', { class: 'btn small ghost', id: 'bpGiveCoins', type: 'button', text: 'Give coins to a player…', onclick: giveCoinsToFriend }) : null) : null,
     h('h3', { class: 'notes-title', text: `${dm ? 'Carrying' : 'You are carrying'}${items.length ? ` (${items.length})` : ''}` }),
     items.length ? h('ol', { class: 'loot-list' }, items.map(lootRow)) : h('p', { class: 'muted', text: 'Nothing yet.' }),
     log.length ? h('details', { class: 'legend', open: true },
@@ -3647,7 +3662,75 @@ function lootRow(x) {
         await S.store.deleteLoot(x.id).catch((e) => toast(e.message));
         await S.store.addLootLog(`Removed from Loot: ${x.name}.`).catch(() => {});
       } })) : null,
-    !isDM() && x.kind === 'goods' && (!x.claimedBy || heldMine(x)) ? h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) })) : null);
+    !isDM() && ((x.kind === 'goods' && (!x.claimedBy || heldMine(x))) || (backpackOn() && x.holderUid === myUid()))
+      ? h('div', { class: 'loot-actions' },
+        x.kind === 'goods' && (!x.claimedBy || heldMine(x)) ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
+        backpackOn() && x.holderUid === myUid() ? h('button', { class: 'linklike', text: 'give…', title: 'Give it to another player', onclick: () => giveItem(x) }) : null) : null);
+}
+
+// ── giving to another player ────────────────────────────────────────
+// Players hand coins and things to each other. It is instant: one all-or-nothing step takes it out of the giver's
+// backpack and puts it into the receiver's, with a line in both histories. The receiver is told the next time
+// they have the atlas open.
+const rosterOthers = () => S.roster.filter((r) => r.uid !== myUid() && r.name).sort((a, b) => a.name.localeCompare(b.name));
+function pickFriend(what) {
+  const others = rosterOthers();
+  if (!others.length) { toast('No other player has opened the atlas yet.'); return null; }
+  const ans = prompt(`Give ${what} to who?\n\nThe party: ${others.map((r) => r.name).join(', ')}`, others.length === 1 ? others[0].name : '');
+  if (!ans?.trim()) return null;
+  const hit = others.find((r) => r.name.trim().toLowerCase() === ans.trim().toLowerCase());
+  if (!hit) toast(`${ans.trim()} is not in the party. Type a name as it is listed.`);
+  return hit || null;
+}
+const giftError = (e, to) => /no document|not-found/i.test(e.message) ? `${to.name} has no backpack yet. They need to open the atlas once.` : e.message;
+
+async function giveCoinsToFriend() {
+  if (!backpackOn()) { toast('Backpacks are not in use yet.'); return; }
+  const to = pickFriend('coins');
+  if (!to) return;
+  const amount = parseCoins(prompt(`Give ${to.name} how much? e.g. "5 gp" or "2 gp 5 sp"\n\nYou hold ${coinText(myPurse())}.`));
+  if (!amount || !cpOf(amount)) return;
+  const me = whoAmI();
+  try {
+    await S.store.transact(async (t) => {
+      const purse = await t.purse(myUid(), me);
+      const paid = payCoins(purse.coins, cpOf(amount));
+      if (!paid.ok) throw new Error(paid.reason);
+      t.setCoins(purse, paid.coins, { kind: 'give', ref: to.uid, text: `Gave ${coinText(amount)} to ${to.name}` });
+      t.giftCoins(to.uid, to.name, amount, { text: `${me} gave you ${coinText(amount)}.` });
+    });
+    toast(`You gave ${coinText(amount)} to ${to.name}.`);
+  } catch (e) { toast('Could not give it: ' + giftError(e, to)); }
+}
+
+// What a split-off part of a stack carries with it (the same fields the rules let a player write).
+const GIFT_FIELDS = ['kind', 'name', 'detail', 'value', 'cost', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace'];
+async function giveItem(x) {
+  if (!backpackOn() || x.holderUid !== myUid()) return;
+  const to = pickFriend(x.name);
+  if (!to) return;
+  let qty = x.qty || 1;
+  if (qty > 1 && x.kind === 'goods') {
+    const n = parseInt(prompt(`How many of the ${qty}?`, String(qty)), 10);
+    if (!(n > 0) || n > qty) { toast(`Enter a number from 1 to ${qty}.`); return; }
+    qty = n;
+  }
+  const me = whoAmI(), now = Date.now(), label = `${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name}`;
+  try {
+    await S.store.transact(async (t) => {
+      const purse = await t.purse(myUid(), me);
+      let ref = x.id;
+      if (qty === (x.qty || 1)) t.update('loot', x.id, { holderUid: to.uid, claimedBy: to.name, claimedAt: now });
+      else {
+        ref = t.newId('loot');
+        t.update('loot', x.id, { qty: x.qty - qty });
+        t.set('loot', ref, { ...Object.fromEntries(GIFT_FIELDS.filter((k) => x[k] !== undefined).map((k) => [k, x[k]])), qty, holderUid: to.uid, claimedBy: to.name, claimedAt: now, giftFrom: x.id });
+      }
+      t.add('backpackLog', ledgerLine({ uid: myUid(), owner: me, kind: 'giveItem', deltaCp: 0, balanceCp: cpOf(purse.coins), text: `Gave ${label} to ${to.name}`, ref }, now));
+      t.add('backpackLog', ledgerLine({ uid: to.uid, owner: to.name, kind: 'giftItem', deltaCp: 0, balanceCp: 0, text: `${me} gave you ${label}.`, ref }, now));
+    });
+    toast(`You gave ${label} to ${to.name}.`);
+  } catch (e) { toast('Could not give it: ' + giftError(e, to)); }
 }
 
 async function claimItem(x) {

@@ -43,7 +43,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog', 'holidays', 'calendarLog']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -77,6 +77,7 @@ export class LocalStore {
     this.handlers.backpacks?.(rows(this.db.backpacks).filter((x) => dm || x.id === this.uid));
     this.handlers.backpackLog?.(rows(this.db.backpackLog).filter((x) => dm || x.uid === this.uid));
     this.handlers.backpackCfg?.(this.db.config.backpack || {});
+    this.handlers.roster?.(rows(this.db.roster));
     this.handlers.loot?.(rows(this.db.loot));
     this.handlers.lootLog?.(rows(this.db.lootLog));
     this.handlers.partyCoins?.(this.db.party.coins);
@@ -220,10 +221,11 @@ export class LocalStore {
   async ensureBackpack(owner) {
     if (this.isDM) return;
     const name = String(owner || '').trim().slice(0, 60), b = this.db.backpacks[this.uid];
-    if (!b) this.db.backpacks[this.uid] = { uid: this.uid, owner: name, coins: normalizeCoins({}), updatedAt: Date.now() };
-    else if (name && b.owner !== name) b.owner = name;
-    else return;
-    this.persist();
+    let changed = false;
+    if (!b) { this.db.backpacks[this.uid] = { uid: this.uid, owner: name, coins: normalizeCoins({}), updatedAt: Date.now() }; changed = true; }
+    else if (name && b.owner !== name) { b.owner = name; changed = true; }
+    if (name && this.db.roster[this.uid]?.name !== name) { this.db.roster[this.uid] = { uid: this.uid, name }; changed = true; }
+    if (changed) this.persist();
   }
   async deleteBackpack(uid) { delete this.db.backpacks[uid]; this.persist(); }
   async saveBackpackConfig(data) { this.db.config.backpack = { ...this.db.config.backpack, ...data }; this.persist(); }
@@ -237,6 +239,13 @@ export class LocalStore {
       purse: async (uid = this.uid, owner = '') => {
         if (!purses.has(uid)) { const b = this.db.backpacks[uid]; purses.set(uid, { uid, owner: b?.owner || owner, coins: normalizeCoins(b?.coins), gamble: b?.gamble || {}, exists: !!b }); }
         return purses.get(uid);
+      },
+      giftCoins: (toUid, toOwner, coins, info = {}) => {
+        const give = normalizeCoins(coins), logId = rid(), b = this.db.backpacks[toUid];
+        if (!b) throw new Error('No document to update');
+        writes.push(['set', 'backpackLog', logId, ledgerLine({ uid: toUid, owner: toOwner, kind: 'gift', deltaCp: cpOf(give), balanceCp: 0, text: info.text, ref: this.uid })]);
+        writes.push(['set', 'backpacks', toUid, { coins: Object.fromEntries(['pp', 'gp', 'sp', 'cp'].map((k) => [k, (b.coins?.[k] || 0) + give[k]])), lastLog: logId, updatedAt: Date.now() }, true]);
+        return logId;
       },
       setCoins: (purse, coins, info = {}) => {
         const next = normalizeCoins(coins), logId = rid(), owner = info.owner || purse.owner || '';
