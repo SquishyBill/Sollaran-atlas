@@ -123,7 +123,7 @@ service cloud.firestore {
     // (stock is worked out from them); only the DM can mark them settled or void them.
     match /purchases/{id} {
       allow read: if isPlayer();
-      allow create: if isPlayer()
+      allow create: if isDM() || isPlayer()
         && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemKey', 'itemName', 'qty', 'unitPrice', 'total', 'buyer', 'buyerUid', 'at', 'settled', 'haggle', 'paid', 'logId'])
         && request.resource.data.buyerUid == request.auth.uid
         && request.resource.data.shopId is string
@@ -138,7 +138,7 @@ service cloud.firestore {
     // there's no update rule, so a second attempt is refused). Only the DM can reset one.
     match /haggles/{id} {
       allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
-      allow create: if isPlayer()
+      allow create: if isDM() || isPlayer()
         && id == request.resource.data.shopId + '__' + request.auth.uid + '__' + string(request.resource.data.week)
         && request.resource.data.keys().hasOnly(['shopId', 'week', 'uid', 'buyer', 'roll', 'die', 'bonus', 'mult', 'at'])
         && request.resource.data.uid == request.auth.uid
@@ -154,7 +154,7 @@ service cloud.firestore {
     // after that only the DM can change it.
     match /players/{uid} {
       allow read: if isDM() || (isPlayer() && request.auth.uid == uid);
-      allow create: if isPlayer() && request.auth.uid == uid
+      allow create: if isDM() || isPlayer() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['name', 'persuasion', 'setAt'])
         && request.resource.data.persuasion is int && request.resource.data.persuasion >= -5 && request.resource.data.persuasion <= 20
         && request.resource.data.name is string && request.resource.data.name.size() <= 60;
@@ -397,7 +397,7 @@ service cloud.firestore {
     // out from them); only the DM can mark one settled or void it.
     match /sales/{id} {
       allow read: if isPlayer();
-      allow create: if isPlayer()
+      allow create: if isDM() || isPlayer()
         && request.resource.data.keys().hasOnly(['shopId', 'week', 'itemName', 'qty', 'unitPrice', 'total', 'cost', 'buyer', 'buyerUid', 'at', 'settled', 'paid', 'logId'])
         && request.resource.data.buyerUid == request.auth.uid
         && request.resource.data.shopId is string
@@ -455,7 +455,7 @@ service cloud.firestore {
     match /notes/{id} {
       allow read: if isPlayer() && (resource.data.private == false || resource.data.uid == request.auth.uid);
 
-      allow create: if isPlayer()
+      allow create: if isDM() || isPlayer()
         && request.resource.data.keys().hasOnly(['targetType', 'targetId', 'text', 'author', 'private', 'uid', 'createdAt'])
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.targetType in ['pin', 'page', 'person', 'shop', 'journal']

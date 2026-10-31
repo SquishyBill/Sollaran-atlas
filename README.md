@@ -127,6 +127,12 @@ The Sacred Calendar of the Sollaran Archonate: twelve months of 28 days (336 day
 
 **The files.** `js/calendar-data.js` holds all the date maths (tested on its own). The date is the document `config/calendar` (`{ day, since, paused }`); holidays are `holidays`; the history is `calendarLog`. The season paintings, holiday and month emblems and the sun are in `img/`.
 
+## Backup and restore (DM)
+
+Open Contents and press **Backup and restore**. **Download a backup now** saves everything (pages, pins, pictures, people, DM secrets, renown, journal, shops, purchases, loot, backpacks, the calendar and settings) to one `.json` file on your computer. Players' private notes are not included, and the file holds your secrets, so keep it private. A quiet nudge appears when it has been more than two weeks.
+
+To recover, choose a backup file under **Put things back**. The atlas compares it with what is there now and lists what is **missing** (deleted since) and what has **changed** (pages, pins, people, shops and the like that were edited). Tick what you want back; only those items are written. Nothing is ever deleted, things made since the backup are left alone, and money, stock and history are only offered when something has been deleted (so a restore never rewinds coins). A safety copy of the atlas as it is now is downloaded before anything is written. The logic is in `js/backup.js`; the DM may recreate purchases, sales, haggles, notes and persuasion bonuses in the rules so these can be put back.
+
 ## Tests
 
 The atlas has tests that run on the Firebase **emulators** (a pretend copy on your own computer, never your real data). From this folder: `cd tests`, `npm install` once, then `node run.mjs` runs everything, or `node run.mjs unit`, `rules` or `e2e` for one kind. The browser tests (`e2e`) open the real page as a DM and two players.
