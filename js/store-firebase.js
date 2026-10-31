@@ -1,5 +1,6 @@
 // Firebase backend. Players are signed in anonymously (no account needed);
 // the DM signs in with Google. Access control lives in firestore.rules.
+import { COLLECTIONS } from './backup.js';
 import { firebaseConfig, DM_EMAILS, ENABLE_UPLOADS } from './config.js';
 import { cpOf, normalizeCoins, ledgerLine } from './backpack-data.js';
 
@@ -295,6 +296,31 @@ export class FirebaseStore {
   saveScribes(emails) { return this.F.setDoc(this.ref('config', 'scribes'), { emails }); }
   saveAccount(id, data) { return this.F.setDoc(this.ref('accounts', id), data); }
   deleteAccount(id) { return this.F.deleteDoc(this.ref('accounts', id)); }
+
+  // ── backup and restore (the DM) ──────────────────────────────────
+  get projectId() { return this.fs?.app?.options?.projectId || ''; }
+  // Everything in the atlas, as { collection: { id: data } }. Other players' private notes are not the DM's to read.
+  async readEverything() {
+    const { getDocs, query, where } = this.F, out = {};
+    for (const name of COLLECTIONS) {
+      let docs;
+      if (name === 'notes') {
+        const [open, mine] = await Promise.all([getDocs(query(this.col('notes'), where('private', '==', false))), getDocs(query(this.col('notes'), where('uid', '==', this.uid)))]);
+        docs = [...open.docs, ...mine.docs];
+      } else docs = (await getDocs(this.col(name))).docs;
+      out[name] = Object.fromEntries(docs.map((d) => [d.id, d.data()]));
+    }
+    return out;
+  }
+  // Put documents back: [{ col, id, data }], a few hundred at a time. Each is written whole.
+  async restoreDocs(items) {
+    const { writeBatch } = this.F;
+    for (let i = 0; i < items.length; i += 400) {
+      const batch = writeBatch(this.fs);
+      for (const { col, id, data } of items.slice(i, i + 400)) batch.set(this.ref(col, id), data);
+      await batch.commit();
+    }
+  }
 
   // ── backpacks ───────────────────────────────────────────────────
   // Every player has one backpack document (their coins; the rules let only them and the DM see it). It is

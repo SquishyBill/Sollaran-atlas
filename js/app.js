@@ -6,6 +6,7 @@ import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, AT
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 import * as CAL from './calendar-data.js';
+import * as BK from './backup.js';
 import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -139,6 +140,7 @@ async function boot() {
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
     ping: onPing, error: onError });
   startCalendarClock();
+  nudgeBackup();
   // every player has a backpack from their first visit, so the DM can see who is in the party
   if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
 }
@@ -827,7 +829,7 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView, backup: backupView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
@@ -1979,6 +1981,127 @@ function holidayEditView() {
         await S.store.deleteHoliday(x.id).catch((e) => toast(e.message));
         back();
       } }) : null));
+}
+
+// ─── backup and restore (DM) ────────────────────────────────────────
+// One file holds everything in the atlas. Restoring never wipes anything: it shows what is missing (deleted since)
+// and what has changed since the backup, and only puts back what the DM ticks. See js/backup.js.
+const lastBackup = () => Number(lsGet('atlas-last-backup')) || 0;
+function downloadFile(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+// Read everything, save it as a file, and hand back what was read.
+async function takeBackup(tag = 'backup') {
+  const current = await S.store.readEverything();
+  const backup = BK.makeBackup(current, { project: S.store.projectId || '', by: S.store.displayName || 'The DM' });
+  downloadFile(BK.backupFileName(new Date(), tag), JSON.stringify(backup));
+  if (tag === 'backup') lsSet('atlas-last-backup', String(Date.now()));
+  return { backup, current };
+}
+const countItems = (counts) => Object.values(counts || {}).reduce((n, c) => n + c, 0);
+// Once per visit, a quiet nudge if it has been a while.
+function nudgeBackup() {
+  if (!isDM()) return;
+  const last = lastBackup(), days = last ? (Date.now() - last) / 86400000 : Infinity;
+  if (days > 14) setTimeout(() => toast(last ? `It has been ${Math.floor(days)} days since your last backup.` : 'You have not made a backup of the atlas yet.', 'Back up', () => openBackup()), 6000);
+}
+
+function openBackup() { S.pinId = null; highlightPin(); S.panel = { type: 'backup', id: 'b', stage: 'idle' }; renderPanel(); }
+
+function backupView() {
+  const P = S.panel, last = lastBackup();
+  if (!isDM()) return h('p', { class: 'muted', text: 'Only the DM keeps backups.' });
+  const wrap = h('div', { class: 'codex backup' },
+    h('div', { class: 'codex-kind', html: '<span>Backup</span>' }),
+    h('h2', { class: 'codex-title', text: 'Backup and restore' }),
+    h('h3', { class: 'notes-title', text: 'Make a backup' }),
+    h('p', { text: 'Saves everything to one file on your computer: pages, pins, people, DM secrets, shops, loot, backpacks, the calendar and the journal. Players’ private notes are not included.' }),
+    h('p', { class: 'muted', id: 'bkLast', text: last ? `Your last backup from this browser was ${ago(last)}.` : 'You have not made a backup from this browser yet.' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn', id: 'bkMake', type: 'button', text: 'Download a backup now', onclick: async (e) => {
+      const b = e.currentTarget; b.disabled = true; b.textContent = 'Reading the atlas…';
+      try { const { backup } = await takeBackup(); toast(`Backup saved: ${countItems(backup.counts).toLocaleString()} items.`); }
+      catch (err) { toast('Could not make the backup: ' + err.message); }
+      if (S.panel?.type === 'backup') renderPanel();
+    } })),
+    h('div', { class: 'warn' }, h('p', { text: 'Keep the file private. It holds your DM secrets and hidden pages.' })),
+    h('h3', { class: 'notes-title', text: 'Put things back' }),
+    h('p', { text: 'Choose a backup file. The atlas compares it with what is here now and shows what is missing and what has changed. You tick what you want back. Nothing else is touched, and nothing is ever deleted.' }));
+  wrap.append(restorePart(P));
+  return wrap;
+}
+
+function restorePart(P) {
+  const box = h('div', { class: 'bk-restore' });
+  const file = h('input', { type: 'file', id: 'bkFile', accept: '.json,application/json', onchange: async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      const backup = JSON.parse(await f.text()), ok = BK.checkBackup(backup);
+      if (!ok.ok) { P.stage = 'idle'; P.error = ok.error; renderPanel(); return; }
+      P.stage = 'reading'; P.error = ''; renderPanel();
+      const current = await S.store.readEverything();
+      P.backup = { createdAt: backup.createdAt, by: backup.by, project: backup.project, counts: ok.counts };
+      P.plan = BK.planRestore(backup, current);
+      P.picked = new Set(P.plan.missing.filter((x) => BK.TICKED_WHEN_MISSING.includes(x.col)).map((x) => `${x.col}/${x.id}`));
+      P.stage = 'ready'; renderPanel();
+    } catch (err) { P.stage = 'idle'; P.error = /JSON/.test(err.message) ? 'That file is not a readable backup.' : err.message; renderPanel(); }
+  } });
+  box.append(field('The backup file', file));
+  if (P.error) box.append(h('p', { class: 'bk-error', id: 'bkError', text: P.error }));
+  if (P.stage === 'reading') box.append(h('p', { class: 'muted', text: 'Comparing it with the atlas as it is now…' }));
+  if (P.stage === 'done') box.append(h('div', { class: 'note', id: 'bkDone' }, h('p', { text: P.result })));
+  if (P.stage !== 'ready') return box;
+
+  const { plan, backup } = P, key = (x) => `${x.col}/${x.id}`;
+  const apply = h('button', { class: 'btn', id: 'bkApply', type: 'button' });
+  const refresh = () => { const n = P.picked.size; apply.textContent = n ? `Put back ${n} selected` : 'Nothing selected'; apply.disabled = !n; };
+  const group = (title, items, withNow) => {
+    if (!items.length) return null;
+    const byCol = new Map();
+    for (const x of items) { if (!byCol.has(x.col)) byCol.set(x.col, []); byCol.get(x.col).push(x); }
+    return h('div', { class: 'bk-group' }, h('h4', { class: 'bk-title', text: `${title} (${items.length})` }),
+      ...[...byCol].map(([col, list]) => {
+        const rows = list.map((x) => {
+          const cb = h('input', { type: 'checkbox', checked: P.picked.has(key(x)), 'data-key': key(x), onchange: (e) => { if (e.target.checked) P.picked.add(key(x)); else P.picked.delete(key(x)); refresh(); } });
+          return h('label', { class: 'check bk-item' }, cb, h('span', {}, x.label, withNow && x.now !== x.label ? h('small', { text: ` (now: ${x.now})` }) : null));
+        });
+        const all = h('input', { type: 'checkbox', checked: list.every((x) => P.picked.has(key(x))), onchange: (e) => {
+          list.forEach((x) => (e.target.checked ? P.picked.add(key(x)) : P.picked.delete(key(x))));
+          rows.forEach((r) => { r.querySelector('input').checked = e.target.checked; }); refresh();
+        } });
+        return h('details', { class: 'legend bk-col', open: list.length <= 8 }, h('summary', { text: `${BK.LABELS[col] || col} (${list.length})` }),
+          h('label', { class: 'check bk-all' }, all, ' Select all'), ...rows);
+      }));
+  };
+  box.append(...[
+    h('div', { class: 'bk-meta', id: 'bkMeta' }, h('strong', { text: `Backup from ${new Date(backup.createdAt).toLocaleString()}` }), h('small', { text: ` · ${countItems(backup.counts).toLocaleString()} items${backup.by ? ` · by ${backup.by}` : ''}` })),
+    backup.project && S.store.projectId && backup.project !== S.store.projectId ? h('div', { class: 'warn' }, h('p', { text: `This backup was made from a different atlas (${backup.project}). Check that it is the one you mean.` })) : null,
+    !plan.missing.length && !plan.changed.length ? h('p', { id: 'bkNothing', text: 'Nothing is missing, and nothing you can put back has changed. The atlas matches this backup.' }) : null,
+    group('Missing now', plan.missing, false),
+    group('Changed since', plan.changed, true),
+    plan.changed.length ? h('p', { class: 'muted', text: 'Putting a changed item back replaces the newer version with the one in the backup.' }) : null,
+    h('p', { class: 'muted', text: 'Money, stock, history and the calendar’s date keep moving, so they are only offered when something has been deleted.' }),
+    h('div', { class: 'row' }, apply, h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => { P.stage = 'idle'; renderPanel(); } })),
+  ].filter(Boolean));
+  apply.onclick = async () => {
+    const items = [...plan.missing, ...plan.changed].filter((x) => P.picked.has(key(x))).map(({ col, id, data }) => ({ col, id, data }));
+    if (!items.length) return;
+    if (!confirm(`Put back ${items.length} item${items.length === 1 ? '' : 's'}?\n\nA copy of the atlas as it is now will be saved to your computer first, in case you change your mind.`)) return;
+    apply.disabled = true; apply.textContent = 'Saving a safety copy…';
+    try {
+      await takeBackup('before-restore');
+      apply.textContent = 'Putting things back…';
+      await S.store.restoreDocs(items);
+      P.stage = 'done'; P.result = `Put back ${items.length} item${items.length === 1 ? '' : 's'}. A copy of the atlas from just before is in your downloads.`;
+      toast(`Put back ${items.length} item${items.length === 1 ? '' : 's'}.`);
+    } catch (err) { P.stage = 'idle'; P.error = 'Could not put everything back: ' + err.message; }
+    if (S.panel?.type === 'backup') renderPanel();
+  };
+  refresh();
+  return box;
 }
 
 // ─── NPC generator ──────────────────────────────────────────────────
@@ -4619,6 +4742,7 @@ function setupChrome() {
   $('#tocClose').onclick = closeTOC;
   $('#scrim').onclick = closeTOC;
   $('#addPageBtn').onclick = () => openPageEditor(null);
+  $('#backupBtn').onclick = () => { closeTOC(); openBackup(); };
   if (isDM() && S.store.importSeed && ['localhost', '127.0.0.1'].includes(location.hostname)) {
     $('#addPageBtn').after(h('button', { class: 'btn ghost', style: 'width:100%;margin-top:8px', text: 'Import new starter content', onclick: syncSeed }));
   }

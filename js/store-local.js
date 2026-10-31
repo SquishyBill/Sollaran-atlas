@@ -1,6 +1,7 @@
 // Demo backend: everything lives in this browser's localStorage.
 // Mirrors FirebaseStore's interface and visibility rules so the app code is identical.
 import { SEED } from './seed.js';
+import { COLLECTIONS } from './backup.js';
 import { cpOf, normalizeCoins, ledgerLine } from './backpack-data.js';
 
 const KEY = 'atlas-sollara-v3';
@@ -171,6 +172,11 @@ export class LocalStore {
 
   async saveRenownTiers(tiers) { this.db.config.renown = { tiers }; this.persist(); }
   async saveFestivals(f) { this.db.config.festivals = f; this.persist(); }
+
+  // ── backup and restore (see FirebaseStore: the same calls, kept in this browser)
+  get projectId() { return 'demo'; }
+  async readEverything() { return Object.fromEntries(COLLECTIONS.map((c) => [c, structuredClone(this.db[c] || {})])); }
+  async restoreDocs(items) { for (const { col, id, data } of items) { this.db[col] ||= {}; this.db[col][id] = structuredClone(data); } this.persist(); }
 
   // ── the calendar (see FirebaseStore: the same calls, kept in this browser)
   async saveCalendar(data) { this.db.config.calendar = { ...this.db.config.calendar, ...data, updatedAt: Date.now() }; this.persist(); }
