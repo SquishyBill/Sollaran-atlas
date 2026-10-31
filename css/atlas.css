@@ -1019,6 +1019,17 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .gam-result strong { display: block; font: 700 18px var(--f-head); color: var(--ink); }
 .visit-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(90, 60, 25, .25); }
 
+/* backup and restore */
+.bk-meta { margin: 10px 0; padding: 8px 10px; border: 1px solid rgba(90, 60, 25, .35); border-radius: 6px; background: rgba(255, 245, 210, .3); }
+.bk-meta small { color: var(--ink-soft); font-size: 14px; }
+.bk-error { margin: 8px 0; padding: 6px 10px; border-left: 4px solid var(--wax); background: rgba(142, 43, 32, .1); color: var(--ink); }
+.bk-title { margin: 14px 0 4px; font: 700 13px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--wax); }
+.bk-col { margin: 4px 0; }
+.bk-item { display: flex; align-items: flex-start; font-size: 16px; padding: 2px 0 2px 4px; }
+.bk-item small { color: var(--ink-soft); font-size: 14px; }
+.bk-all { font-size: 14px; color: var(--ink-soft); padding-left: 4px; }
+.bk-restore .row { margin-top: 12px; }
+
 /* the calendar */
 .icon-btn.alert::after { content: ''; position: absolute; top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--wax); box-shadow: 0 0 0 2px #26170e; }
 .icon-btn { position: relative; }
