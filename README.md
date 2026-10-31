@@ -72,14 +72,14 @@ git push
 **Generate one (DM):** open a town pin or a map's About panel, click **+ Generate a shop here**, pick the kind of shop and the settlement size, reroll until you like it, then **Save shop**. You can add the proprietor to People and drop a pin for the shop on the map.
 
 - **Size sets the stock:** hamlets carry a few plain goods; cities carry more, finer goods (“fine”) and rare finds (“under the counter”).
-- **Weekly restock:** stock refreshes every 7 days from when the shop was created, by itself. **Restock now** forces it.
+- **Weekly restock:** once the calendar is running (see below), every shop restocks on each **Firstday**. Before that, stock refreshes every 7 days from when the shop was created. **Restock now** forces it.
 - **Renown matters:** the nearest tracked standing (the town, then its map, then the dukedom) sets prices (+10 is 25% off, −10 is 60% more). Below 0 the fine goods are held back; from +3 the rare goods appear; at Reviled (−7 or lower) they won’t trade at all.
 - **Buying:** anyone can click **Buy**. Stock goes down and the purchase goes in the **Market → Ledger** (DM) / **My purchases** (players). Tick **Settled** once you’ve taken the gold; **void** undoes a purchase and returns the stock.
 
 - **27 kinds of shop**, from general stores and smiths to temples, inns, shipwrights, vintners, the Quartermaster and the Black Market. **Services** (lodging, healing, passage…) never run out.
 - **Black Market:** hidden from players by default, and renown works in reverse: the less the law likes the party, the better the deals.
 - **Your own touches (Edit on a shop):** *house specials* that are always in stock, and your own price for any generated item.
-- **Haggling:** once per player, per shop, per week. The atlas rolls the d20 and adds the player's Persuasion bonus (they set it once; after that only the DM can change it, under **Market → Ledger → Party Persuasion**). The total decides: 5 or less +20%, 6–9 +10%, 10–14 no change, 15–19 10% off, 20–24 15% off, 25+ 20% off, for the rest of that week. Every attempt shows in the ledger; you can reset one from the shop.
+- **Haggling:** once per player, per shop, per week (a calendar week, from Firstday). The atlas rolls the d20 and adds the player's Persuasion bonus (they set it once; after that only the DM can change it, under **Market → Ledger → Party Persuasion**). The total decides: 5 or less +20%, 6–9 +10%, 10–14 no change, 15–19 10% off, 20–24 15% off, 25+ 20% off, for the rest of that week. Every attempt shows in the ledger; you can reset one from the shop.
 
 Item names and prices follow the D&D 5e SRD 5.1 (CC BY 4.0); magic item prices are suggestions.
 
@@ -108,6 +108,20 @@ Every character carries one **backpack**: their coins (platinum, gold, silver, c
 **The DM's tools.** Open a player's backpack to see what they carry and their **History**: every coin that moves is a line there (what, how much, and what was left). **Give coins / Take coins / Set coins** always leave a line too. In Loot, **give to a character…** puts an item in a character's backpack (type their name; capitals don't matter), **Take coins** and **Split evenly** move the party's coins into backpacks, and **Generate loot** lets you decide who gets what before you drop it: each item line has its own "goes where" choice (a character, or the party's Loot), a stack can be split (**split…**) between people, the coins can go to one person or be **shared evenly** between the characters you tick, and a "Who gets what" summary shows the result. One press drops everything into the bags, all or nothing. **Match them to backpacks by name** ties items claimed in the past (by typing a name) to that player's backpack.
 
 **How safe is it?** The database rules (in `firestore.rules`) keep each player's coins their own: only they and the DM can see them; a player can't change their coins without a matching ledger line in the same step; and coins only go **up** through a sale, a cashed writ or a savings withdrawal. That stops mistakes and casual poking. It doesn't stop a determined cheat, because the page works out prices and the G.E.C. balances can still be edited by someone who knows how. Every move is in the History for you to see.
+
+## The calendar
+
+The Sacred Calendar of the Sollaran Archonate: twelve months of 28 days (336 days a cycle), seven days to a week, four seasons of three months. Every month begins on a Firstday, so the weekday of any date follows from it. The calendar button in the top bar (a page marked with today's day) opens it: today is highlighted in a month grid, with the season's painting, the seasons and months at a glance, **Coming up**, and the list of holidays. Players see it once it has been started.
+
+**Starting it (DM).** Open the calendar and set today's date (it asks for the month, day and cycle). From then on the date **moves by itself**, one day for each real day, turning over at midnight Eastern, even when nobody has the atlas open. (It is worked out from the date it was set and the real clock, so it needs no server.)
+
+**Moving it (DM).** Under *Move the calendar*: +1 day, +3 days, +1 week, +1 month, or any number of days (with a reason that goes in the history), **Set the exact date**, **Pause** (the date stands still, for weeks the party is away from the table) and **Resume**. Every move is in the **History of the date** (DM only), and **Undo the last move** takes one back. Moving the date reports the holidays it passed over.
+
+**What follows it.** Every shop restocks on each Firstday, and haggling and the weekly selling limits count calendar weeks. The two festivals switch on by themselves on their dates (7 Harmonis and 7 Artharis, three days each), and the banner names any holiday that is on. The old festival switches in Market still work, and *Festivals switch on by themselves* can be turned off. Before the calendar is started nothing changes: shops keep their own 7-day timers. The G.E.C.'s interest and rent and the gaming houses' daily limits still run on real time.
+
+**Holidays.** Five come with the calendar (Day of Founding, Bertram's Rye Ale Festival, Day of Reckoning, Festival of the Sacred Harmony, the Final Benediction). Add your own: name, month, day, every cycle or once, how many days it lasts, a colour and a note. A holiday can be **hidden from players**; the database rules keep it from them.
+
+**The files.** `js/calendar-data.js` holds all the date maths (tested on its own). The date is the document `config/calendar` (`{ day, since, paused }`); holidays are `holidays`; the history is `calendarLog`. The season paintings, holiday and month emblems and the sun are in `img/`.
 
 ## Tests
 
@@ -161,10 +175,12 @@ css/atlas.css       all styling
 js/config.js        campaign title, Firebase config, DM emails
 js/app.js           the atlas UI
 js/store-firebase.js  Firebase backend (anonymous players, Google DM)
+js/calendar-data.js   the calendar: dates, weekdays, holidays and the clock
 js/store-local.js     demo backend (browser storage)
 js/seed.js          demo content
 js/markdown.js      tiny safe markdown renderer
 firestore.rules     database security rules
 storage.rules       upload rules (only if uploads are on)
 maps/               your map images
+img/                the calendar: season paintings, holiday and month emblems, the sun
 ```
