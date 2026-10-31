@@ -73,6 +73,12 @@ export class FirebaseStore {
       (s) => h.renownLog?.(list(s)), err);
     onSnapshot(this.ref('config', 'renown'), (s) => h.renownTiers?.(s.exists() ? s.data().tiers : null), err);
     onSnapshot(this.ref('config', 'festivals'), (s) => h.festivals?.(s.exists() ? s.data() : {}), err);
+    // The calendar: the date it is on (everyone reads it), the holidays the DM added (hidden ones are the DM's),
+    // and the history of every move of the date (the DM's).
+    onSnapshot(this.ref('config', 'calendar'), (s) => h.calendar?.(s.exists() ? s.data() : null), err);
+    onSnapshot(this.isDM ? this.col('holidays') : query(this.col('holidays'), where('hidden', '==', false)),
+      (s) => h.holidays?.(list(s)), err);
+    if (this.isDM) onSnapshot(this.col('calendarLog'), (s) => h.calendarLog?.(list(s)), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -240,6 +246,18 @@ export class FirebaseStore {
   saveRenownTiers(tiers) { return this.F.setDoc(this.ref('config', 'renown'), { tiers }); }
   // which festivals are on (everyone reads it; only the DM can change it)
   saveFestivals(f) { return this.F.setDoc(this.ref('config', 'festivals'), f); }
+
+  // ── the calendar: where it is (config/calendar), the holidays the DM adds, and a line for every move of the date
+  saveCalendar(data) { return this.F.setDoc(this.ref('config', 'calendar'), { ...data, updatedAt: Date.now(), updatedBy: this.displayName || '' }, { merge: true }); }
+  async saveHoliday(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('holidays'), { createdAt: Date.now(), ...data })).id;
+    await setDoc(this.ref('holidays', id), data);
+    return id;
+  }
+  deleteHoliday(id) { return this.F.deleteDoc(this.ref('holidays', id)); }
+  async addCalendarLog(x) { return (await this.F.addDoc(this.col('calendarLog'), { ...x, at: Date.now(), by: this.displayName || '' })).id; }
+  updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 
   // ── shops and their purchase ledger
   async saveShop(data, id) {

@@ -5,6 +5,7 @@ import { EDGES, edgeById, GAMING_LIMITS, MIN_BET, GAMES, gameById, betOf, multip
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
 import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
+import * as CAL from './calendar-data.js';
 import { normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ const S = {
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
   backpacks: [], backpackLog: [], backpackCfg: {},
+  calendar: null, holidays: [], calendarLog: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -134,7 +136,9 @@ async function boot() {
     magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
     magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg,
+    calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog,
     ping: onPing, error: onError });
+  startCalendarClock();
   // every player has a backpack from their first visit, so the DM can see who is in the party
   if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
 }
@@ -271,7 +275,7 @@ function onRenownLog(list) { S.renownLog = list; if (S.panel?.type === 'renownDe
 function onRenownTiers(tiers) { S.renownTiers = tiers; refreshRenownViews(); }
 
 // Festivals the DM has switched on (Market → Festivals). They add specials to shop stock for a while.
-const activeFestivals = () => Object.keys(FESTIVALS).filter((id) => S.festivals?.[id]);
+const activeFestivals = () => { const auto = calFestivals(); return Object.keys(FESTIVALS).filter((id) => S.festivals?.[id] || auto.includes(id)); };
 function onFestivals(f) {
   S.festivals = f || {};
   updateFestBar();
@@ -280,9 +284,9 @@ function onFestivals(f) {
 function updateFestBar() {
   const bar = $('#festBar');
   if (!bar) return;
-  const on = activeFestivals();
-  bar.hidden = !on.length;
-  bar.textContent = on.map((id) => `\u2726 ${FESTIVALS[id].label}`).join('  \u00b7  ');
+  const names = [...activeFestivals().map((id) => FESTIVALS[id].label), ...calHolidaysToday().map((x) => x.name)];
+  bar.hidden = !names.length;
+  bar.textContent = names.map((n) => `\u2726 ${n}`).join('  \u00b7  ');
   bar.onclick = () => openMarket('shops');
 }
 const festivalNotes = () => activeFestivals().map((id) => h('p', { class: 'fest-note' }, h('strong', { text: `\u2726 ${FESTIVALS[id].label}` }), FESTIVALS[id].blurb));
@@ -823,7 +827,7 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
@@ -1315,7 +1319,7 @@ function sellOffer(shop, x, worth) {
   const standing = sellRenown(rn?.r.score ?? 0, !!SHOP_TYPES[shop.type]?.inverse);
   const cat = x.cat || tradeCategory(x.name);
   const region = cat ? regionMult(placeKeyOf(shop), cat) : 1;
-  const wk = shopWeek(shop).week;
+  const wk = weekOf(shop).week;
   // a player's own haggle here works both ways: a good roll earns more when selling
   const mine = x.kind === 'goods' && !isDM() ? S.haggles.find((g) => g.shopId === shop.id && g.week === wk && g.uid === S.store.uid) : null;
   const haggle = mine ? Math.min(1.2, Math.max(0.8, 2 - mine.mult)) : 1;
@@ -1395,7 +1399,7 @@ async function doSell(x, shop, qty, total, unit, place) {
       // the goods leave, the receipt is written and the gold arrives in the backpack, all in one step
       await earn(gpToCp(total), { kind: 'sell', text: `Sold ${qty > 1 ? `${qty} × ` : ''}${x.name} to ${shop.name}${place ? ` (${place.label})` : ''}`, ref: (t) => t.newId('sales') }, (t, logId, saleId) => {
         if (left <= 0) t.del('loot', x.id); else t.update('loot', x.id, { qty: left });
-        t.set('sales', saleId, { shopId: shop.id, week: shopWeek(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
+        t.set('sales', saleId, { shopId: shop.id, week: weekOf(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
           buyer: buyerName, buyerUid: myUid(), at: Date.now(), settled: true, paid: 'backpack', logId });
       });
       toast(`Sold for ${formatPrice(total)}. It is in your backpack.`);
@@ -1422,7 +1426,7 @@ async function doSell(x, shop, qty, total, unit, place) {
     } else {
       // the goods leave the stash first; the sale is then written to the ledger for the DM to settle
       if (left <= 0) await S.store.deleteLoot(x.id); else await S.store.saveLoot({ qty: left }, x.id);
-      await S.store.addSale({ shopId: shop.id, week: shopWeek(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
+      await S.store.addSale({ shopId: shop.id, week: weekOf(shop).week, itemName: x.name, qty, unitPrice: unit, total, cost: Math.round((Number(x.cost) || 0) * qty * 100) / 100,
         buyer: String(myName() || S.store.displayName || 'A party member').slice(0, 60) });
       toast(`Sold for ${formatPrice(total)}. It\u2019s on the ledger; your DM pays you.`);
     }
@@ -1596,6 +1600,306 @@ function journalEditView() {
         if (!confirm(`Delete "${e.title}" for good? Notes under it will be left without a home.`)) return;
         await S.store.deleteJournal(e.id).catch((err) => toast(err.message));
         openJournal();
+      } }) : null));
+}
+
+// ─── the calendar ───────────────────────────────────────────────────
+// The date is worked out from the calendar document and the real (Eastern) clock, so it moves at midnight by itself
+// even when nobody has the atlas open. Until the DM starts it, nothing here shows and shops keep their own 7-day timers.
+const calDay = () => CAL.currentDay(S.calendar);          // null until the calendar has been started
+const calHolidays = () => CAL.allHolidays(S.holidays);
+const SEASON_ART = { summer: 'img/season-summer.webp', autumn: 'img/season-autumn.webp', winter: 'img/season-winter.webp', spring: 'img/season-spring.webp' };
+const monthEmblem = (m) => `img/months/${CAL.MONTHS[m - 1].name.toLowerCase()}.webp`;
+// The painted emblems of the five holidays that come with the calendar (ones the DM adds have none).
+const holidayEmblem = (x) => x.builtin ? h('img', { class: 'cal-emblem', src: `img/holiday-${x.id}.webp`, alt: '', loading: 'lazy' }) : null;
+const weekOf = (shop) => shopWeek(shop, Date.now(), calDay());
+// "Firstday, the 8th of Solarius"
+const dayText = (n) => { const d = CAL.dateOf(n); return `${CAL.WEEKDAYS[d.weekday].name}, the ${CAL.ordinal(d.dom)} of ${CAL.MONTHS[d.month - 1].name}`; };
+const restockText = (st) => st.nextRestock ? daysUntil(st.nextRestock)
+  : `on Firstday, the ${CAL.ordinal(CAL.dateOf(CAL.weekStart(calDay()) + 7).dom)} of ${CAL.MONTHS[CAL.dateOf(CAL.weekStart(calDay()) + 7).month - 1].name} (in ${st.daysLeft} day${st.daysLeft === 1 ? '' : 's'}${S.calendar?.paused ? ', if the calendar moves' : ''})`;
+
+// Festivals the calendar has switched on by their dates, and holidays on today that are not shop festivals.
+const calFestivals = () => { const d = calDay(); return d == null || S.calendar?.autoFestivals === false ? [] : CAL.festivalsOn(d, calHolidays()); };
+const calHolidaysToday = () => { const d = calDay(); return d == null ? [] : CAL.holidaysOn(d, calHolidays()).filter((x) => !x.festival || !FESTIVALS[x.festival]); };
+
+let calSeen = null;      // the day we last showed, to notice when it turns over
+function onCalendar(c) { S.calendar = c; calChanged(); }
+function onHolidays(list) { S.holidays = list; calChanged(); }
+function onCalendarLog(list) { S.calendarLog = list; if (S.panel?.type === 'calendar') renderPanel(); }
+function calChanged(fromClock) {
+  const d = calDay();
+  if (calSeen != null && d != null && d !== calSeen && (fromClock || !isDM())) noteNewDay(calSeen, d);
+  calSeen = d;
+  updateCalButton();
+  updateFestBar();
+  refreshCalViews(fromClock);
+}
+function refreshCalViews(fromClock) {
+  if (!['calendar', 'shop', 'market', 'sell', 'backpack'].includes(S.panel?.type)) return;
+  if (fromClock && document.activeElement?.closest?.('#panelBody input, #panelBody textarea, #panelBody select')) return;
+  renderPanel();
+}
+// Told to everyone who has the atlas open when the date changes: a new day, and a new week with new stock.
+function noteNewDay(before, d) {
+  const weekTurned = CAL.dateOf(d).week !== CAL.dateOf(before).week;
+  toast(`${weekTurned && d > before ? 'A new week begins. ' : ''}It is now ${CAL.formatDate(d, true)}.${weekTurned && d > before ? ' The shops have restocked.' : ''}`);
+}
+function startCalendarClock() {
+  const tick = () => { if (calDay() !== calSeen) calChanged(true); };
+  setInterval(tick, 20000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+}
+
+function updateCalButton() {
+  const btn = $('#calendarBtn');
+  if (!btn) return;
+  const d = calDay();
+  btn.hidden = d == null && !isDM();
+  const dt = d == null ? null : CAL.dateOf(d);
+  $('#calNum').textContent = dt ? String(dt.dom) : '';
+  btn.title = dt ? `${CAL.formatDate(dt)}${S.calendar?.paused ? ' (paused)' : ''}` : 'The calendar (not started yet)';
+}
+
+function openCalendar(opts = {}) {
+  S.pinId = null; highlightPin();
+  const d = calDay(), dt = d == null ? null : CAL.dateOf(d);
+  S.panel = { type: 'calendar', id: 'cal', cycle: dt?.cycle, month: dt?.month, sel: d, ...opts };
+  renderPanel();
+}
+
+// A line for the DM's history of the date, and the toast that says what changed.
+async function logCalendar(entry) { try { return await S.store.addCalendarLog(entry); } catch (e) { console.warn('Could not log the calendar:', e); return null; } }
+
+// The DM moves the date: forward (or back) by some days.
+async function moveCalendar(days, note) {
+  days = Math.round(Number(days) || 0);
+  if (!days) { toast('Choose how many days.'); return; }
+  const from = calDay() ?? 0, next = CAL.advanced(S.calendar, days);
+  try {
+    await S.store.saveCalendar(next);
+    const passed = days > 0 ? CAL.holidaysBetween(from, next.day, calHolidays()) : [];
+    const id = await logCalendar({ kind: 'advance', days: next.day - from, from, to: next.day, note: String(note || '').slice(0, 160), passed: passed.map((x) => x.holiday.name).slice(0, 8) });
+    const weeks = CAL.dateOf(next.day).week - CAL.dateOf(from).week;
+    toast(`${days > 0 ? 'Moved on' : 'Moved back'} ${Math.abs(next.day - from)} day${Math.abs(next.day - from) === 1 ? '' : 's'} to ${CAL.formatDate(next.day, true)}.${weeks > 0 ? ' The shops have restocked.' : ''}${passed.length ? ` Passed: ${passed.map((x) => x.holiday.name).join(', ')}.` : ''}`,
+      'Undo', () => undoMove(id));
+  } catch (e) { toast('Could not move the date: ' + e.message); }
+}
+// Set the exact date (also how the calendar is started).
+async function setCalendar(cycle, month, dom, note) {
+  const from = calDay(), to = CAL.toDayNumber(cycle, month, dom), starting = from == null;
+  try {
+    await S.store.saveCalendar({ ...CAL.anchored(S.calendar, to), autoFestivals: S.calendar?.autoFestivals !== false });
+    await logCalendar({ kind: starting ? 'start' : 'set', days: starting ? 0 : to - from, from: from ?? to, to, note: String(note || '').slice(0, 160), passed: [] });
+    toast(starting ? `The calendar is running. It is ${CAL.formatDate(to, true)}.` : `The date is now ${CAL.formatDate(to, true)}.`);
+  } catch (e) { toast('Could not set the date: ' + e.message); }
+}
+async function pauseCalendar(on) {
+  const d = calDay();
+  try {
+    await S.store.saveCalendar(on ? CAL.paused(S.calendar) : CAL.resumed(S.calendar));
+    await logCalendar({ kind: on ? 'pause' : 'resume', days: 0, from: d, to: d, note: '', passed: [] });
+    toast(on ? 'The calendar is paused. The date stands still until you resume it.' : 'The calendar is running again.');
+  } catch (e) { toast('Could not change that: ' + e.message); }
+}
+// Take back the last move of the date.
+async function undoMove(id) {
+  const last = (id && S.calendarLog.find((x) => x.id === id)) || [...S.calendarLog].sort((a, b) => b.at - a.at).find((x) => ['advance', 'set'].includes(x.kind) && !x.undone);
+  if (!last || last.undone) { toast('There is nothing to undo.'); return; }
+  const undo = last.to - last.from, from = calDay() ?? 0, next = CAL.advanced(S.calendar, -undo);
+  try {
+    await S.store.saveCalendar(next);
+    await S.store.updateCalendarLog(last.id, { undone: true });
+    await logCalendar({ kind: 'undo', days: next.day - from, from, to: next.day, note: `Took back the move of ${undo} day${Math.abs(undo) === 1 ? '' : 's'}`, passed: [] });
+    toast(`Undone. It is ${CAL.formatDate(next.day, true)} again.`);
+  } catch (e) { toast('Could not undo: ' + e.message); }
+}
+
+function calendarView() {
+  const P = S.panel, d = calDay();
+  if (d == null) return calStartView();
+  const dt = CAL.dateOf(d), season = CAL.SEASONS[dt.season], hols = calHolidays(), todays = CAL.holidaysOn(d, hols);
+  const wrap = h('div', { class: 'cal' });
+
+  wrap.append(h('header', { class: `cal-head s-${season.id}`, style: `background-image:linear-gradient(180deg,rgba(20,12,6,.3),rgba(20,12,6,.78)),url('${SEASON_ART[season.id]}')` },
+    h('img', { class: 'cal-sun', src: 'img/sun.webp', alt: '' }),
+    h('div', { class: 'cal-eyebrow', text: 'The Sacred Calendar of the Sollaran Archonate' }),
+    h('h2', { class: 'cal-weekday', text: CAL.WEEKDAYS[dt.weekday].name }),
+    h('p', { class: 'cal-date', text: `The ${CAL.ordinal(dt.dom)} of ${CAL.MONTHS[dt.month - 1].name}, Cycle ${dt.cycle}` }),
+    h('p', { class: 'cal-season', text: `${season.name} · ${season.title}` }),
+    S.calendar.paused ? h('p', { class: 'cal-paused', text: 'The calendar is paused.' }) : null));
+  wrap.append(h('p', { class: 'cal-note', text: `${CAL.WEEKDAYS[dt.weekday].name}: ${CAL.WEEKDAYS[dt.weekday].blurb} ${dt.weekday === 0 ? 'A new week begins, and the shops restock.' : `The shops restock in ${CAL.daysToFirstday(d)} day${CAL.daysToFirstday(d) === 1 ? '' : 's'}, on Firstday.`}` }));
+  if (todays.length) wrap.append(...todays.map((x) => h('div', { class: 'fest-note cal-today-hol' }, holidayEmblem(x), h('div', {}, h('strong', { text: `✦ ${x.name}` }), x.blurb || ''))));
+
+  // the month shown, with ‹ › to look at others
+  const shown = { cycle: P.cycle ?? dt.cycle, month: P.month ?? dt.month };
+  const goMonth = (delta) => {
+    let m = shown.month + delta, c = shown.cycle;
+    if (m < 1) { m = 12; c = Math.max(1, c - 1); } else if (m > 12) { m = 1; c += 1; }
+    P.cycle = c; P.month = m; renderPanel();
+  };
+  const mo = CAL.MONTHS[shown.month - 1], mSeason = CAL.SEASONS[Math.floor((shown.month - 1) / 3)];
+  wrap.append(h('div', { class: `cal-month-bar s-${mSeason.id}` },
+    h('button', { class: 'icon-btn small', type: 'button', title: 'Last month', 'aria-label': 'Last month', onclick: () => goMonth(-1) }, h('span', { text: '‹' })),
+    h('img', { class: 'cal-month-emblem', src: monthEmblem(shown.month), alt: '' }),
+    h('div', { class: 'cal-month-name' }, h('strong', { text: `${shown.month}. ${mo.name}` }), h('small', { text: `${mo.title} · Cycle ${shown.cycle}` })),
+    h('button', { class: 'icon-btn small', type: 'button', title: 'Next month', 'aria-label': 'Next month', onclick: () => goMonth(1) }, h('span', { text: '›' }))));
+  wrap.append(h('p', { class: 'cal-blurb', text: mo.blurb }));
+  wrap.append(monthGrid(shown.cycle, shown.month, d, P.sel, hols));
+  if (shown.cycle !== dt.cycle || shown.month !== dt.month) {
+    wrap.append(h('button', { class: 'btn small ghost cal-today-btn', type: 'button', text: 'Back to today', onclick: () => { P.cycle = dt.cycle; P.month = dt.month; P.sel = d; renderPanel(); } }));
+  }
+  wrap.append(selectedDay(P.sel ?? d, d, hols));
+
+  // the twelve months, by season
+  wrap.append(h('div', { class: 'cal-year', 'aria-label': 'The twelve months' }, ...CAL.SEASONS.map((s, si) =>
+    h('div', { class: `cal-season-col s-${s.id}` }, h('span', { class: 'cal-season-name', text: s.name }),
+      ...[0, 1, 2].map((k) => {
+        const m = si * 3 + k + 1;
+        return h('button', { type: 'button', class: `cal-m${m === shown.month ? ' on' : ''}${m === dt.month && shown.cycle === dt.cycle ? ' now' : ''}`, title: CAL.MONTHS[m - 1].title,
+          onclick: () => { P.month = m; renderPanel(); } }, `${m}. ${CAL.MONTHS[m - 1].name}`);
+      })))));
+
+  // what is coming
+  const coming = [];
+  for (let from = d + 1, i = 0; coming.length < 3 && i < 8; i++) {
+    const nx = CAL.nextHoliday(from, hols.filter((x) => !coming.some((c) => c.holiday === x)));
+    if (!nx) break;
+    coming.push(nx); from = nx.n + 1;
+  }
+  const todayStarts = todays.filter((x) => !CAL.occursOn(x, d - 1));
+  wrap.append(h('div', { class: 'cal-coming' }, h('strong', { text: 'Coming up' }),
+    ...(todayStarts.length || coming.length ? [...todayStarts.map((x) => h('p', {}, h('b', { text: x.name }), ' is today.')),
+      ...coming.map((c) => h('p', {}, h('b', { text: c.holiday.name }), ` ${dayText(c.n)}, in ${c.n - d} day${c.n - d === 1 ? '' : 's'}.`, c.holiday.hidden && isDM() ? h('em', { text: ' (hidden from players)' }) : null))]
+      : [h('p', { class: 'muted', text: 'No holidays in sight.' })])));
+
+  wrap.append(holidayList(hols));
+  if (isDM()) wrap.append(calendarDM(d, dt));
+  return wrap;
+}
+
+// Before the calendar exists: players wait, and the DM sets the date.
+function calStartView() {
+  const wrap = h('div', { class: 'cal' }, h('h2', { class: 'codex-title', text: 'The Sacred Calendar' }));
+  if (!isDM()) { wrap.append(h('p', { class: 'muted', text: 'The calendar has not been set yet. Ask your DM.' })); return wrap; }
+  const cycle = h('input', { type: 'number', id: 'calStartCycle', min: 1, max: 99999, value: 742 });
+  const month = h('select', { id: 'calStartMonth' }, ...CAL.MONTHS.map((m, i) => h('option', { value: i + 1, text: `${i + 1}. ${m.name}`, selected: i === 4 })));
+  const day = h('select', { id: 'calStartDay' }, ...Array.from({ length: 28 }, (_, i) => h('option', { value: i + 1, text: `${i + 1}${CAL.WEEKDAYS[i % 7].name ? ` (${CAL.WEEKDAYS[i % 7].name})` : ''}`, selected: i === 1 })));
+  wrap.append(
+    h('p', { text: 'Set the date it is in the campaign now. From then on the calendar moves on by itself, one day for each real day (the day turns over at midnight Eastern), even when nobody has the atlas open. Every shop will restock on each Firstday. You move the date by hand for travel and downtime.' }),
+    h('div', { class: 'row gen-pickers' }, field('Month', month), field('Day', day), field('Cycle', cycle)),
+    h('button', { class: 'btn', id: 'calStartBtn', type: 'button', text: 'Start the calendar', onclick: () => setCalendar(Number(cycle.value) || 742, Number(month.value), Number(day.value), 'The calendar was started') }));
+  return wrap;
+}
+
+function monthGrid(cycle, month, today, sel, hols) {
+  const first = CAL.toDayNumber(cycle, month, 1);
+  const grid = h('div', { class: 'cal-grid', role: 'grid', 'aria-label': `${CAL.MONTHS[month - 1].name}, Cycle ${cycle}` },
+    ...CAL.WEEKDAYS.map((w, i) => h('span', { class: 'cal-wd', title: w.name, text: CAL.ordinal(i + 1) })));
+  for (let i = 0; i < CAL.MONTH_DAYS; i++) {
+    const n = first + i, here = CAL.holidaysOn(n, hols);
+    const cls = ['cal-day', n === today ? 'today' : '', n < today ? 'past' : '', n === sel ? 'sel' : '', here.length ? 'hol' : '', i % 7 === 0 ? 'fd' : ''].filter(Boolean).join(' ');
+    grid.append(h('button', { type: 'button', class: cls, 'data-n': n, 'aria-label': `${dayText(n)}${here.length ? `: ${here.map((x) => x.name).join(', ')}` : ''}${n === today ? ' (today)' : ''}`,
+      title: here.length ? here.map((x) => x.name).join(', ') : dayText(n), style: here.length ? `--hc:${here[0].color || '#b8862b'}` : null,
+      onclick: () => { S.panel.sel = n; renderPanel(); } },
+    h('span', { text: String(i + 1) }), here.length ? h('i', { class: 'cal-dot', 'aria-hidden': 'true' }) : null));
+  }
+  return grid;
+}
+
+// The day picked on the grid: what it is, what falls on it, and (for the DM) what can be done with it.
+function selectedDay(n, today, hols) {
+  const here = CAL.holidaysOn(n, hols), dt = CAL.dateOf(n), rel = n === today ? 'Today' : n > today ? `In ${n - today} day${n - today === 1 ? '' : 's'}` : `${today - n} day${today - n === 1 ? '' : 's'} ago`;
+  return h('div', { class: 'cal-detail' },
+    h('strong', { text: CAL.formatDate(dt) }), h('small', { text: rel }),
+    h('p', { class: 'muted', text: `${CAL.WEEKDAYS[dt.weekday].name}: ${CAL.WEEKDAYS[dt.weekday].blurb}` }),
+    ...here.map((x) => h('div', { class: 'cal-hol-item', style: `--hc:${x.color || '#b8862b'}` }, holidayEmblem(x), h('div', {}, h('b', { text: x.name }),
+      x.span > 1 ? h('small', { text: ` ${x.span} days` }) : null, x.hidden && isDM() ? h('small', { text: ' hidden from players' }) : null, x.blurb ? h('p', { text: x.blurb }) : null))),
+    isDM() ? h('div', { class: 'row' },
+      n !== today ? h('button', { class: 'btn small ghost', type: 'button', text: 'Make this today', onclick: () => { if (confirm(`Set the date to ${CAL.formatDate(n)}?`)) setCalendar(dt.cycle, dt.month, dt.dom, 'Set from the calendar'); } }) : null,
+      h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a holiday here', onclick: () => openHolidayEditor(null, { month: dt.month, day: dt.dom, cycle: dt.cycle }) })) : null);
+}
+
+function holidayList(hols) {
+  const sorted = [...hols].sort((a, b) => a.month - b.month || a.day - b.day);
+  return h('details', { class: 'legend cal-holidays' }, h('summary', { text: `Holidays (${sorted.length})` }),
+    h('ul', { class: 'cal-hol-list' }, ...sorted.map((x) => h('li', { style: `--hc:${x.color || '#b8862b'}` },
+      h('span', { class: 'cal-dot' }), h('b', { text: x.name }),
+      h('small', { text: ` ${x.day} ${CAL.MONTHS[x.month - 1].name}${x.repeat === 'once' ? `, Cycle ${x.cycle} only` : ''}${x.span > 1 ? `, ${x.span} days` : ''}${x.hidden && isDM() ? ', hidden from players' : ''}` }),
+      isDM() && !x.builtin ? h('button', { class: 'linklike', type: 'button', text: 'edit', onclick: () => openHolidayEditor(x) }) : null))),
+    isDM() ? h('button', { class: 'btn small ghost', type: 'button', text: '+ Add a holiday', onclick: () => openHolidayEditor(null) }) : null);
+}
+
+// The DM's controls: move the date, set it, pause it, and the history.
+function calendarDM(d, dt) {
+  const days = h('input', { type: 'number', id: 'calDays', min: -400, max: 400, value: 1, 'aria-label': 'Days' });
+  const note = h('input', { type: 'text', id: 'calNote', maxlength: 160, placeholder: 'Why? (e.g. travelled to Lynport)', 'aria-label': 'Reason' });
+  const quick = (label, n) => h('button', { class: 'btn small ghost', type: 'button', text: label, onclick: () => moveCalendar(n, note.value) });
+  const cycle = h('input', { type: 'number', id: 'calSetCycle', min: 1, max: 99999, value: dt.cycle });
+  const month = h('select', { id: 'calSetMonth' }, ...CAL.MONTHS.map((m, i) => h('option', { value: i + 1, text: `${i + 1}. ${m.name}`, selected: i + 1 === dt.month })));
+  const day = h('select', { id: 'calSetDay' }, ...Array.from({ length: 28 }, (_, i) => h('option', { value: i + 1, text: String(i + 1), selected: i + 1 === dt.dom })));
+  const lastMove = [...S.calendarLog].sort((a, b) => b.at - a.at).find((x) => ['advance', 'set'].includes(x.kind) && !x.undone);
+  const history = [...S.calendarLog].sort((a, b) => b.at - a.at).slice(0, 12);
+  const kindText = { start: 'Started', advance: 'Moved', set: 'Set', pause: 'Paused', resume: 'Resumed', undo: 'Undone' };
+  return h('details', { class: 'legend cal-dm', open: true }, h('summary', { text: 'Move the calendar (DM)' }),
+    h('p', { class: 'muted', text: 'The date moves on by itself at midnight Eastern. Use these for travel, rests and downtime. Every shop restocks when the date reaches a Firstday.' }),
+    h('div', { class: 'row' }, quick('+1 day', 1), quick('+3 days', 3), quick('+1 week', 7), quick('+1 month', 28), quick('−1 day', -1)),
+    h('div', { class: 'row' }, field('Days', days), field('Reason (kept in the history)', note)),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'calMoveBtn', type: 'button', text: 'Move the date', onclick: () => moveCalendar(Number(days.value), note.value) }),
+      lastMove ? h('button', { class: 'btn small ghost', id: 'calUndoBtn', type: 'button', text: 'Undo the last move', onclick: () => undoMove() }) : null),
+    h('div', { class: 'cal-set' }, h('strong', { text: 'Set the exact date' }),
+      h('div', { class: 'row gen-pickers' }, field('Month', month), field('Day', day), field('Cycle', cycle)),
+      h('button', { class: 'btn small ghost', id: 'calSetBtn', type: 'button', text: 'Set the date', onclick: () => { if (confirm('Set the date to this? The shops will restock if it lands in a new week.')) setCalendar(Number(cycle.value) || dt.cycle, Number(month.value), Number(day.value), note.value || 'Set by the DM'); } })),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small ghost', id: 'calPauseBtn', type: 'button', text: S.calendar.paused ? 'Resume the calendar' : 'Pause the calendar', onclick: () => pauseCalendar(!S.calendar.paused) }),
+      h('small', { class: 'muted', text: S.calendar.paused ? 'It is standing still, so it will not move until you resume it.' : 'Pause it for weeks the party is not playing, so no days slip by.' })),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'calAutoFest', checked: S.calendar.autoFestivals !== false, onchange: (e) => S.store.saveCalendar({ autoFestivals: e.target.checked }).catch((err) => toast('Could not change it: ' + err.message)) }),
+      ' Festivals switch on by themselves on their dates'),
+    history.length ? h('details', { class: 'legend' }, h('summary', { text: 'History of the date' }),
+      h('ul', { class: 'sales cal-history' }, ...history.map((x) => h('li', { class: x.undone ? 'undone' : '', text:
+        `${kindText[x.kind] || x.kind}${x.kind === 'advance' || x.kind === 'undo' ? ` ${x.days > 0 ? '+' : ''}${x.days} day${Math.abs(x.days) === 1 ? '' : 's'}` : ''} → ${CAL.formatDate(x.to, true)}${x.note ? `. ${x.note}` : ''}${x.passed?.length ? `. Passed: ${x.passed.join(', ')}` : ''} · ${ago(x.at)}` })))) : null);
+}
+
+// Add or change a holiday (DM).
+function openHolidayEditor(hol, preset) {
+  S.panel = { type: 'holidayEdit', id: hol?.id || 'new', preset: hol ? null : preset || null };
+  renderPanel();
+}
+function holidayEditView() {
+  const P = S.panel, isNew = P.id === 'new', x = isNew ? null : S.holidays.find((y) => y.id === P.id);
+  if (!isDM()) return h('p', { class: 'muted', text: 'Only the DM changes holidays.' });
+  if (!isNew && !x) return h('p', { class: 'muted', text: 'That holiday no longer exists.' });
+  const pre = P.preset || {}, back = () => openCalendar();
+  const name = h('input', { type: 'text', id: 'holName', maxlength: 80, value: x?.name || '', placeholder: 'e.g. The Harvest Moot' });
+  const month = h('select', { id: 'holMonth' }, ...CAL.MONTHS.map((m, i) => h('option', { value: i + 1, text: `${i + 1}. ${m.name}`, selected: i + 1 === (x?.month ?? pre.month ?? 1) })));
+  const day = h('select', { id: 'holDay' }, ...Array.from({ length: 28 }, (_, i) => h('option', { value: i + 1, text: String(i + 1), selected: i + 1 === (x?.day ?? pre.day ?? 1) })));
+  const repeat = h('select', { id: 'holRepeat' }, h('option', { value: 'yearly', text: 'Every cycle', selected: (x?.repeat || 'yearly') === 'yearly' }), h('option', { value: 'once', text: 'Once, in one cycle', selected: x?.repeat === 'once' }));
+  const cycle = h('input', { type: 'number', id: 'holCycle', min: 1, max: 99999, value: x?.cycle ?? pre.cycle ?? (calDay() != null ? CAL.dateOf(calDay()).cycle : 742) });
+  const span = h('input', { type: 'number', id: 'holSpan', min: 1, max: 28, value: x?.span ?? 1 });
+  const color = h('input', { type: 'color', id: 'holColor', value: x?.color || '#b8862b' });
+  const blurb = h('textarea', { id: 'holBlurb', rows: 4, maxlength: 600, placeholder: 'What happens on this day?' }); blurb.value = x?.blurb || '';
+  const hidden = h('input', { type: 'checkbox', id: 'holHidden', checked: !!x?.hidden });
+  const cycleField = field('Which cycle', cycle);
+  const showCycle = () => { cycleField.hidden = repeat.value !== 'once'; };
+  repeat.onchange = showCycle; showCycle();
+  const save = async () => {
+    const data = CAL.holidayFrom({ name: name.value, month: month.value, day: day.value, repeat: repeat.value, cycle: cycle.value, span: span.value, blurb: blurb.value, color: color.value, hidden: hidden.checked });
+    if (data.error) { toast(data.error); return; }
+    try { await S.store.saveHoliday(data, x?.id); toast('Holiday saved.'); back(); } catch (e) { toast('Could not save: ' + e.message); }
+  };
+  return h('form', { class: 'editor', onsubmit: (ev) => ev.preventDefault() },
+    h('h2', { class: 'codex-title', text: isNew ? 'New holiday' : 'Edit holiday' }),
+    field('Name', name),
+    h('div', { class: 'row gen-pickers' }, field('Month', month), field('Day', day)),
+    h('div', { class: 'row gen-pickers' }, field('Repeats', repeat), cycleField),
+    h('div', { class: 'row gen-pickers' }, field('Lasts (days)', span), field('Colour', color)),
+    field('About it', blurb),
+    h('label', { class: 'check' }, hidden, ' Hide it from the players (they will not see it on the calendar)'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', id: 'holSave', type: 'button', text: 'Save', onclick: save }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: back }),
+      x ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Delete "${x.name}"?`)) return;
+        await S.store.deleteHoliday(x.id).catch((e) => toast(e.message));
+        back();
       } }) : null));
 }
 
@@ -1988,7 +2292,7 @@ function shopsAt(type, id) {
 }
 
 function stockFor(shop) {
-  const { week, nextRestock } = shopWeek(shop);
+  const { week, nextRestock, daysLeft } = weekOf(shop);
   const sold = new Map();
   for (const p of S.purchases) if (p.shopId === shop.id && p.week === week) sold.set(p.itemKey, (sold.get(p.itemKey) || 0) + p.qty);
   const rn = renownAt(shop.location);
@@ -2013,7 +2317,7 @@ function stockFor(shop) {
       available: !terms.refuses && !!terms.allow[i.grade],
     };
   });
-  return { week, nextRestock, items, rn, score, terms, inverse, myHaggle };
+  return { week, nextRestock, daysLeft, items, rn, score, terms, inverse, myHaggle };
 }
 
 // Homebrew (the DM's items marked "in shops") sometimes appears under the counter in big-city
@@ -2149,7 +2453,7 @@ function shopView() {
     gecBox(shop, st),
     gamingBox(shop, st),
     pleasureBox(shop, st),
-    h('p', { class: 'muted shop-restock', text: `Stock refreshes ${daysUntil(st.nextRestock)}.` }),
+    h('p', { class: 'muted shop-restock', text: `Stock refreshes ${restockText(st)}.` }),
     st.items.length ? h('table', { class: 'stock' },
       h('thead', {}, h('tr', {}, h('th', { text: 'Item' }), h('th', { text: 'Left' }), h('th', { text: 'Price' }), h('th', {}))),
       h('tbody', {}, st.items.map((i) => h('tr', { class: `${i.grade}${i.available ? '' : ' unavailable'}${i.left ? '' : ' sold-out'}` },
@@ -2749,7 +3053,7 @@ function houseSpecialsEditor(extras) {
 // DM: set your own price for anything the generator stocks (sticks whenever that item comes back).
 function priceOverridesEditor(shop) {
   const current = { ...(shop.priceOverrides || {}) };
-  const items = generateStock(shop, shopWeek(shop).week);
+  const items = generateStock(shop, weekOf(shop).week);
   const list = h('div', { class: 'override-list' }, items.map((i) => {
     const input = h('input', { type: 'number', step: '0.01', min: '0', placeholder: String(i.price), value: current[i.key] ?? '', 'data-key': i.key });
     return h('label', { class: 'override-row' }, h('span', { text: i.name }), input);
@@ -4168,6 +4472,8 @@ function setupChrome() {
   $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
   $('#marketBtn').onclick = () => (S.panel?.type === 'market' ? closePanel() : openMarket());
   $('#backpackBtn').onclick = () => (S.panel?.type === 'backpack' ? closePanel() : openBackpack());
+  $('#calendarBtn').onclick = () => (S.panel?.type === 'calendar' ? closePanel() : openCalendar());
+  updateCalButton();
   refreshBackpackViews();
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);

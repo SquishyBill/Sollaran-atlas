@@ -735,8 +735,12 @@ export function formatPrice(gp) {
 }
 
 export const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-// Which week's stock a shop shows now (restocks every 7 days from creation; "Restock now" adds an offset).
-export function shopWeek(shop, now = Date.now()) {
+// Which week's stock a shop shows now. With a calendar date (the day count), every shop restocks on the Firstday of
+// each calendar week; without one, it restocks every 7 days from when it was made. "Restock now" adds an offset.
+export function shopWeek(shop, now = Date.now(), calDay = null) {
+  if (Number.isInteger(calDay) && calDay >= 0) {
+    return { week: Math.floor(calDay / 7) + (shop.restockOffset || 0), nextRestock: null, daysLeft: 7 - (calDay % 7) };
+  }
   const elapsed = Math.max(0, Math.floor((now - shop.createdAt) / WEEK_MS));
   return { week: elapsed + (shop.restockOffset || 0), nextRestock: shop.createdAt + (elapsed + 1) * WEEK_MS };
 }
