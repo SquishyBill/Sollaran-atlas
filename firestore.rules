@@ -183,7 +183,28 @@ service cloud.firestore {
         && request.resource.data.qty == 1
         && request.resource.data.value is number && request.resource.data.value >= 1 && request.resource.data.value <= 50000
         && request.resource.data.cost is number && request.resource.data.cost >= 0
-        && heldByBuyerOnly());
+        && heldByBuyerOnly())
+        // part of a stack in your own backpack, split off for another player: the new entry's quantity must be
+        // exactly what the original lost in the same step
+        || (isPlayer()
+        && request.resource.data.kind == 'goods' && request.resource.data.status == 'identified'
+        && request.resource.data.keys().hasOnly(['kind', 'name', 'detail', 'value', 'cost', 'qty', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace', 'holderUid', 'claimedBy', 'claimedAt', 'giftFrom'])
+        && request.resource.data.get('giftFrom', '') is string && request.resource.data.get('giftFrom', '') != ''
+        && exists(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom))
+        && existsAfter(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom))
+        && get(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.kind == 'goods'
+        && get(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.holderUid == request.auth.uid
+        && request.resource.data.name == get(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.name
+        && request.resource.data.qty is int && request.resource.data.qty >= 1
+        && getAfter(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.qty
+           == get(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.qty - request.resource.data.qty
+        && getAfter(/databases/$(database)/documents/loot/$(request.resource.data.giftFrom)).data.qty >= 1
+        && request.resource.data.value is number && request.resource.data.value >= 0
+        && request.resource.data.cost is number && request.resource.data.cost >= 0
+        && request.resource.data.holderUid is string && request.resource.data.holderUid != request.auth.uid
+        && exists(/databases/$(database)/documents/backpacks/$(request.resource.data.holderUid))
+        && request.resource.data.claimedBy == get(/databases/$(database)/documents/backpacks/$(request.resource.data.holderUid)).data.owner
+        && request.resource.data.claimedAt is number);
       // A player can remove (sell, cash in) what is theirs: unclaimed goods, any writ, or anything in their own backpack.
       allow delete: if isDM() || (isPlayer()
         && ((resource.data.kind == 'goods' && resource.data.get('claimedBy', null) == null)
@@ -198,7 +219,15 @@ service cloud.firestore {
           && resource.data.kind == 'goods'
           && (resource.data.get('claimedBy', null) == null || resource.data.get('holderUid', null) == request.auth.uid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty'])
-          && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty < resource.data.qty);
+          && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty < resource.data.qty)
+        // giving what is in your own backpack to another player's: only the holder changes
+        || (isPlayer()
+          && resource.data.get('holderUid', null) == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['holderUid', 'claimedBy', 'claimedAt'])
+          && request.resource.data.holderUid is string && request.resource.data.holderUid != request.auth.uid
+          && exists(/databases/$(database)/documents/backpacks/$(request.resource.data.holderUid))
+          && request.resource.data.claimedBy == get(/databases/$(database)/documents/backpacks/$(request.resource.data.holderUid)).data.owner
+          && request.resource.data.claimedAt is number);
     }
 
     // What a player buys can go straight into their own backpack: if it says who holds it, that must be them.
@@ -300,14 +329,57 @@ service cloud.firestore {
         && d.get('gamble', {}) is map
         && ((after == before && !gambled) || (d.lastLog is string && moveOk(d, before, after)));
     }
+    // Giving coins to another player: their backpack may go UP, by exactly what the giver's own backpack goes
+    // down by in the same step, with a "gift" line in the receiver's ledger that names the giver. Nothing else
+    // about the receiver's backpack can change, and a player can never lower someone else's coins.
+    function giftIn(uid) {
+      let d = request.resource.data;
+      let log = getAfter(/databases/$(database)/documents/backpackLog/$(d.lastLog)).data;
+      let delta = coinSum(d.coins) - coinSum(resource.data.coins);
+      let giver = request.auth.uid;
+      return d.diff(resource.data).affectedKeys().hasOnly(['coins', 'lastLog', 'updatedAt'])
+        && d.lastLog is string && coinsOk(d.coins) && delta > 0
+        && log.uid == uid && log.kind == 'gift' && log.ref == giver && log.deltaCp == delta
+        && exists(/databases/$(database)/documents/backpacks/$(giver))
+        && coinSum(get(/databases/$(database)/documents/backpacks/$(giver)).data.coins)
+           - coinSum(getAfter(/databases/$(database)/documents/backpacks/$(giver)).data.coins) == delta;
+    }
     match /backpacks/{uid} {
       allow read: if isDM() || (isPlayer() && request.auth.uid == uid);
-      allow create, update: if isDM() || (isPlayer() && request.auth.uid == uid && backpackOk(uid));
+      allow create: if isDM() || (isPlayer() && request.auth.uid == uid && backpackOk(uid));
+      allow update: if isDM() || (isPlayer() && request.auth.uid == uid && backpackOk(uid))
+        || (isPlayer() && request.auth.uid != uid && giftIn(uid));
       allow delete: if isDM();
+    }
+    // The party's names, so players can give to each other. Each player writes only their own.
+    match /roster/{uid} {
+      allow read: if isPlayer();
+      allow create, update: if isDM() || (isPlayer() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'name']) && request.resource.data.uid == uid
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60);
+      allow delete: if isDM();
+    }
+    // A line written into ANOTHER player's ledger, to tell them what they were given. It only stands if it is
+    // tied to the gift itself in the same step: coins added to their backpack (naming this line), or an item that
+    // is now theirs (moved from the giver, or split off the giver's stack).
+    function giftLineOk(id) {
+      let l = request.resource.data;
+      return l.keys().hasOnly(['uid', 'owner', 'kind', 'deltaCp', 'balanceCp', 'text', 'ref', 'at'])
+        && l.uid != request.auth.uid
+        && l.owner is string && l.owner.size() <= 60 && l.text is string && l.text.size() <= 240
+        && l.deltaCp is int && l.balanceCp is int && l.balanceCp >= 0 && l.ref is string && l.ref.size() <= 120 && l.at is number
+        && ((l.kind == 'gift' && l.deltaCp > 0 && l.ref == request.auth.uid
+              && getAfter(/databases/$(database)/documents/backpacks/$(l.uid)).data.lastLog == id)
+          || (l.kind == 'giftItem' && l.deltaCp == 0
+              && existsAfter(/databases/$(database)/documents/loot/$(l.ref))
+              && getAfter(/databases/$(database)/documents/loot/$(l.ref)).data.holderUid == l.uid
+              && (exists(/databases/$(database)/documents/loot/$(l.ref))
+                  ? get(/databases/$(database)/documents/loot/$(l.ref)).data.holderUid == request.auth.uid
+                  : getAfter(/databases/$(database)/documents/loot/$(l.ref)).data.get('giftFrom', '') != '')));
     }
     match /backpackLog/{id} {
       allow read: if isDM() || (isPlayer() && resource.data.uid == request.auth.uid);
-      allow create: if isDM() || (isPlayer()
+      allow create: if isDM() || (isPlayer() && giftLineOk(id)) || (isPlayer()
         && request.resource.data.keys().hasOnly(['uid', 'owner', 'kind', 'deltaCp', 'balanceCp', 'text', 'ref', 'at'])
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.owner is string && request.resource.data.owner.size() <= 60
