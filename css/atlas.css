@@ -1110,3 +1110,10 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .cal-hol-item > div, .cal-today-hol > div { flex: 1; min-width: 0; }
 .cal-head { padding-top: 22px; }
 .cal-month-emblem { flex: none; width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 1px 3px rgba(60, 35, 10, .4)); }
+
+/* giving to another player: the little box with the list of players */
+.give-card { padding: 20px 22px 22px; max-height: none; overflow: visible; }
+.give-card .codex-title { margin: 0 0 6px; }
+.give-card .field { margin: 12px 0 0; }
+.give-card .row { margin-top: 14px; }
+.give-err { min-height: 1.3em; margin: 8px 0 0; color: var(--wax); font-style: italic; }
