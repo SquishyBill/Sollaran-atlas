@@ -3874,23 +3874,62 @@ function lootRow(x) {
 // backpack and puts it into the receiver's, with a line in both histories. The receiver is told the next time
 // they have the atlas open.
 const rosterOthers = () => S.roster.filter((r) => r.uid !== myUid() && r.name).sort((a, b) => a.name.localeCompare(b.name));
-function pickFriend(what) {
+// A small box with a drop-down of the other players (and, for coins, an amount; for a stack, how many).
+// Resolves to { to, amount, qty } or null when cancelled.
+function askGive({ title, lead, coins, qtyMax }) {
   const others = rosterOthers();
-  if (!others.length) { toast('No other player has opened the atlas yet.'); return null; }
-  const ans = prompt(`Give ${what} to who?\n\nThe party: ${others.map((r) => r.name).join(', ')}`, others.length === 1 ? others[0].name : '');
-  if (!ans?.trim()) return null;
-  const hit = others.find((r) => r.name.trim().toLowerCase() === ans.trim().toLowerCase());
-  if (!hit) toast(`${ans.trim()} is not in the party. Type a name as it is listed.`);
-  return hit || null;
+  if (!others.length) { toast('No other player has opened the atlas yet.'); return Promise.resolve(null); }
+  return new Promise((resolve) => {
+    const who = h('select', { id: 'giveWho' },
+      others.length > 1 ? h('option', { value: '', text: 'Choose a player…' }) : null,
+      ...others.map((r) => h('option', { value: r.uid, text: r.name })));
+    const amount = coins ? h('input', { type: 'text', id: 'giveAmount', autocomplete: 'off', placeholder: 'e.g. 5 gp, or 2 gp 5 sp' }) : null;
+    const qty = qtyMax > 1 ? h('input', { type: 'number', id: 'giveQty', min: 1, max: qtyMax, step: 1, value: qtyMax }) : null;
+    const err = h('p', { class: 'give-err', id: 'giveErr', role: 'alert' });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); ok(); }
+    };
+    const close = (v) => { document.removeEventListener('keydown', onKey, true); box.remove(); resolve(v); };
+    const ok = () => {
+      const to = others.find((r) => r.uid === who.value);
+      if (!to) { err.textContent = 'Choose who to give it to.'; who.focus(); return; }
+      let paid = null, n = null;
+      if (amount) {
+        paid = parseCoins(amount.value);
+        if (!paid || !cpOf(paid)) { err.textContent = 'Type an amount, like "5 gp".'; amount.focus(); return; }
+      }
+      if (qty) {
+        n = parseInt(qty.value, 10);
+        if (!(n >= 1 && n <= qtyMax)) { err.textContent = `Enter a number from 1 to ${qtyMax}.`; qty.focus(); return; }
+      }
+      close({ to, amount: paid, qty: n });
+    };
+    const box = h('div', { class: 'modal give-modal', onclick: (e) => { if (e.target === box) close(null); } },
+      h('div', { class: 'search-card give-card', role: 'dialog', 'aria-label': title },
+        h('h2', { class: 'codex-title', text: title }),
+        lead ? h('p', { class: 'muted', text: lead }) : null,
+        field('Give it to', who),
+        amount ? field('How much', amount) : null,
+        qty ? field(`How many (you have ${qtyMax})`, qty) : null,
+        err,
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', id: 'giveOk', type: 'button', text: 'Give', onclick: ok }),
+          h('button', { class: 'btn ghost', id: 'giveCancel', type: 'button', text: 'Cancel', onclick: () => close(null) }))));
+    for (const el of [who, amount, qty]) el?.addEventListener('input', () => { err.textContent = ''; });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(box);
+    (others.length === 1 && amount ? amount : who).focus();
+  });
 }
-const giftError = (e, to) => /no document|not-found/i.test(e.message) ? `${to.name} has no backpack yet. They need to open the atlas once.` : e.message;
+// The database says little when the other player has no backpack yet (they have not opened the atlas), so say it for it.
+const giftError = (e, to) => !String(e?.message || '').trim() || /no document|not-found|permission|insufficient|false for|evaluation error/i.test(e.message) ? `${to.name} may not have opened the atlas yet. Ask them to open it once, then try again.` : e.message;
 
 async function giveCoinsToFriend() {
   if (!backpackOn()) { toast('Backpacks are not in use yet.'); return; }
-  const to = pickFriend('coins');
-  if (!to) return;
-  const amount = parseCoins(prompt(`Give ${to.name} how much? e.g. "5 gp" or "2 gp 5 sp"\n\nYou hold ${coinText(myPurse())}.`));
-  if (!amount || !cpOf(amount)) return;
+  const ask = await askGive({ title: 'Give coins', lead: `You hold ${coinText(myPurse())}.`, coins: true });
+  if (!ask) return;
+  const { to, amount } = ask;
   const me = whoAmI();
   try {
     await S.store.transact(async (t) => {
@@ -3908,14 +3947,11 @@ async function giveCoinsToFriend() {
 const GIFT_FIELDS = ['kind', 'name', 'detail', 'value', 'cost', 'status', 'source', 'boughtBy', 'boughtByUid', 'boughtAt', 'foundAt', 'cat', 'fromPlace'];
 async function giveItem(x) {
   if (!backpackOn() || x.holderUid !== myUid()) return;
-  const to = pickFriend(x.name);
-  if (!to) return;
-  let qty = x.qty || 1;
-  if (qty > 1 && x.kind === 'goods') {
-    const n = parseInt(prompt(`How many of the ${qty}?`, String(qty)), 10);
-    if (!(n > 0) || n > qty) { toast(`Enter a number from 1 to ${qty}.`); return; }
-    qty = n;
-  }
+  const stack = x.qty || 1;
+  const ask = await askGive({ title: `Give ${x.name}`, qtyMax: x.kind === 'goods' ? stack : 1 });
+  if (!ask) return;
+  const { to } = ask;
+  const qty = ask.qty || stack;
   const me = whoAmI(), now = Date.now(), label = `${qty > 1 ? `${qty} \u00d7 ` : ''}${x.name}`;
   try {
     await S.store.transact(async (t) => {
