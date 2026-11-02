@@ -3874,52 +3874,109 @@ function lootRow(x) {
 // backpack and puts it into the receiver's, with a line in both histories. The receiver is told the next time
 // they have the atlas open.
 const rosterOthers = () => S.roster.filter((r) => r.uid !== myUid() && r.name).sort((a, b) => a.name.localeCompare(b.name));
-// A small box with a drop-down of the other players (and, for coins, an amount; for a stack, how many).
-// Resolves to { to, amount, qty } or null when cancelled.
-function askGive({ title, lead, coins, qtyMax }) {
-  const others = rosterOthers();
-  if (!others.length) { toast('No other player has opened the atlas yet.'); return Promise.resolve(null); }
+// A small box over the page. build(fail) returns { nodes, read, focus, okText }: read() gives the answer, or calls
+// fail(message, element) and gives null. Resolves to the answer, or null when cancelled.
+function modalBox(title, lead, build) {
   return new Promise((resolve) => {
-    const who = h('select', { id: 'giveWho' },
-      others.length > 1 ? h('option', { value: '', text: 'Choose a player…' }) : null,
-      ...others.map((r) => h('option', { value: r.uid, text: r.name })));
-    const amount = coins ? h('input', { type: 'text', id: 'giveAmount', autocomplete: 'off', placeholder: 'e.g. 5 gp, or 2 gp 5 sp' }) : null;
-    const qty = qtyMax > 1 ? h('input', { type: 'number', id: 'giveQty', min: 1, max: qtyMax, step: 1, value: qtyMax }) : null;
     const err = h('p', { class: 'give-err', id: 'giveErr', role: 'alert' });
+    const fail = (message, el) => { err.textContent = message; el?.focus(); return null; };
+    const { nodes, read, focus, okText = 'Give' } = build(fail);
+    const ok = () => { const v = read(); if (v) close(v); };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); }
-      else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); ok(); }
+      else if (e.key === 'Enter' && !/^(BUTTON|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); ok(); }
     };
     const close = (v) => { document.removeEventListener('keydown', onKey, true); box.remove(); resolve(v); };
-    const ok = () => {
-      const to = others.find((r) => r.uid === who.value);
-      if (!to) { err.textContent = 'Choose who to give it to.'; who.focus(); return; }
-      let paid = null, n = null;
-      if (amount) {
-        paid = parseCoins(amount.value);
-        if (!paid || !cpOf(paid)) { err.textContent = 'Type an amount, like "5 gp".'; amount.focus(); return; }
-      }
-      if (qty) {
-        n = parseInt(qty.value, 10);
-        if (!(n >= 1 && n <= qtyMax)) { err.textContent = `Enter a number from 1 to ${qtyMax}.`; qty.focus(); return; }
-      }
-      close({ to, amount: paid, qty: n });
-    };
     const box = h('div', { class: 'modal give-modal', onclick: (e) => { if (e.target === box) close(null); } },
       h('div', { class: 'search-card give-card', role: 'dialog', 'aria-label': title },
         h('h2', { class: 'codex-title', text: title }),
         lead ? h('p', { class: 'muted', text: lead }) : null,
-        field('Give it to', who),
-        amount ? field('How much', amount) : null,
-        qty ? field(`How many (you have ${qtyMax})`, qty) : null,
-        err,
+        ...nodes, err,
         h('div', { class: 'row' },
-          h('button', { class: 'btn', id: 'giveOk', type: 'button', text: 'Give', onclick: ok }),
+          h('button', { class: 'btn', id: 'giveOk', type: 'button', text: okText, onclick: ok }),
           h('button', { class: 'btn ghost', id: 'giveCancel', type: 'button', text: 'Cancel', onclick: () => close(null) }))));
-    for (const el of [who, amount, qty]) el?.addEventListener('input', () => { err.textContent = ''; });
+    box.addEventListener('input', () => { err.textContent = ''; });
     document.addEventListener('keydown', onKey, true);
     document.body.append(box);
-    (others.length === 1 && amount ? amount : who).focus();
+    focus?.focus();
+  });
+}
+const amountField = () => h('input', { type: 'text', id: 'giveAmount', autocomplete: 'off', placeholder: 'e.g. 5 gp, or 2 gp 5 sp' });
+const qtyField = (max) => h('input', { type: 'number', id: 'giveQty', min: 1, max, step: 1, value: max });
+// Read an amount of coins and a count out of the two fields (or call fail); returns false when it failed.
+function readExtras(fail, amount, qty, qtyMax, out) {
+  if (amount) {
+    out.amount = parseCoins(amount.value);
+    if (!out.amount || !cpOf(out.amount)) { fail('Type an amount, like "5 gp".', amount); return false; }
+  }
+  if (qty) {
+    out.qty = parseInt(qty.value, 10);
+    if (!(out.qty >= 1 && out.qty <= qtyMax)) { fail(`Enter a number from 1 to ${qtyMax}.`, qty); return false; }
+  }
+  return true;
+}
+
+// A player gives to another player: a drop-down of the others (and, for coins, an amount; for a stack, how many).
+// Resolves to { to, amount, qty } or null when cancelled.
+function askGive({ title, lead, coins, qtyMax }) {
+  const others = rosterOthers();
+  if (!others.length) { toast('No other player has opened the atlas yet.'); return Promise.resolve(null); }
+  return modalBox(title, lead, (fail) => {
+    const who = h('select', { id: 'giveWho' },
+      others.length > 1 ? h('option', { value: '', text: 'Choose a player…' }) : null,
+      ...others.map((r) => h('option', { value: r.uid, text: r.name })));
+    const amount = coins ? amountField() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
+    return {
+      nodes: [field('Give it to', who), amount ? field('How much', amount) : null, qty ? field(`How many (you have ${qtyMax})`, qty) : null].filter(Boolean),
+      focus: others.length === 1 && amount ? amount : who,
+      read: () => {
+        const to = others.find((r) => r.uid === who.value);
+        if (!to) return fail('Choose who to give it to.', who);
+        const out = { to, amount: null, qty: null };
+        return readExtras(fail, amount, qty, qtyMax, out) ? out : null;
+      },
+    };
+  });
+}
+
+// The DM picks a character from the party's names, or someone else by typing, or (many) ticks several.
+// Resolves to { name } (or { names } when many), plus amount and qty when asked for, or null when cancelled.
+function askWho({ title, lead, many, coins, qtyMax, okText = 'OK' }) {
+  const names = partyNames();
+  return modalBox(title, lead, (fail) => {
+    const other = h('input', { type: 'text', id: 'whoOther', maxlength: 60, autocomplete: 'off', placeholder: many ? 'Names, with commas between' : 'Their name' });
+    const amount = coins ? amountField() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
+    let list, pick, otherField;
+    if (many) {
+      pick = names.map((n) => h('input', { type: 'checkbox', value: n, checked: true }));
+      list = h('div', { class: 'who-list', id: 'whoList' }, ...names.map((n, i) => h('label', { class: 'check' }, pick[i], ' ' + n)));
+      otherField = field('Someone not listed (optional)', other);
+    } else {
+      list = h('select', { id: 'whoSel' },
+        names.length === 1 ? null : h('option', { value: '', text: 'Choose…' }),
+        ...names.map((n) => h('option', { value: n, text: n })),
+        h('option', { value: '__other', text: 'Someone else…' }));
+      otherField = field('Their name', other);
+      otherField.hidden = names.length > 0;
+      if (!names.length) list.value = '__other';
+      list.addEventListener('change', () => { otherField.hidden = list.value !== '__other'; if (!otherField.hidden) other.focus(); });
+    }
+    return {
+      okText,
+      nodes: [field(many ? 'Who' : 'Who is it for', list), otherField, amount ? field('How much', amount) : null, qty ? field(`How many (there are ${qtyMax})`, qty) : null].filter(Boolean),
+      focus: list,
+      read: () => {
+        const out = { amount: null, qty: null };
+        if (many) {
+          out.names = [...pick.filter((c) => c.checked).map((c) => c.value), ...other.value.split(',').map((x) => x.trim()).filter(Boolean)];
+          if (!out.names.length) return fail('Tick at least one person.');
+        } else {
+          out.name = list.value === '__other' ? other.value.trim() : list.value;
+          if (!out.name) return fail(list.value === '__other' ? 'Type their name.' : 'Choose who it is for.', list.value === '__other' ? other : list);
+        }
+        return readExtras(fail, amount, qty, qtyMax, out) ? out : null;
+      },
+    };
   });
 }
 // The database says little when the other player has no backpack yet (they have not opened the atlas), so say it for it.
@@ -3971,15 +4028,10 @@ async function giveItem(x) {
 }
 
 async function claimItem(x) {
-  const names = partyNames();
-  const who = prompt(`Who claims "${x.name}"?${names.length ? `\n\nKnown party members: ${names.join(', ')}` : ''}`, names[0] || '');
-  if (!who?.trim()) return;
-  let qty = x.qty || 1;
-  if (qty > 1) {
-    const n = parseInt(prompt(`How many of the ${qty}?`, String(qty)), 10);
-    if (!(n > 0) || n > qty) { toast(`Enter a number from 1 to ${qty}.`); return; }
-    qty = n;
-  }
+  const stack = x.qty || 1;
+  const ask = await askWho({ title: x.kind === 'goods' || x.kind === 'writ' ? `Give ${x.name}` : `Who claims ${x.name}?`, qtyMax: stack, okText: 'Give' });
+  if (!ask) return;
+  const who = ask.name, qty = ask.qty || stack;
   try {
     // a name that matches a backpack puts the item in that character's backpack
     const holder = backpackByName(who) ? { holderUid: backpackByName(who).uid } : {};
@@ -4002,10 +4054,9 @@ async function unclaimItem(x) {
 }
 
 async function takeCoins() {
-  const who = prompt(`Who is taking coins?${partyNames().length ? `\n\nKnown party members: ${partyNames().join(', ')}` : ''}`);
-  if (!who?.trim()) return;
-  const amount = parseCoins(prompt(`How much does ${who.trim()} take? e.g. "50 gp" or "2 pp 15 gp 4 sp"\n\nIn Loot: ${coinText(S.partyCoins)}`));
-  if (!amount) return;
+  const ask = await askWho({ title: 'Take coins from Loot', lead: `In Loot: ${coinText(S.partyCoins)}`, coins: true, okText: 'Take' });
+  if (!ask) return;
+  const who = ask.name, amount = ask.amount;
   if (COIN_KEYS.some((k) => amount[k] > (S.partyCoins[k] || 0))) { toast('There isn’t that much in Loot.'); return; }
   const b = backpackByName(who);
   if (b) {
@@ -4031,9 +4082,9 @@ async function addCoinsPrompt() {
 }
 
 async function splitCoins() {
-  const names = (prompt('Split the coins evenly between who? (comma-separated)', partyNames().join(', ')) || '')
-    .split(',').map((s) => s.trim()).filter(Boolean);
-  if (!names.length) return;
+  const ask = await askWho({ title: 'Split the coins evenly', lead: `In Loot: ${coinText(S.partyCoins)}. Untick anyone who is not sharing.`, many: true, okText: 'Split' });
+  if (!ask) return;
+  const names = [...new Set(ask.names)];
   const share = Object.fromEntries(COIN_KEYS.map((k) => [k, Math.floor((S.partyCoins[k] || 0) / names.length)]));
   if (!COIN_KEYS.some((k) => share[k])) { toast('Not enough coins to split.'); return; }
   const total = Object.fromEntries(COIN_KEYS.map((k) => [k, share[k] * names.length]));
