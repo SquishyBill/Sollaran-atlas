@@ -44,7 +44,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -84,6 +84,7 @@ export class LocalStore {
     this.handlers.lootLog?.(rows(this.db.lootLog));
     this.handlers.partyCoins?.(this.db.party.coins);
     this.handlers.magicPublic?.(rows(this.db.magicPublic));
+    this.handlers.customItems?.(rows(this.db.customItems));
     if (dm) {
       this.handlers.lootTruth?.(rows(this.db.lootTruth));
       this.handlers.caches?.(rows(this.db.caches));
@@ -322,6 +323,15 @@ export class LocalStore {
     this.persist();
     return id;
   }
+
+  async saveCustomItem(data, id) {
+    if (!id) id = 'item-' + rid();
+    this.db.customItems[id] = { ...data };
+    this.persist();
+    return id;
+  }
+
+  async deleteCustomItem(id) { delete this.db.customItems[id]; this.persist(); }
 
   async deleteMagicItem(id) { delete this.db.magicItems[id]; delete this.db.magicPublic[id]; this.persist(); }
 

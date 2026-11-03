@@ -420,6 +420,11 @@ service cloud.firestore {
     match /lootTruth/{id} { allow read, write: if isDM(); }
     match /caches/{id} { allow read, write: if isDM(); }
     match /magicItems/{id} { allow read, write: if isDM(); }
+    // The DM's own shop and loot items: everyone in the party reads them (shop stock must match), only the DM writes.
+    match /customItems/{id} {
+      allow read: if isPlayer();
+      allow write: if isDM();
+    }
     // Homebrew items the DM allows in shops: name, rarity and price only.
     match /magicPublic/{id} {
       allow read: if isPlayer();

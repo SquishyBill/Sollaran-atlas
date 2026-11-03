@@ -243,6 +243,15 @@ const PLEASURE = [
   ['Bath and scented oil', 2, 1, 's'], ['Wine, fine (bottle)', 10, 2, 'cn'], ['Perfume (vial)', 5, 1, 'cn'], ['Flowers, bouquet', 0.2, 1, 'cn'],
 ];
 
+// The DM's own items (the Custom items screen). The app hands them in here whenever they change, so stock,
+// selling prices and the loot generator all draw from them as well as from the built-in lists.
+let CUSTOM = [];
+export const setCustomItems = (list) => { CUSTOM = (list || []).filter((x) => x && x.name); };
+export const customItems = () => CUSTOM;
+// A custom item as a catalog row: [name, price, smallest size, flags]
+const customRows = (type) => CUSTOM.filter((x) => x.shop && (x.shop.types || []).includes(type))
+  .map((x) => [x.name, Number(x.shop.price ?? x.price) || 0, Number(x.shop.min) || 1, x.shop.flags || '']);
+
 export const SHOP_TYPES = {
   general: {
     label: 'General Store', catalog: GENERAL, nouns: ['Goods', 'Sundries', 'Supply', 'Provisions', 'Trading Post', 'Emporium'],
@@ -465,7 +474,7 @@ export function generateShop(type, size, seed = newSeed(), opts = {}) {
 // The stock for a given week: [{ key, name, grade: 'standard'|'fine'|'rare', price (gp, before renown), qty }]
 export function generateStock(shop, week) {
   const t = SHOP_TYPES[shop.type], s = sizeById(shop.size), r = rng(`stock:${shop.seed}:${week}`);
-  const items = t.catalog.map(([name, price, min = 1, flags = '']) => ({ name, price, min, flags }));
+  const items = [...t.catalog, ...customRows(shop.type)].map(([name, price, min = 1, flags = '']) => ({ name, price, min, flags }));
   const common = items.filter((i) => !i.flags.includes('r') && !i.flags.includes('s') && i.min <= s.id);
   // everyday services are always on offer (an inn always has rooms); only goods are drawn at random
   const services = items.filter((i) => !i.flags.includes('r') && i.flags.includes('s') && i.min <= s.id);
@@ -673,7 +682,8 @@ export function catalogValue(name) {
     const hit = t.catalog.find((row) => row[0].toLowerCase() === want);
     if (hit) return hit[1];
   }
-  return null;
+  const own = CUSTOM.find((x) => x.name.toLowerCase() === want && Number(x.shop?.price ?? x.price) > 0);
+  return own ? Number(own.shop?.price ?? own.price) : null;
 }
 
 // What standing does to an offer: a good name earns up to 20% more, a bad one cuts it (and below -6 they won't deal).

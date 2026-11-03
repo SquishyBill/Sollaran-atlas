@@ -1,7 +1,7 @@
 // Loot generator: coins, gems, art, gear, story hooks and magic items, scaled by party level,
 // individual vs hoard, and where it's found. Magic item names follow the D&D 5e SRD 5.1
 // (CC BY 4.0); the coin/gem/magic odds, values and descriptions here are our own.
-import { rng } from './shop-data.js';
+import { rng, customItems } from './shop-data.js';
 
 // ─── dice ───────────────────────────────────────────────────────────
 const roll = (r, n, s) => { let t = 0; for (let i = 0; i < n; i++) t += 1 + Math.floor(r() * s); return t; };
@@ -82,7 +82,14 @@ for (const [k, w] of Object.entries(WORLD)) { SETTINGS[k].gear.push(...w.gear); 
 
 // mundane bits that turn up anywhere; drawn about a third of the time instead of the setting's own list
 const COMMON_GEAR = ['Torch', 'Rope, hempen (50 ft)', 'Waterskin', 'Rations (1 day)', 'Tinderbox', 'Bedroll', 'Blanket', 'Backpack', 'Belt pouch', 'Mess kit', 'Whetstone', 'Chalk (piece)', 'Candle', 'Soap', 'Hempen sack', 'Wooden bowl and spoon', 'Iron pot', 'Signal whistle', 'Small mirror, steel', 'Dice set', 'Playing cards', 'Flask of oil', 'Bottle of cheap wine', 'Pair of boots', 'Wool cloak', 'Clothes, common', 'Clothes, traveler’s', 'Dagger', 'Sling', 'Club', 'Quarterstaff', 'Crossbow bolts (10)', 'Fishhooks (pouch)', 'Needle and thread', 'A tin whistle', 'A smooth lucky stone', 'A crumpled love letter', 'A wooden holy symbol', 'Comb, bone', 'Spoon, pewter', 'Pipe and tobacco', 'Key to an unknown door', 'A child’s drawing', 'A bundle of sticks and twine', 'Lamp', 'Hammer', 'Pitons (5)', 'Shovel', 'Ink pen', 'Sheets of paper (3)'];
-const pickGear = (r, set) => pick(r, chance(r, 0.35) ? COMMON_GEAR : set.gear);
+// The DM's custom items marked "turns up in loot" (for every kind of place, or just the ones they chose).
+const customGear = (settingId) => customItems().filter((x) => x.loot && (!(x.loot.settings || []).length || x.loot.settings.includes(settingId))).map((x) => x.name);
+// Custom items are picked a third of the time when there are any, so a few new ones still show up.
+const pickGear = (r, set, settingId) => {
+  const own = customGear(settingId);
+  if (own.length && chance(r, 0.3)) return pick(r, own);
+  return pick(r, chance(r, 0.35) ? COMMON_GEAR : set.gear);
+};
 
 // ─── coins (dice × multiplier) per tier ─────────────────────────────
 const COINS = {
@@ -268,7 +275,7 @@ export function generateLoot(opts) {
     add({ kind: 'art', name: pick(r, ART[ART_TIERS[tier][0]]), value: ART_TIERS[tier][0] });
   }
   // gear from the setting
-  for (let i = 0, k = mode === 'hoard' ? roll(r, 1, 3) : (chance(r, 0.5) ? 1 : 0); i < k; i++) add({ kind: 'gear', name: pickGear(r, set), value: 0 });
+  for (let i = 0, k = mode === 'hoard' ? roll(r, 1, 3) : (chance(r, 0.5) ? 1 : 0); i < k; i++) add({ kind: 'gear', name: pickGear(r, set, opts.setting), value: 0 });
   // a story hook now and then
   if (chance(r, mode === 'hoard' ? 0.45 : 0.15)) add({ kind: 'hook', name: pick(r, set.hooks), value: 0 });
   // magic
@@ -295,7 +302,7 @@ export function rerollLine(line, opts) {
   const tier = tierOf(opts.level), set = SETTINGS[opts.setting] || SETTINGS.lair, mode = opts.mode === 'hoard' ? 'hoard' : 'individual';
   if (line.kind === 'gem') { const value = pick(r, GEM_TIERS[mode][tier]); return { ...line, name: pick(r, GEMS[value]), value }; }
   if (line.kind === 'art') { const value = pick(r, ART_TIERS[tier]); return { ...line, name: pick(r, ART[value]), value }; }
-  if (line.kind === 'gear') return { ...line, name: pickGear(r, set) };
+  if (line.kind === 'gear') return { ...line, name: pickGear(r, set, opts.setting) };
   if (line.kind === 'hook') return { ...line, name: pick(r, set.hooks) };
   if (line.kind === 'magic') { const item = magicItem(r, line.magic?.rarity || pick(r, MAGIC[tier].rarities), opts); return { ...line, name: item.name, value: item.value, magic: item }; }
   return line;

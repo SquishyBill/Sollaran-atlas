@@ -3,7 +3,7 @@ import { renderMarkdown, esc, htmlToMarkdown } from './markdown.js';
 import { COIN_CP, EXCHANGE_FEE_CP, BOXES, ITEM_SIZES, formatCp, exchangeQuote, writQuote, newAccount, newBox, boxUsed, boxFits, settle, payArrears, daysUntilInterest, MONTH_MS } from './gec-data.js';
 import { EDGES, edgeById, GAMING_LIMITS, MIN_BET, GAMES, gameById, betOf, multiplier, play, resolveBet, today, PLEASURE_LEVELS, levelById, PLEASURE_SERVICES, visit, CURE } from './gaming-data.js';
 import { generateNpc, rollPart, PEOPLES, AFFILIATIONS, GENDERS, AGES, WEALTH, ATTITUDES, affiliationById, OCCUPATIONS } from './npc-data.js';
-import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
+import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, setCustomItems, renownTerms, formatPrice, nicePrice, shopWeek, HAGGLE, haggleResult, rng, REPAIR_TYPES, REPAIR_RARITIES, repairQuote, FESTIVALS, festivalStock, sellRate, catalogValue, sellRenown, SELL_LIMIT, SELL_WEEKLY, TRADE_LABEL, tradeCategory, regionProfile, regionMult } from './shop-data.js';
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 import * as CAL from './calendar-data.js';
 import * as BK from './backup.js';
@@ -67,7 +67,7 @@ const S = {
   pages: [], pins: [], notes: [], secrets: {}, people: [], peopleQuery: '', pendingPerson: null,
   renown: [], renownLog: [], renownTiers: null, festivals: {}, sales: [], accounts: [], journal: [], scribes: [],
   shops: [], purchases: [], haggles: [], players: [], placeShop: null,
-  loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [],
+  loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
   pageId: null, pinId: null,
@@ -136,6 +136,7 @@ async function boot() {
     caches: (list) => { S.caches = list; refreshLootViews(); },
     magicItems: (list) => { S.magicItems = list; if (S.panel?.type === 'magicLib') renderPanel(); },
     magicPublic: (list) => { S.magicPublic = list; if (S.panel?.type === 'shop') renderPanel(); },
+    customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
     ping: onPing, error: onError });
@@ -830,7 +831,7 @@ function renderPanel() {
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
     shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView, backup: backupView,
-    lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView };
+    lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView, itemLib: itemLibView, itemEdit: itemEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -3455,6 +3456,7 @@ function marketView() {
         h('h4', { class: 'market-place', text: label }),
         byPlace.get(label).sort((a, b) => a.name.localeCompare(b.name)).map(shopRow)))
       : [h('p', { class: 'muted', text: isDM() ? 'No shops yet. Open a town or map’s panel and use "+ Generate a shop here".' : 'No shops have been found yet.' })];
+    if (isDM()) body.unshift(h('div', { class: 'row loot-dm' }, h('button', { class: 'btn ghost', text: `Custom items (${S.customItems.length})`, onclick: () => { S.panel = { type: 'itemLib', id: 'all', back: 'shops' }; renderPanel(); } })));
   } else if (tab === 'loot') {
     body = lootTab();
   } else {
@@ -3825,6 +3827,7 @@ function lootTab() {
     isDM() ? h('div', { class: 'row loot-dm' },
       h('button', { class: 'btn', text: '+ Generate loot', onclick: () => openLootGen(S.pageId ? `page:${S.pageId}` : '') }),
       h('button', { class: 'btn ghost', text: `Magic items (${S.magicItems.length})`, onclick: () => { S.panel = { type: 'magicLib', id: 'all' }; renderPanel(); } }),
+      h('button', { class: 'btn ghost', text: `Custom items (${S.customItems.length})`, onclick: () => { S.panel = { type: 'itemLib', id: 'all', back: 'loot' }; renderPanel(); } }),
       pendingCount ? h('span', { class: 'tag', text: `${pendingCount} being identified` }) : null) : null,
     isDM() && S.caches.length ? h('details', { class: 'legend caches' },
       h('summary', { text: `Hidden caches (${S.caches.length})` }),
@@ -4320,6 +4323,77 @@ function magicEditView() {
         if (!confirm(`Delete "${m.name}" from your library? Copies already in Loot stay.`)) return;
         await S.store.deleteMagicItem(m.id).catch((e) => toast(e.message));
         S.panel = { type: 'magicLib', id: 'all' }; renderPanel();
+      } }) : null));
+}
+
+// ── the DM's own shop and loot items ────────────────────────────────
+const ITEM_KINDS = [['', 'Ordinary stock'], ['c', 'Consumable (sold in quantity)'], ['r', 'Rare (held back for good standing)'], ['s', 'Service (never runs out)']];
+const itemBack = () => openMarket(S.panel?.back || 'shops');
+
+function itemLibView() {
+  const items = [...S.customItems].sort((a, b) => a.name.localeCompare(b.name));
+  const where = (x) => [
+    x.shop ? `Sold at ${x.shop.types.map((t) => SHOP_TYPES[t]?.label || t).join(', ')} for ${formatPrice(x.shop.price)}` : '',
+    x.loot ? `Loot: ${(x.loot.settings || []).length ? x.loot.settings.map((k) => SETTINGS[k]?.label || k).join(', ') : 'anywhere'}` : '',
+  ].filter(Boolean).join(' · ');
+  return h('div', { class: 'codex' },
+    h('button', { class: 'linklike back', text: S.panel.back === 'loot' ? '← Loot' : '← Shops', onclick: itemBack }),
+    h('div', { class: 'codex-kind', html: '<span>DM only</span>' }),
+    h('h2', { class: 'codex-title', text: 'Custom items' }),
+    h('p', { class: 'codex-sub', text: 'Your own everyday items. Choose which shops stock them and which kinds of places they turn up in. Magic items have their own list under Loot.' }),
+    h('div', { class: 'codex-actions' }, h('button', { class: 'btn', text: '+ New item', onclick: () => { S.panel = { type: 'itemEdit', id: 'new', back: S.panel.back }; renderPanel(); } })),
+    items.length ? h('ol', { class: 'loot-list' }, items.map((x) => h('li', { class: 'loot-item' },
+      h('div', { class: 'loot-main' }, h('strong', { text: x.name }), x.shop?.flags ? h('span', { class: 'grade fine', text: ITEM_KINDS.find((k) => k[0] === x.shop.flags)?.[1].split(' (')[0] || '' }) : null),
+      h('div', { class: 'loot-meta', text: where(x) }),
+      h('div', { class: 'loot-actions' }, h('button', { class: 'linklike', text: 'edit', onclick: () => { S.panel = { type: 'itemEdit', id: x.id, back: S.panel.back }; renderPanel(); } })))))
+      : h('p', { class: 'muted', text: 'No custom items yet.' }));
+}
+
+function itemEditView() {
+  const isNew = S.panel.id === 'new', back = S.panel.back;
+  const x = isNew ? { name: '', shop: { types: [], price: '', min: 1, flags: '' }, loot: null } : S.customItems.find((i) => i.id === S.panel.id);
+  if (!x) return h('p', { text: 'That item no longer exists.' });
+  const toLib = () => { S.panel = { type: 'itemLib', id: 'all', back }; renderPanel(); };
+  const typeBoxes = Object.entries(SHOP_TYPES).filter(([, t]) => !t.fixedName).map(([k, t]) =>
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', value: k, checked: !!x.shop?.types.includes(k) }), ' ' + t.label));
+  const settingBoxes = Object.entries(SETTINGS).map(([k, t]) =>
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', value: k, checked: !!x.loot?.settings?.includes(k) }), ' ' + t.label));
+  const f = {
+    name: h('input', { type: 'text', maxlength: 80, value: x.name, required: true }),
+    inShops: h('input', { type: 'checkbox', checked: !!x.shop }),
+    price: h('input', { type: 'number', min: 0, step: '0.01', value: x.shop?.price ?? '' }),
+    min: h('select', {}, SIZES.map((z) => h('option', { value: z.id, selected: z.id === (x.shop?.min || 1), text: `${z.name} (size ${z.id}) and larger` }))),
+    flags: h('select', {}, ITEM_KINDS.map(([k, v]) => h('option', { value: k, selected: k === (x.shop?.flags || ''), text: v }))),
+    inLoot: h('input', { type: 'checkbox', checked: !!x.loot }),
+  };
+  return h('div', { class: 'codex editor' },
+    h('button', { class: 'linklike back', text: '← Custom items', onclick: toLib }),
+    h('h2', { class: 'codex-title', text: isNew ? 'New custom item' : 'Edit custom item' }),
+    field('Name', f.name),
+    h('label', { class: 'check' }, f.inShops, ' Sold in shops'),
+    h('div', { class: 'row gen-pickers' }, field('Price (gp)', f.price), field('Smallest settlement that stocks it', f.min), field('Kind of stock', f.flags)),
+    h('p', { class: 'muted', text: 'Which shops stock it:' }), h('div', { class: 'check-grid' }, typeBoxes),
+    h('label', { class: 'check' }, f.inLoot, ' Turns up in generated loot (as gear)'),
+    h('p', { class: 'muted', text: 'Where it turns up (leave all unticked for anywhere):' }), h('div', { class: 'check-grid' }, settingBoxes),
+    h('p', { class: 'muted', text: 'Changing a shop item re-draws the current week’s stock, since stock is drawn from the whole list.' }),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
+        if (!f.name.value.trim()) { f.name.focus(); return; }
+        const ticked = (boxes) => boxes.map((b) => b.querySelector('input')).filter((i) => i.checked).map((i) => i.value);
+        const types = ticked(typeBoxes);
+        if (f.inShops.checked && !types.length) { toast('Tick at least one shop type, or untick "Sold in shops".'); return; }
+        if (!f.inShops.checked && !f.inLoot.checked) { toast('Choose shops, loot, or both.'); return; }
+        const data = { name: f.name.value.trim(),
+          shop: f.inShops.checked ? { types, price: Math.max(0, parseFloat(f.price.value) || 0), min: Number(f.min.value) || 1, flags: f.flags.value } : null,
+          loot: f.inLoot.checked ? { settings: ticked(settingBoxes) } : null };
+        try { await S.store.saveCustomItem(data, isNew ? null : x.id); toLib(); }
+        catch (e) { toast('Could not save: ' + e.message); }
+      } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: toLib }),
+      !isNew ? h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Delete "${x.name}" from your custom items? Copies already in Loot stay.`)) return;
+        await S.store.deleteCustomItem(x.id).catch((e) => toast(e.message));
+        toLib();
       } }) : null));
 }
 

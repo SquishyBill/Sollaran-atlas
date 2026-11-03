@@ -1119,3 +1119,6 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .give-err { min-height: 1.3em; margin: 8px 0 0; color: var(--wax); font-style: italic; }
 .who-list { display: flex; flex-direction: column; gap: 4px; max-height: 32vh; overflow-y: auto; padding: 6px 8px; border: 1px solid rgba(90, 60, 25, .3); border-radius: 5px; background: rgba(255, 245, 210, .35); }
 .who-list .check { margin: 0; }
+
+.check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin: 4px 0 10px; }
+.check-grid .check { font-size: 15px; }

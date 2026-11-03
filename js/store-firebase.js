@@ -118,6 +118,7 @@ export class FirebaseStore {
     onSnapshot(this.col('lootLog'), (s) => h.lootLog?.(list(s)), err);
     onSnapshot(this.ref('party', 'coins'), (s) => h.partyCoins?.(s.exists() ? s.data() : { cp: 0, sp: 0, gp: 0, pp: 0 }), err);
     onSnapshot(this.col('magicPublic'), (s) => h.magicPublic?.(list(s)), err);
+    onSnapshot(this.col('customItems'), (s) => h.customItems?.(list(s)), err);
     if (this.isDM) {
       onSnapshot(this.col('lootTruth'), (s) => h.lootTruth?.(list(s)), err);
       onSnapshot(this.col('caches'), (s) => h.caches?.(list(s)), err);
@@ -443,6 +444,15 @@ export class FirebaseStore {
     else await deleteDoc(this.ref('magicPublic', id)).catch(() => {});
     return id;
   }
+
+  async saveCustomItem(data, id) {
+    const { addDoc, setDoc } = this.F;
+    if (!id) return (await addDoc(this.col('customItems'), data)).id;
+    await setDoc(this.ref('customItems', id), data);
+    return id;
+  }
+
+  deleteCustomItem(id) { return this.F.deleteDoc(this.ref('customItems', id)); }
 
   async deleteMagicItem(id) {
     await this.F.deleteDoc(this.ref('magicItems', id));
