@@ -3706,8 +3706,8 @@ async function dmGiveItem(uid, owner) {
   const ask = await modalBox(`Give ${owner || 'them'} an item`, 'It goes into their backpack straight away.', (fail) => {
     const sel = h('select', { id: 'giveItemSel' },
       h('option', { value: '', text: 'Choose an item…' }),
-      ...groups.map((g, gi) => h('optgroup', { label: g.label }, g.rows.map((r, ri) => h('option', { value: `${gi}:${ri}`, text: r.rarity ? `${r.name} (${r.rarity})` : r.name })))),
-      h('option', { value: '__own', text: 'Something else (write your own)…' }));
+      h('option', { value: '__own', text: 'Custom item (write your own)…' }),
+      ...groups.map((g, gi) => h('optgroup', { label: g.label }, g.rows.map((r, ri) => h('option', { value: `${gi}:${ri}`, text: r.rarity ? `${r.name} (${r.rarity})` : r.name })))));
     const name = h('input', { type: 'text', id: 'giveItemName', maxlength: 80, autocomplete: 'off', placeholder: 'e.g. A sealed letter from the Duke' });
     const value = h('input', { type: 'number', id: 'giveItemValue', min: 0, step: '0.01', placeholder: 'optional' });
     const detail = h('textarea', { id: 'giveItemDetail', rows: 2, maxlength: 300, placeholder: 'optional' });
