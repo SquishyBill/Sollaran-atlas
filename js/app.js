@@ -3597,7 +3597,8 @@ function backpackView() {
       dm ? h('div', { class: 'row coin-actions' },
         h('button', { class: 'btn small ghost', text: 'Give coins', onclick: () => dmCoins(uid, owner, 'give') }),
         h('button', { class: 'btn small ghost', text: 'Take coins', onclick: () => dmCoins(uid, owner, 'take') }),
-        h('button', { class: 'btn small ghost', text: 'Set coins', onclick: () => dmCoins(uid, owner, 'set') })) : null),
+        h('button', { class: 'btn small ghost', text: 'Set coins', onclick: () => dmCoins(uid, owner, 'set') }),
+        h('button', { class: 'btn small ghost', id: 'bpGiveItem', text: 'Give item', onclick: () => dmGiveItem(uid, owner) })) : null),
     !dm ? h('p', { class: 'muted', text: 'What you buy lands here, and what you sell or bank comes out of it. Visit a shop to spend, or a G.E.C. branch to bank your coins.' }) : null,
     !dm ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Go to the Market', onclick: () => openMarket('shops') }),
       backpackOn() ? h('button', { class: 'btn small ghost', id: 'bpGiveCoins', type: 'button', text: 'Give coins to a player…', onclick: giveCoinsToFriend }) : null) : null,
@@ -3629,7 +3630,8 @@ function backpackRoster() {
           h('button', { class: 'linklike', text: 'open', onclick: () => openBackpack(b.uid) }),
           h('button', { class: 'linklike', text: 'give coins', onclick: () => dmCoins(b.uid, b.owner, 'give') }),
           h('button', { class: 'linklike', text: 'take coins', onclick: () => dmCoins(b.uid, b.owner, 'take') }),
-          h('button', { class: 'linklike', text: 'set coins', onclick: () => dmCoins(b.uid, b.owner, 'set') })));
+          h('button', { class: 'linklike', text: 'set coins', onclick: () => dmCoins(b.uid, b.owner, 'set') }),
+          h('button', { class: 'linklike', text: 'give item', onclick: () => dmGiveItem(b.uid, b.owner) })));
     })) : h('p', { class: 'muted', text: 'Nobody has opened the atlas since backpacks arrived. Each player gets a backpack the first time they do.' }),
     list.length ? h('p', { class: 'muted', text: `Carried by the party in all: ${formatCp(total)}.` }) : null,
     unlinked.length ? h('div', {},
@@ -3681,6 +3683,67 @@ async function dmCoins(uid, owner, mode) {
     });
     toast(`${{ give: 'Gave', take: 'Took', set: 'Set' }[mode]} ${coinText(amount)}${mode === 'take' ? ' from' : mode === 'set' ? ' for' : ' to'} ${owner || 'them'}.`);
   } catch (e) { toast('Could not do that: ' + e.message); }
+}
+
+// DM: hand a character something in the moment (not from generated loot). Pick from everything the atlas knows
+// about, or write your own. It lands in their backpack as an ordinary item they can carry, give or sell.
+function giveItemChoices() {
+  const groups = [], seen = new Set();
+  const add = (label, rows) => { const rs = rows.filter((r) => r.name && !seen.has(r.key)); rs.forEach((r) => seen.add(r.key)); if (rs.length) groups.push({ label, rows: rs }); };
+  const mundane = (name, price) => ({ key: name.toLowerCase(), name, price: Number(price) || 0, kind: 'goods' });
+  add('My custom items', S.customItems.map((x) => mundane(x.name, x.shop?.price)));
+  add('My magic items', S.magicItems.map((m) => ({ key: m.name.toLowerCase(), name: m.name, price: Number(m.value) || 0, kind: 'magic', rarity: m.rarity, detail: m.detail || '' })));
+  const gear = new Map();
+  for (const t of Object.values(SHOP_TYPES)) for (const [name, price, , flags = ''] of t.catalog) if (!flags.includes('s') && !gear.has(name.toLowerCase())) gear.set(name.toLowerCase(), mundane(name, price));
+  add('Everyday gear and goods', [...gear.values()].sort((a, b) => a.name.localeCompare(b.name)));
+  add('Magic items (SRD)', SRD_MAGIC.map((m) => ({ key: m.name.toLowerCase(), name: m.name, price: Number(m.value) || 0, kind: 'magic', rarity: m.rarity, detail: m.detail || '' })).sort((a, b) => a.name.localeCompare(b.name)));
+  return groups;
+}
+
+async function dmGiveItem(uid, owner) {
+  const groups = giveItemChoices(), pool = new Map();
+  groups.forEach((g, gi) => g.rows.forEach((r, ri) => pool.set(`${gi}:${ri}`, r)));
+  const ask = await modalBox(`Give ${owner || 'them'} an item`, 'It goes into their backpack straight away.', (fail) => {
+    const sel = h('select', { id: 'giveItemSel' },
+      h('option', { value: '', text: 'Choose an item…' }),
+      ...groups.map((g, gi) => h('optgroup', { label: g.label }, g.rows.map((r, ri) => h('option', { value: `${gi}:${ri}`, text: r.rarity ? `${r.name} (${r.rarity})` : r.name })))),
+      h('option', { value: '__own', text: 'Something else (write your own)…' }));
+    const name = h('input', { type: 'text', id: 'giveItemName', maxlength: 80, autocomplete: 'off', placeholder: 'e.g. A sealed letter from the Duke' });
+    const value = h('input', { type: 'number', id: 'giveItemValue', min: 0, step: '0.01', placeholder: 'optional' });
+    const detail = h('textarea', { id: 'giveItemDetail', rows: 2, maxlength: 300, placeholder: 'optional' });
+    const qty = h('input', { type: 'number', id: 'giveItemQty', min: 1, max: 999, step: 1, value: 1 });
+    const own = [field('Name', name), field('Worth (gp each)', value), field('Description', detail)];
+    own.forEach((f) => { f.hidden = true; });
+    sel.addEventListener('change', () => { own.forEach((f) => { f.hidden = sel.value !== '__own'; }); if (sel.value === '__own') name.focus(); });
+    return {
+      okText: 'Give',
+      nodes: [field('Item', sel), ...own, field('How many', qty)],
+      focus: sel,
+      read: () => {
+        const n = parseInt(qty.value, 10);
+        if (!(n >= 1 && n <= 999)) return fail('How many? Enter a number from 1 to 999.', qty);
+        if (!sel.value) return fail('Choose an item, or pick "Something else".', sel);
+        if (sel.value === '__own') {
+          if (!name.value.trim()) return fail('Type the item’s name.', name);
+          return { item: { name: name.value.trim(), price: Math.max(0, parseFloat(value.value) || 0), kind: 'goods', detail: detail.value.trim() }, qty: n };
+        }
+        return { item: pool.get(sel.value), qty: n };
+      },
+    };
+  });
+  if (!ask) return;
+  const { item, qty } = ask, now = Date.now(), label = `${qty > 1 ? `${qty} × ` : ''}${item.name}`;
+  try {
+    await S.store.transact(async (t) => {
+      const purse = await t.purse(uid, owner);
+      const id = t.newId('loot');
+      t.set('loot', id, { kind: item.kind, name: item.name, detail: item.detail || '', value: item.price || null, qty, status: 'identified', source: '',
+        ...(item.rarity ? { rarity: item.rarity } : {}), foundAt: now, holderUid: uid, claimedBy: owner, claimedAt: now });
+      t.add('backpackLog', ledgerLine({ uid, owner, kind: 'giftItem', deltaCp: 0, balanceCp: cpOf(purse.coins), text: `The DM gave you ${label}.`, ref: id }, now));
+    });
+    await S.store.addLootLog(`The DM gave ${owner || 'a character'} ${label}.`).catch(() => {});
+    toast(`Gave ${label} to ${owner || 'them'}.`);
+  } catch (e) { toast('Could not give it: ' + e.message); }
 }
 
 const COIN_KEYS = ['pp', 'gp', 'sp', 'cp'];
