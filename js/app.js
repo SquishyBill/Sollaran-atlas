@@ -814,14 +814,14 @@ function openAbout() {
 // Reading panels (the session journal) open wide, and the reader can stretch them to fill the page.
 const WIDE_PANELS = ['journal', 'journalEdit'];
 const wantsFull = () => { try { return localStorage.getItem('atlas-panel-full') === '1'; } catch { return false; } };
+const fullBtn = () => h('button', { class: 'btn ghost js-fullbtn', type: 'button', title: 'Read the journal across the whole page',
+  text: WIDE_PANELS.includes(S.panel?.type) && wantsFull() ? 'Exit full screen' : 'Full screen',
+  onclick: () => { try { localStorage.setItem('atlas-panel-full', wantsFull() ? '0' : '1'); } catch {} syncPanelWidth(); } });
 function syncPanelWidth() {
   const wide = WIDE_PANELS.includes(S.panel?.type), full = wide && wantsFull();
   document.body.classList.toggle('panel-wide', wide);
   document.body.classList.toggle('panel-full', full);
-  const btn = $('#panelSize');
-  btn.hidden = !wide;
-  btn.title = full ? 'Back to the map' : 'Fill the page';
-  btn.setAttribute('aria-label', btn.title);
+  document.querySelectorAll('.js-fullbtn').forEach((b) => { b.textContent = full ? 'Exit full screen' : 'Full screen'; });
   setTimeout(() => S.map?.invalidateSize(), 420);
 }
 
@@ -1545,9 +1545,10 @@ function journalView() {
     h('div', { class: 'codex-kind', html: '<span>The Chronicle</span>' }),
     h('h2', { class: 'codex-title', text: 'Session Journal' }),
     h('p', { class: 'codex-sub', text: `${entries.filter((e) => !e.draft).length} session${entries.filter((e) => !e.draft).length === 1 ? '' : 's'} written up` }),
-    writer ? h('div', { class: 'codex-actions' },
-      h('button', { class: 'btn', type: 'button', text: '+ New entry', onclick: () => openJournalEditor(null) }),
-      h('a', { class: 'btn ghost', href: 'scribe-guide.html', target: '_blank', rel: 'noopener', text: 'How to write it' })) : null,
+    h('div', { class: 'codex-actions' },
+      writer ? h('button', { class: 'btn', type: 'button', text: '+ New entry', onclick: () => openJournalEditor(null) }) : null,
+      writer ? h('a', { class: 'btn ghost', href: 'scribe-guide.html', target: '_blank', rel: 'noopener', text: 'How to write it' }) : null,
+      fullBtn()),
     scribeBox,
     entries.length > 1 ? h('p', { class: 'muted' },
       h('button', { class: 'linklike', type: 'button', text: 'Open all', onclick: () => { entries.forEach((e) => P.open.add(e.id)); renderPanel(); } }), ' \u00b7 ',
@@ -1608,6 +1609,7 @@ function journalEditView() {
   const published = e && !e.draft;
   return h('form', { class: 'editor journal-form', onsubmit: (ev) => ev.preventDefault() },
     h('h2', { class: 'codex-title', text: isNew ? 'New journal entry' : 'Edit journal entry' }),
+    h('div', { class: 'codex-actions' }, fullBtn()),
     h('div', { class: 'row gen-pickers' }, field('Session number', n), field('Date played', date)),
     h('div', { class: 'row gen-pickers' }, field('In-game month', gMonth, 'Filled in from the calendar. Choose "No in-game date" to leave it off.'), field('Day', gDay), field('Cycle', gCycle)),
     field('Title', title),
@@ -5142,7 +5144,6 @@ function setupChrome() {
   $('#prevBtn').onclick = $('#cornerPrev').onclick = () => step(-1);
   $('#nextBtn').onclick = $('#cornerNext').onclick = () => step(1);
   $('#panelClose').onclick = () => closePanel();
-  $('#panelSize').onclick = () => { try { localStorage.setItem('atlas-panel-full', wantsFull() ? '0' : '1'); } catch {} syncPanelWidth(); };
   $('#aboutBtn').onclick = openAbout;
   $('#aboutTab').onclick = openAbout;
   $('#searchBtn').onclick = openSearch;
