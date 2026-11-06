@@ -811,7 +811,22 @@ function openAbout() {
   renderPanel();
 }
 
+// Reading panels (the session journal) open wide, and the reader can stretch them to fill the page.
+const WIDE_PANELS = ['journal', 'journalEdit'];
+const wantsFull = () => { try { return localStorage.getItem('atlas-panel-full') === '1'; } catch { return false; } };
+function syncPanelWidth() {
+  const wide = WIDE_PANELS.includes(S.panel?.type), full = wide && wantsFull();
+  document.body.classList.toggle('panel-wide', wide);
+  document.body.classList.toggle('panel-full', full);
+  const btn = $('#panelSize');
+  btn.hidden = !wide;
+  btn.title = full ? 'Back to the map' : 'Fill the page';
+  btn.setAttribute('aria-label', btn.title);
+  setTimeout(() => S.map?.invalidateSize(), 420);
+}
+
 function closePanel(silent) {
+  document.body.classList.remove('panel-wide', 'panel-full');
   S.panel = null;
   S.pinId = null;
   S.ghost?.remove(); S.ghost = null;
@@ -835,6 +850,7 @@ function renderPanel() {
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
+  syncPanelWidth();
   $('#panel').classList.add('open');
   document.body.classList.add('panel-open');
   if (!wasOpen) setTimeout(() => { S.map?.invalidateSize(); keepPinInView(); }, 400);
@@ -5126,6 +5142,7 @@ function setupChrome() {
   $('#prevBtn').onclick = $('#cornerPrev').onclick = () => step(-1);
   $('#nextBtn').onclick = $('#cornerNext').onclick = () => step(1);
   $('#panelClose').onclick = () => closePanel();
+  $('#panelSize').onclick = () => { try { localStorage.setItem('atlas-panel-full', wantsFull() ? '0' : '1'); } catch {} syncPanelWidth(); };
   $('#aboutBtn').onclick = openAbout;
   $('#aboutTab').onclick = openAbout;
   $('#searchBtn').onclick = openSearch;
