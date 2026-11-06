@@ -334,7 +334,8 @@ body.panel-wide { --panel-w: min(820px, 62vw); }
 body.panel-full .panel { left: 14px; width: auto; }
 body.panel-full .book, body.panel-full .flip { visibility: hidden; }
 body.panel-wide .panel-body > * { max-width: 74ch; margin-left: auto; margin-right: auto; }
-body.panel-full .panel-body > * { max-width: 80ch; }
+body.panel-full .panel-body > * { max-width: min(1100px, 100%); }
+body.panel-full .panel-body .prose { font-size: 21px; line-height: 1.6; }
 body.panel-wide .panel-body .journal-form, body.panel-wide .panel-body .journal-form textarea { max-width: none; }
 body.panel-wide .panel-body .journal-form { max-width: 90ch; }
 .panel-grip { display: none; }
