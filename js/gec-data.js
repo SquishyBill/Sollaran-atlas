@@ -2,7 +2,7 @@
 // safety-deposit boxes. All the money maths lives here, in copper pieces (whole numbers), so it can be
 // tested on its own. Time is real time for now: a "month" is 30 days.
 
-export const COIN_CP = { gp: 100, sp: 10, cp: 1 };
+export const COIN_CP = { pp: 1000, gp: 100, sp: 10, cp: 1 };   // platinum can be handed in, but is never given back (change is in gp, sp and cp)
 export const EXCHANGE_FEE_CP = 5;      // every exchange costs 5 copper
 export const WRIT_FEE = 0.05;          // 5% on a Writ of Exchange
 export const INTEREST = 0.03;          // savings: 3% a month
@@ -33,7 +33,7 @@ export const formatCp = (cp) => {
 export function exchangeQuote(from, to, amount) {
   const n = Math.floor(Number(amount));
   if (!(n > 0)) return { ok: false, reason: 'Enter how many coins to change.' };
-  if (!COIN_CP[from] || !COIN_CP[to] || from === to) return { ok: false, reason: 'Choose two different coins.' };
+  if (!COIN_CP[from] || !COIN_CP[to] || to === 'pp' || from === to) return { ok: false, reason: 'Choose two different coins.' };
   const inCp = n * COIN_CP[from];
   if (inCp <= EXCHANGE_FEE_CP) return { ok: false, reason: `That is too little to cover the ${EXCHANGE_FEE_CP} cp fee.` };
   let rest = inCp - EXCHANGE_FEE_CP;

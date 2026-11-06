@@ -2773,14 +2773,15 @@ function gecBox(shop, st) {
   const section = (title, ...kids) => h('details', { class: 'legend gec', open: true }, h('summary', { text: title }), ...kids);
   const numIn = (obj, key, ph, step = '1') => h('input', { type: 'number', min: 0, step, value: obj[key], placeholder: ph, onchange: (e) => { obj[key] = e.target.value; renderPanel(); } });
   const coinSel = (key) => h('select', { onchange: (e) => { G[key] = e.target.value; renderPanel(); } },
-    ['gp', 'sp', 'cp'].map((c) => h('option', { value: c, selected: G[key] === c, text: { gp: 'gold', sp: 'silver', cp: 'copper' }[c] })));
+    (key === 'from' ? ['pp', 'gp', 'sp', 'cp'] : ['gp', 'sp', 'cp']).map((c) => h('option', { value: c, selected: G[key] === c, text: { pp: 'platinum', gp: 'gold', sp: 'silver', cp: 'copper' }[c] })));
   const sizeSel = (obj, key) => h('select', { onchange: (e) => { obj[key] = e.target.value; renderPanel(); } },
     Object.entries(ITEM_SIZES).map(([k, v]) => h('option', { value: k, selected: (obj[key] || 'small') === k, text: `${v.label} (${v.hint})` })));
 
   // 1. exchanging coins
   const q = exchangeQuote(G.from, G.to, G.amt);
   const exchange = section('Exchange coins',
-    h('p', { class: 'muted', text: `1 gp = 10 sp = 100 cp. The Consortium keeps ${EXCHANGE_FEE_CP} cp on every exchange.` }),
+    h('p', { class: 'muted', text: `1 pp = 10 gp, 1 gp = 10 sp = 100 cp. The Consortium keeps ${EXCHANGE_FEE_CP} cp on every exchange, and change is given in gold, silver and copper.` }),
+    pack ? h('p', {}, 'In your backpack: ', h('strong', { id: 'gecPurse', text: coinText(myPurse()) })) : null,
     h('div', { class: 'row gen-pickers' }, field('How many', numIn(G, 'amt', 'coins')), field('From', coinSel('from')), field('Into', coinSel('to'))),
     q.ok ? h('p', {}, h('strong', { text: `You hand over ${q.gave} and receive ${q.text}.` })) : h('p', { class: 'muted', text: G.amt ? q.reason : '' }),
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Exchange', disabled: !q.ok, onclick: run(async () => {
