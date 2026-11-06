@@ -270,7 +270,7 @@ function onShops(list) {
 function onPurchases(list) { S.purchases = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
 function onJournal(list) { S.journal = list; if (S.panel?.type === 'journal') renderPanel(); }
 function onScribes(list) { S.scribes = (list || []).map((e) => String(e).toLowerCase()); if (S.panel?.type === 'journal') renderPanel(); }
-function onAccounts(list) { S.accounts = list; if (S.panel?.type === 'shop') renderPanel(); }
+function onAccounts(list) { S.accounts = list; if (['shop', 'inventory'].includes(S.panel?.type)) renderPanel(); }
 function onSales(list) { S.sales = list; if (['shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel(); }
 function onHaggles(list) { S.haggles = list; if (['shop', 'market'].includes(S.panel?.type)) renderPanel(); }
 function onPlayers(list) { S.players = list; if (S.panel?.type === 'market') renderPanel(); }
@@ -830,7 +830,7 @@ function renderPanel() {
   body.dataset.view = `${S.panel.type}:${S.panel.id}`;
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
-    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView, backup: backupView,
+    shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, inventory: inventoryView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView, backup: backupView,
     lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView, itemLib: itemLibView, itemEdit: itemEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
@@ -2899,7 +2899,7 @@ function gecBox(shop, st) {
   if (!acc) {
     boxes = section('Safety-deposit boxes', h('p', { class: 'muted', text: 'Open a savings account first. Box rent is taken from it each month.' }));
   } else {
-    const stash = S.loot.filter((x) => x.kind === 'goods' && (!x.claimedBy || heldMine(x)));   // the party's stash, and what is in your own backpack
+    const stash = S.loot.filter((x) => (x.kind === 'goods' && (!x.claimedBy || heldMine(x))) || (x.kind === 'own' && heldMine(x)));   // the party's stash, and what is in your own backpack
     const card = (box) => {
       const f = (G.boxes[box.id] ||= { name: '', size: 'small', qty: '1', loot: '', lsize: 'small', lqty: '1' });
       const info = BOXES[box.size], used = boxUsed(box);
@@ -2926,7 +2926,8 @@ function gecBox(shop, st) {
           }) })) : h('div', {},
           box.items.length ? h('ul', {}, box.items.map((it, i) => h('li', {}, `${it.qty} \u00d7 ${it.name} (${ITEM_SIZES[it.size]?.label.toLowerCase() || it.size}) `,
             h('button', { class: 'linklike', text: 'take out', onclick: run(async () => {
-              if (!confirm(`Take ${it.qty} \u00d7 ${it.name} out of the box?`)) return;
+              if (!confirm(`Take ${it.qty} \u00d7 ${it.name} out of the box?${usingBackpack() ? ' It goes into your bag.' : ''}`)) return;
+              if (usingBackpack()) await addOwnItem({ name: it.name, qty: it.qty, detail: 'Taken out of a safety-deposit box.' }, 'Took');
               box.items.splice(i, 1); note(acc, `Took ${it.name} out of a ${info.label.toLowerCase()} box`); await saveAcc(acc); renderPanel();
             }) })))) : h('p', { class: 'muted', text: 'Empty.' }),
           h('div', { class: 'row gen-pickers' },
@@ -3546,7 +3547,7 @@ function onBackpackCfg(cfg) { S.backpackCfg = cfg || {}; refreshBackpackViews();
 function refreshBackpackViews() {
   const btn = $('#backpackBtn');
   if (btn) btn.title = isDM() ? 'Backpacks: the party’s coins and things' : `Your backpack: ${coinText(myPurse())}`;
-  if (['backpack', 'shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel();
+  if (['backpack', 'inventory', 'shop', 'market', 'sell'].includes(S.panel?.type)) renderPanel();
 }
 
 // Pay from, or be paid into, the backpack. info: { kind, text, ref } (ref may be a function of the step, for an
@@ -3574,7 +3575,7 @@ function openBackpack(id) {
   renderPanel();
 }
 
-const historyLine = (l) => ['giveItem', 'giftItem'].includes(l.kind) ? h('li', { text: `${l.text} \u00b7 ${ago(l.at)}` })
+const historyLine = (l) => ['giveItem', 'giftItem', 'addItem', 'dropItem'].includes(l.kind) ? h('li', { text: `${l.text} \u00b7 ${ago(l.at)}` })
   : l.kind === 'gift' ? h('li', { text: `+${formatCp(l.deltaCp)} ${l.text} \u00b7 ${ago(l.at)}` })
   : h('li', { text: `${l.deltaCp >= 0 ? '+' : '−'}${formatCp(Math.abs(l.deltaCp))} ${l.text} · now ${formatCp(l.balanceCp)} · ${ago(l.at)}` });
 
@@ -3599,10 +3600,14 @@ function backpackView() {
         h('button', { class: 'btn small ghost', text: 'Give coins', onclick: () => dmCoins(uid, owner, 'give') }),
         h('button', { class: 'btn small ghost', text: 'Take coins', onclick: () => dmCoins(uid, owner, 'take') }),
         h('button', { class: 'btn small ghost', text: 'Set coins', onclick: () => dmCoins(uid, owner, 'set') }),
-        h('button', { class: 'btn small ghost', id: 'bpGiveItem', text: 'Give item', onclick: () => dmGiveItem(uid, owner) })) : null),
+        h('button', { class: 'btn small ghost', id: 'bpGiveItem', text: 'Give item', onclick: () => dmGiveItem(uid, owner) }),
+        h('button', { class: 'btn small ghost', id: 'bpInventory', text: 'Full inventory', onclick: () => openInventory(uid) })) : null),
     !dm ? h('p', { class: 'muted', text: 'What you buy lands here, and what you sell or bank comes out of it. Visit a shop to spend, or a G.E.C. branch to bank your coins.' }) : null,
     !dm ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', text: 'Go to the Market', onclick: () => openMarket('shops') }),
       backpackOn() ? h('button', { class: 'btn small ghost', id: 'bpGiveCoins', type: 'button', text: 'Give coins to a player…', onclick: giveCoinsToFriend }) : null) : null,
+    !dm ? h('div', { class: 'row' },
+      backpackOn() ? h('button', { class: 'btn small', id: 'bpAddItem', type: 'button', text: 'Add an item…', onclick: addBagItem }) : null,
+      h('button', { class: 'btn small ghost', id: 'bpInventory', type: 'button', text: 'Full inventory', onclick: () => openInventory(myUid()) })) : null,
     h('h3', { class: 'notes-title', text: `${dm ? 'Carrying' : 'You are carrying'}${items.length ? ` (${items.length})` : ''}` }),
     items.length ? h('ol', { class: 'loot-list' }, items.map(lootRow)) : h('p', { class: 'muted', text: 'Nothing yet.' }),
     log.length ? h('details', { class: 'legend', open: true },
@@ -3632,7 +3637,8 @@ function backpackRoster() {
           h('button', { class: 'linklike', text: 'give coins', onclick: () => dmCoins(b.uid, b.owner, 'give') }),
           h('button', { class: 'linklike', text: 'take coins', onclick: () => dmCoins(b.uid, b.owner, 'take') }),
           h('button', { class: 'linklike', text: 'set coins', onclick: () => dmCoins(b.uid, b.owner, 'set') }),
-          h('button', { class: 'linklike', text: 'give item', onclick: () => dmGiveItem(b.uid, b.owner) })));
+          h('button', { class: 'linklike', text: 'give item', onclick: () => dmGiveItem(b.uid, b.owner) }),
+          h('button', { class: 'linklike', text: 'inventory', onclick: () => openInventory(b.uid) })));
     })) : h('p', { class: 'muted', text: 'Nobody has opened the atlas since backpacks arrived. Each player gets a backpack the first time they do.' }),
     list.length ? h('p', { class: 'muted', text: `Carried by the party in all: ${formatCp(total)}.` }) : null,
     unlinked.length ? h('div', {},
@@ -3663,6 +3669,148 @@ async function linkClaimedItems() {
     try { await S.store.saveLoot({ holderUid: b.uid }, x.id); done++; } catch (e) { toast('Could not link ' + x.name + ': ' + e.message); }
   }
   toast(`Matched ${done} item${done === 1 ? '' : 's'}.${missed.size ? ` No backpack yet for: ${[...missed].join(', ')}.` : ''}`);
+}
+
+// ── a player's own things ───────────────────────────────────────────
+// Players put what they already own (say, from their character sheet) into their bag. Those things are tagged
+// "added by player", and a shop will not buy them for gold until the DM has verified them.
+function bagItemForm(title, init = {}) {
+  return modalBox(title, 'Things you add are tagged, so your DM can see them. A shop will only buy them once your DM has verified them.', (fail) => {
+    const name = h('input', { type: 'text', id: 'bagName', maxlength: 80, autocomplete: 'off', value: init.name || '', placeholder: 'e.g. Longsword +1' });
+    const qty = h('input', { type: 'number', id: 'bagQty', min: 1, max: 999, step: 1, value: init.qty || 1 });
+    const note = h('textarea', { id: 'bagNote', rows: 2, maxlength: 300, placeholder: 'optional' });
+    note.value = init.detail || '';
+    const magic = h('input', { type: 'checkbox', id: 'bagMagic', checked: !!init.magic });
+    const rarity = h('select', { id: 'bagRarity' }, RARITIES.map((r) => h('option', { value: r, selected: r === (init.rarity || 'uncommon'), text: r })));
+    const rarityField = field('Rarity', rarity);
+    rarityField.hidden = !magic.checked;
+    magic.addEventListener('change', () => { rarityField.hidden = !magic.checked; });
+    return {
+      okText: 'Save',
+      nodes: [field('Name', name), field('How many', qty), field('Notes', note), h('label', { class: 'check' }, magic, ' This is a magic item'), rarityField],
+      focus: name,
+      read: () => {
+        const n = parseInt(qty.value, 10);
+        if (!name.value.trim()) return fail('Type the item’s name.', name);
+        if (!(n >= 1 && n <= 999)) return fail('How many? Enter a number from 1 to 999.', qty);
+        return { name: name.value.trim(), qty: n, detail: note.value.trim(), magic: magic.checked, rarity: magic.checked ? rarity.value : '' };
+      },
+    };
+  });
+}
+
+// A line in the player's own history (no coins move).
+async function bagLog(kind, text, ref) {
+  const uid = myUid(), owner = backpackOf(uid)?.owner || whoAmI(), now = Date.now();
+  await S.store.transact(async (t) => {
+    const purse = await t.purse(uid, owner);
+    t.add('backpackLog', ledgerLine({ uid, owner, kind, deltaCp: 0, balanceCp: cpOf(purse.coins), text, ref: ref || '' }, now));
+  });
+}
+
+// Put something the player owns into their own bag, with a line in their history.
+async function addOwnItem({ name, qty, detail = '', magic = false, rarity = '' }, verb = 'Added') {
+  const uid = myUid(), owner = backpackOf(uid)?.owner || whoAmI(), now = Date.now();
+  const label = `${qty > 1 ? `${qty} × ` : ''}${name}`;
+  await S.store.transact(async (t) => {
+    const purse = await t.purse(uid, owner);
+    const id = t.newId('loot');
+    t.set('loot', id, { kind: 'own', name, detail, qty, status: 'identified', source: '', foundAt: now, holderUid: uid, claimedBy: owner, claimedAt: now,
+      addedBy: owner, addedByUid: uid, ...(magic ? { magic: true, rarity } : {}) });
+    t.add('backpackLog', ledgerLine({ uid, owner, kind: 'addItem', deltaCp: 0, balanceCp: cpOf(purse.coins), text: `${verb} ${label} ${verb === 'Added' ? 'to your bag' : 'in your bag'}`, ref: id }, now));
+  });
+  return label;
+}
+
+async function addBagItem() {
+  if (!backpackOn()) { toast('Backpacks are not in use yet.'); return; }
+  const ask = await bagItemForm('Add an item to your bag');
+  if (!ask) return;
+  try { toast(`Added ${await addOwnItem(ask)} to your bag.`); }
+  catch (e) { toast('Could not add it: ' + (e.message || 'try again once you have opened the atlas.')); }
+}
+
+async function editBagItem(x) {
+  const ask = await bagItemForm('Edit this item', x);
+  if (!ask) return;
+  try { await S.store.saveLoot({ name: ask.name, qty: ask.qty, detail: ask.detail, magic: ask.magic, rarity: ask.rarity }, x.id); toast('Saved.'); }
+  catch (e) { toast('Could not save: ' + e.message); }
+}
+
+async function removeBagItem(x) {
+  if (!confirm(`Remove ${x.qty > 1 ? `${x.qty} × ` : ''}${x.name} from your bag for good?`)) return;
+  try {
+    await S.store.deleteLoot(x.id);
+    await bagLog('dropItem', `Removed ${x.qty > 1 ? `${x.qty} × ` : ''}${x.name} from your bag`, x.id).catch(() => {});
+  } catch (e) { toast('Could not remove it: ' + e.message); }
+}
+
+// DM: accept something a player added. It then sells like anything else (a magic item stays what it is, just trusted).
+async function verifyBagItem(x) {
+  const listed = catalogValue(x.name);
+  const ans = prompt(`Verify "${x.name}" for ${x.claimedBy || 'the player'}?\n\nWhat is one worth, in gold? Enter 0 for nothing${listed != null ? ` (shops list it at ${formatPrice(listed)})` : ''}.`, listed != null ? String(listed) : '0');
+  if (ans == null) return;
+  const v = parseFloat(ans);
+  if (!(v >= 0)) { toast('Enter a number, like 5 or 0.'); return; }
+  try {
+    await S.store.saveLoot({ verified: true, value: v || null, ...(x.magic ? {} : { kind: 'goods', cat: tradeCategory(x.name) || null }) }, x.id);
+    await S.store.addLootLog(`${x.name} verified for ${x.claimedBy || 'a character'}.`).catch(() => {});
+  } catch (e) { toast('Could not verify: ' + e.message); }
+}
+
+// ── everything a character owns, in one place ───────────────────────
+function openInventory(uid) {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'inventory', id: uid || myUid() };
+  renderPanel();
+}
+
+function inventoryView() {
+  const dm = isDM(), uid = dm ? S.panel.id : myUid();
+  const b = backpackOf(uid), owner = b?.owner || (dm ? '' : whoAmI());
+  const now = Date.now();
+  const bag = S.loot.filter((x) => heldBy(x, uid, owner)).sort((p, q) => String(p.name).localeCompare(String(q.name)));
+  const accounts = S.accounts.filter((x) => x.uid === uid).map((x) => settle(x, now));
+  const bagCount = bag.reduce((n, x) => n + (x.qty || 1), 0);
+  const boxCount = accounts.reduce((n, a) => n + a.boxes.reduce((m, bx) => m + bx.items.reduce((k, it) => k + (Number(it.qty) || 0), 0), 0), 0);
+  const savings = accounts.reduce((n, a) => n + (a.balance || 0), 0);
+  const tag = (text, cls = 'fine') => h('span', { class: `grade ${cls}`, text });
+  const row = (text, tags = [], sub = '') => h('li', { class: 'loot-item', 'data-t': `${text} ${sub}`.toLowerCase() },
+    h('div', { class: 'loot-main' }, h('strong', { text }), ...tags),
+    sub ? h('div', { class: 'loot-meta', text: sub }) : null);
+  const bagRows = bag.map((x) => row(`${x.qty > 1 ? `${x.qty} × ` : ''}${x.name}`, [
+    x.rarity ? tag(x.rarity, 'rare') : null,
+    x.kind === 'own' && !x.verified ? tag('added by player') : null,
+    x.status === 'unidentified' ? tag('unidentified', 'house') : null,
+    x.status === 'identified' && x.value && x.kind !== 'own' ? h('span', { class: 'loot-value', text: formatPrice(x.value * (x.qty || 1)) }) : null,
+  ].filter(Boolean), x.detail || ''));
+  const boxBlocks = accounts.flatMap((a) => {
+    const shop = shopById(a.shopId), where = [shop?.name || 'A G.E.C. branch', placeOf(shop?.location)?.label].filter(Boolean).join(', ');
+    return a.boxes.map((bx) => h('div', { class: 'box-card' },
+      h('h5', { text: `${where} · ${BOXES[bx.size].label} box · ${boxUsed(bx)} of ${BOXES[bx.size].cap} units` }),
+      bx.locked ? h('p', { class: 'repair-no', text: 'Locked: the rent is unpaid, so nothing goes in or out.' }) : null,
+      bx.items.length ? h('ul', { class: 'loot-list' }, bx.items.map((it) => row(`${it.qty} × ${it.name}`, [tag(ITEM_SIZES[it.size]?.label.toLowerCase() || it.size, 'house')]))) : h('p', { class: 'muted', text: 'Empty.' })));
+  });
+  const search = h('input', { type: 'search', id: 'invSearch', placeholder: 'Find an item…', autocomplete: 'off' });
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    document.querySelectorAll('.inventory-view li[data-t]').forEach((li) => { li.hidden = !!q && !li.dataset.t.includes(q); });
+  });
+  return h('div', { class: 'codex inventory-view' },
+    h('button', { class: 'linklike back', type: 'button', text: dm ? '← All backpacks' : '← Your backpack', onclick: () => openBackpack(dm ? 'all' : 'me') }),
+    h('div', { class: 'codex-kind', html: '<span>Inventory</span>' }),
+    h('h2', { class: 'codex-title', text: dm ? `${owner || 'A player'}’s inventory` : 'Your inventory' }),
+    h('p', { class: 'muted', id: 'invSummary', text: `${bagCount} item${bagCount === 1 ? '' : 's'} in the bag, ${boxCount} in safety-deposit boxes.` }),
+    h('div', { class: 'loot-coins' },
+      h('div', {}, h('strong', { id: 'invCoins', text: `In the bag: ${coinText(normalizeCoins(b?.coins))}` }),
+        h('small', { text: `Savings at the G.E.C.: ${accounts.length ? formatCp(savings) : 'no accounts'}` }))),
+    search,
+    h('h3', { class: 'notes-title', text: `In the bag (${bag.length})` }),
+    bagRows.length ? h('ol', { class: 'loot-list', id: 'invBag' }, bagRows) : h('p', { class: 'muted', text: 'Nothing in the bag.' }),
+    h('h3', { class: 'notes-title', text: 'In G.E.C. boxes' }),
+    boxBlocks.length ? boxBlocks : h('p', { class: 'muted', text: 'No safety-deposit boxes.' }),
+    h('p', { class: 'muted', text: 'Other places things are kept, like lockers, will be listed here once they are set up.' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn small ghost', type: 'button', text: 'Open the bag', onclick: () => openBackpack(dm ? uid : 'me') })));
 }
 
 // DM: give, take or set a character's coins (always with a line in the ledger).
@@ -3765,7 +3913,7 @@ function onLoot(list) { S.loot = list; processIdentifications(); refreshLootView
 function onLootTruth(list) { S.lootTruth = Object.fromEntries(list.map((x) => [x.id, x])); processIdentifications(); refreshLootViews(); }
 function refreshLootViews() {
   if (S.panel?.type === 'market' && S.panel.tab === 'loot') renderPanel();
-  else if (['pin', 'about', 'backpack', 'shop'].includes(S.panel?.type)) renderPanel();   // a shop shows writs; a backpack shows what is carried
+  else if (['pin', 'about', 'backpack', 'inventory', 'shop'].includes(S.panel?.type)) renderPanel();   // a shop shows writs; a backpack shows what is carried
 }
 
 // DM's browser only: reveal anything a player has paid to identify.
@@ -3915,6 +4063,7 @@ function lootRow(x) {
       h('strong', { text: `${x.qty > 1 ? `${x.qty} × ` : ''}${x.name}` }),
       x.rarity ? h('span', { class: 'grade rare', text: x.rarity }) : null,
       status ? h('span', { class: `grade ${x.status === 'pending' ? 'fine' : 'house'}`, text: status }) : null,
+      x.kind === 'own' && !x.verified ? h('span', { class: 'grade fine', text: 'added by player' }) : null,
       h('span', { class: 'loot-value', text: x.status !== 'identified' ? 'value unknown' : x.value ? formatPrice(x.value * (x.qty || 1)) : '' })),
     x.detail ? h('div', { class: 'loot-detail', text: x.detail }) : null,
     truth && x.status !== 'identified' ? h('div', { class: 'loot-truth', text: `DM: really ${truth.name}${truth.rarity ? ` (${truth.rarity})` : ''}${truth.value ? `, ${formatPrice(truth.value)}` : ''}. ${truth.detail || ''}` }) : null,
@@ -3924,15 +4073,18 @@ function lootRow(x) {
     isDM() ? h('div', { class: 'loot-actions' },
       !x.claimedBy ? h('button', { class: 'linklike', text: x.kind === 'goods' || x.kind === 'writ' ? 'give to a character…' : 'claim…', onclick: () => claimItem(x) }) : h('button', { class: 'linklike', text: 'unclaim', onclick: () => unclaimItem(x) }),
       x.status === 'identified' && x.kind !== 'hook' && x.kind !== 'writ' ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
+      x.kind === 'own' && !x.verified ? h('button', { class: 'linklike', text: 'verify…', title: 'Accept what the player added and set its worth', onclick: () => verifyBagItem(x) }) : null,
       x.status !== 'identified' ? h('button', { class: 'linklike', text: 'reveal', title: 'Identify it now, for free', onclick: () => revealItem(x, 'Identified').catch((e) => toast(e.message)) }) : null,
       h('button', { class: 'linklike', text: 'remove', onclick: async () => {
         if (!confirm(`Remove "${x.name}" from Loot for good?`)) return;
         await S.store.deleteLoot(x.id).catch((e) => toast(e.message));
         await S.store.addLootLog(`Removed from Loot: ${x.name}.`).catch(() => {});
       } })) : null,
-    !isDM() && ((x.kind === 'goods' && (!x.claimedBy || heldMine(x))) || (backpackOn() && x.holderUid === myUid()))
+    !isDM() && ((x.kind === 'goods' && (!x.claimedBy || heldMine(x))) || (backpackOn() && x.holderUid === myUid()) || (x.kind === 'own' && x.holderUid === myUid()))
       ? h('div', { class: 'loot-actions' },
         x.kind === 'goods' && (!x.claimedBy || heldMine(x)) ? h('button', { class: 'linklike', text: 'sell…', title: 'Sell it to a shop', onclick: () => openSell(x.id) }) : null,
+        x.kind === 'own' && x.holderUid === myUid() && !x.verified ? h('button', { class: 'linklike', text: 'edit', onclick: () => editBagItem(x) }) : null,
+        x.kind === 'own' && x.holderUid === myUid() ? h('button', { class: 'linklike', text: 'remove', onclick: () => removeBagItem(x) }) : null,
         backpackOn() && x.holderUid === myUid() ? h('button', { class: 'linklike', text: 'give…', title: 'Give it to another player', onclick: () => giveItem(x) }) : null) : null);
 }
 
