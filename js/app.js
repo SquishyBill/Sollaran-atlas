@@ -2559,7 +2559,10 @@ function stockFor(shop) {
   }));
   const homebrew = homebrewStock(shop, week);
   const festive = festivalStock(shop, week, activeFestivals());
-  const items = [...house, ...festive, ...generateStock(shop, week), ...homebrew].map((i) => {
+  const removed = new Set(shop.removed || []), qtyOv = shop.qtyOverrides || {};
+  const generated = generateStock(shop, week).filter((i) => !removed.has(i.key))
+    .map((i) => (i.qty != null && qtyOv[i.key] != null ? { ...i, qty: Math.max(0, Number(qtyOv[i.key]) || 0) } : i));
+  const items = [...house, ...festive, ...generated, ...homebrew].map((i) => {
     const price = overrides[i.key] != null ? Number(overrides[i.key]) : i.price;
     return {
       ...i, price,
@@ -3280,7 +3283,21 @@ function tumble(el) {
 }
 
 // DM: items this shop always stocks, on top of the generated stock.
-function houseSpecialsEditor(extras) {
+function shopAddChoices(shop) {
+  const groups = [], seen = new Set();
+  const add = (label, rows) => {
+    const rs = rows.map(([name, price, , flags = '']) => ({ name, price: nicePrice((Number(price) || 0) * (shop.priceMod || 1)), service: String(flags).includes('s') }))
+      .filter((r) => r.name && !seen.has(r.name.toLowerCase()));
+    rs.forEach((r) => seen.add(r.name.toLowerCase()));
+    if (rs.length) groups.push({ label, rows: rs.sort((a, b) => a.name.localeCompare(b.name)) });
+  };
+  add('My custom items', S.customItems.map((x) => [x.name, x.shop?.price ?? x.price ?? 0, 1, x.shop?.flags || '']));
+  add('Usually sold at this kind of shop', SHOP_TYPES[shop.type]?.catalog || []);
+  add('Everything else', Object.entries(SHOP_TYPES).filter(([k]) => k !== shop.type).flatMap(([, t]) => t.catalog));
+  return groups;
+}
+
+function houseSpecialsEditor(extras, shop) {
   const rows = h('div', { class: 'tier-rows' });
   const add = (x = { name: '', price: '', qty: '' }) => {
     const row = h('div', { class: 'special-row' },
@@ -3292,10 +3309,23 @@ function houseSpecialsEditor(extras) {
   };
   extras.forEach(add);
   const wrap = h('div', { class: 'field' },
-    h('span', { text: 'House specials' }),
-    h('small', { text: 'Always in stock, every week. Price in gold (0.1 = 1 sp). Leave "per week" blank for a service that never runs out.' }),
+    h('span', { text: 'Added items' }),
+    h('small', { text: 'Always in stock, every week, on top of the random stock. Price in gold (0.1 = 1 sp). Leave "per week" blank for a service that never runs out.' }),
     rows,
-    h('button', { type: 'button', class: 'btn small ghost', text: '+ Add a house special', onclick: () => add() }));
+    h('div', { class: 'row' },
+      shop ? h('button', { type: 'button', class: 'btn small', id: 'addFromList', text: '+ Add from the item list…', onclick: async () => {
+        const groups = shopAddChoices(shop), pool = new Map();
+        groups.forEach((g, gi) => g.rows.forEach((r, ri) => pool.set(`${gi}:${ri}`, r)));
+        const ask = await modalBox('Add an item to this shop', 'It will be in stock every week. You can change the price and amount after.', (fail) => {
+          const sel = h('select', { id: 'addItemSel' }, h('option', { value: '', text: 'Choose an item…' }),
+            ...groups.map((g, gi) => h('optgroup', { label: g.label }, g.rows.map((r, ri) => h('option', { value: `${gi}:${ri}`, text: `${r.name} (${formatPrice(r.price)})` })))));
+          const qty = h('input', { type: 'number', id: 'addItemQty', min: 0, max: 999, step: 1, value: 3 });
+          return { okText: 'Add', nodes: [field('Item', sel), field('How many each week', qty, 'Leave blank for something that never runs out.')], focus: sel,
+            read: () => { if (!sel.value) return fail('Choose an item.', sel); const r = pool.get(sel.value); return { name: r.name, price: r.price, qty: r.service || qty.value === '' ? '' : Math.max(0, parseInt(qty.value, 10) || 0) }; } };
+        });
+        if (ask) add(ask);
+      } }) : null,
+      h('button', { type: 'button', class: 'btn small ghost', text: '+ Write your own', onclick: () => add() })));
   wrap.value = () => [...rows.querySelectorAll('.special-row')].map((r) => ({
     name: r.querySelector('.sp-name').value.trim(),
     price: Math.max(0, parseFloat(r.querySelector('.sp-price').value) || 0),
@@ -3304,25 +3334,43 @@ function houseSpecialsEditor(extras) {
   return wrap;
 }
 
-// DM: set your own price for anything the generator stocks (sticks whenever that item comes back).
-function priceOverridesEditor(shop) {
-  const current = { ...(shop.priceOverrides || {}) };
+// DM: this week's random stock. Change a price or an amount, or take an item off the shelf. All of it sticks:
+// a price or amount you set applies whenever that item comes back, and a removed item stays removed until you put it back.
+function stockEditor(shop) {
+  const price = { ...(shop.priceOverrides || {}) }, qty = { ...(shop.qtyOverrides || {}) };
+  const removed = new Set(shop.removed || []);
   const items = generateStock(shop, weekOf(shop).week);
-  const list = h('div', { class: 'override-list' }, items.map((i) => {
-    const input = h('input', { type: 'number', step: '0.01', min: '0', placeholder: String(i.price), value: current[i.key] ?? '', 'data-key': i.key });
-    return h('label', { class: 'override-row' }, h('span', { text: i.name }), input);
-  }));
-  const wrap = h('details', { class: 'legend' },
-    h('summary', { text: 'Set your own prices (this week’s items)' }),
-    h('small', { class: 'muted', text: 'In gold, before renown and haggling. Leave blank to use the generated price. A price you set sticks whenever that item is back in stock.' }),
-    list);
+  const here = new Set(items.map((i) => i.key));
+  const list = h('div', { class: 'override-list' });
+  const draw = () => {
+    const saved = new Map([...list.querySelectorAll('.stock-row')].map((r) => [r.dataset.key, { p: r.querySelector('.st-price').value, q: r.querySelector('.st-qty').value }]));
+    list.replaceChildren(...items.map((i) => {
+      const gone = removed.has(i.key), s = saved.get(i.key);
+      const pIn = h('input', { type: 'number', class: 'st-price', step: '0.01', min: '0', placeholder: String(i.price), value: s ? s.p : (price[i.key] ?? ''), disabled: gone, 'aria-label': `${i.name} price` });
+      const qIn = h('input', { type: 'number', class: 'st-qty', step: '1', min: '0', max: '999', placeholder: i.qty == null ? 'always' : String(i.qty), value: s ? s.q : (qty[i.key] ?? ''), disabled: gone || i.qty == null, 'aria-label': `${i.name} amount` });
+      return h('div', { class: `stock-row${gone ? ' is-removed' : ''}`, 'data-key': i.key },
+        h('span', { class: 'st-name', text: i.name }), pIn, qIn,
+        h('button', { type: 'button', class: 'linklike', text: gone ? 'put back' : 'remove', onclick: () => { gone ? removed.delete(i.key) : removed.add(i.key); draw(); } }));
+    }));
+  };
+  draw();
+  const away = [...removed].filter((k) => !here.has(k));
+  const awayNote = away.length ? h('p', { class: 'muted' }, `${away.length} other item${away.length === 1 ? '' : 's'} you removed earlier stay off the shelf. `,
+    h('button', { type: 'button', class: 'linklike', text: 'Put them all back', onclick: () => { away.forEach((k) => removed.delete(k)); awayNote.remove(); } })) : null;
+  const wrap = h('details', { class: 'legend', open: true },
+    h('summary', { text: 'This week’s stock: prices, amounts and what’s on the shelf' }),
+    h('small', { class: 'muted', text: 'Prices are in gold, before renown and haggling. Leave a box blank to use the generated one. Remove takes an item off the shelf for good; to put a different one on, use “Added items” below.' }),
+    h('div', { class: 'stock-head' }, h('span', { text: 'Item' }), h('span', { text: 'Price (gp)' }), h('span', { text: 'Amount' }), h('span')),
+    list,
+    awayNote);
   wrap.value = () => {
-    const out = { ...current };
-    for (const input of list.querySelectorAll('input')) {
-      if (input.value === '') delete out[input.dataset.key];
-      else out[input.dataset.key] = Math.max(0, parseFloat(input.value) || 0);
+    const p = { ...price }, q = { ...qty };
+    for (const row of list.querySelectorAll('.stock-row')) {
+      const k = row.dataset.key, pv = row.querySelector('.st-price').value, qv = row.querySelector('.st-qty').value;
+      if (pv === '') delete p[k]; else p[k] = Math.max(0, parseFloat(pv) || 0);
+      if (qv === '') delete q[k]; else q[k] = Math.max(0, parseInt(qv, 10) || 0);
     }
-    return out;
+    return { priceOverrides: p, qtyOverrides: q, removed: [...removed] };
   };
   return wrap;
 }
@@ -3426,8 +3474,8 @@ function shopEditView() {
   const bankSel = h('select', {}, [h('option', { value: '', text: 'Automatic (a G.E.C. in the same town)' }),
     ...S.shops.filter((x) => x.type === 'gec').map((g) => h('option', { value: g.id, selected: shop.bankShopId === g.id, text: `${g.name} · ${settlementOf(g.location).label}` }))]);
   const hidden = h('input', { type: 'checkbox', checked: !!shop.hidden });
-  const specials = houseSpecialsEditor(shop.extras || []);
-  const overrides = priceOverridesEditor(shop);
+  const specials = houseSpecialsEditor(shop.extras || [], shop);
+  const overrides = stockEditor(shop);
   return h('div', { class: 'codex editor' },
     h('h2', { class: 'codex-title', text: 'Edit shop' }),
     field('Shop name', name),
@@ -3436,8 +3484,8 @@ function shopEditView() {
     shop.type === 'gaming' ? field('House edge', edgeSel, 'How much the house keeps, on average, of every coin staked.') : null,
     shop.type === 'pleasure' ? field('Quality of the house', levelSel, 'Sets the comforts, the risk and the prices.') : null,
     shop.type === 'gaming' || shop.type === 'pleasure' ? field('Paid from the savings account at', bankSel, 'Normally the G.E.C. in the same town. Pick a branch to override that.') : null,
-    specials,
     overrides,
+    specials,
     h('label', { class: 'check' }, hidden, ' Hidden from players'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', type: 'button', text: 'Save', onclick: async () => {
@@ -3445,7 +3493,7 @@ function shopEditView() {
           await S.store.saveShop({ name: name.value.trim() || shop.name, description: desc.value.trim(), size: Number(size.value), hidden: hidden.checked,
             ...(shop.type === 'gaming' ? { edge: edgeSel.value } : {}), ...(shop.type === 'pleasure' ? { level: levelSel.value } : {}),
             ...(shop.type === 'gaming' || shop.type === 'pleasure' ? { bankShopId: bankSel.value } : {}),
-            extras: specials.value(), priceOverrides: overrides.value() }, shop.id);
+            extras: specials.value(), ...overrides.value() }, shop.id);
           const pin = shop.pinId && pinById(shop.pinId);
           if (pin && !shop.pinShared && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
           openShop(shop.id);
