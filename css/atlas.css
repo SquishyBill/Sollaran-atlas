@@ -1147,3 +1147,11 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 
 .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin: 4px 0 10px; }
 .check-grid .check { font-size: 15px; }
+
+/* shop stock editor */
+.stock-head, .stock-row { display: grid; grid-template-columns: 1fr 74px 74px 62px; gap: 6px; align-items: center; }
+.stock-head { font: 700 11px var(--f-head); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-top: 8px; }
+.stock-row { padding: 3px 0; border-bottom: 1px solid rgba(90, 60, 25, .15); }
+.stock-row input { width: 100%; min-width: 0; }
+.st-name { min-width: 0; overflow-wrap: anywhere; }
+.stock-row.is-removed .st-name { text-decoration: line-through; opacity: .55; }
