@@ -539,7 +539,8 @@ body.toc-open .toc { transform: none; }
   .ping i:nth-child(n + 2) { display: none; }
   .ping b { animation: none !important; }
 }
-.map-wrap.no-labels .pin:not(:hover):not(.is-active) .pin-label { opacity: 0; }
+.map-wrap.no-labels .pin:not(:hover):not(.is-active) .pin-label,
+.pin.no-label:not(:hover):not(.is-active) .pin-label { opacity: 0; }
 /* maps with printed names: smaller pins so they don't hide the lettering */
 .map-wrap.no-labels .pin { transform: scale(.72); }
 .map-wrap.no-labels .pin:hover { transform: translateY(-4px) scale(.85); }
@@ -636,6 +637,11 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
 .person-text small { font-size: 15px; font-style: italic; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .people-here { margin: 14px 0 6px; }
+.person-line { display: flex; align-items: center; gap: 4px; }
+.person-line .person-row { flex: 1; min-width: 0; }
+.trash-btn { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--ink-faint); cursor: pointer; }
+.trash-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.trash-btn:hover, .trash-btn:focus-visible { color: var(--wax); background: rgba(142, 43, 32, .1); }
 .people-here .btn { margin-top: 6px; }
 
 .back { display: inline-block; margin-bottom: 10px; font-size: 15px; }
