@@ -681,7 +681,7 @@ function afterMapReady() {
 
 function pinHTML(p, count, idx) {
   const k = kindOf(p);
-  const cls = ['pin', p.hidden && 'is-hidden', p.id === S.pinId && 'is-active', idx >= 0 && 'drop'].filter(Boolean).join(' ');
+  const cls = ['pin', p.hidden && 'is-hidden', p.noLabel && 'no-label', p.id === S.pinId && 'is-active', idx >= 0 && 'drop'].filter(Boolean).join(' ');
   return `<div class="${cls}" style="--c:${k.color};--d:${Math.max(0, idx) * 70}ms">
     <svg viewBox="0 0 44 56" class="pin-svg" aria-hidden="true">
       <path class="pin-body" d="M22 54C22 54 4 35 4 21a18 18 0 0 1 36 0c0 14-18 33-18 33z"/>
@@ -981,7 +981,13 @@ function peopleHere(list, placeRef) {
   if (!list.length && !isDM()) return null;
   return h('section', { class: 'people-here' },
     h('h3', { class: 'notes-title', text: `People here${list.length ? ` (${list.length})` : ''}` }),
-    list.map(personRow),
+    list.map((p) => !isDM() ? personRow(p) : h('div', { class: 'person-line' }, personRow(p),
+      h('button', { class: 'trash-btn', type: 'button', title: `Delete ${p.name}`, 'aria-label': `Delete ${p.name}`,
+        html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
+        onclick: async () => {
+          if (!confirm(`Remove ${p.name} from the atlas? This cannot be undone.`)) return;
+          await S.store.deletePerson(p.id).catch((e) => toast(e.message));
+        } }))),
     isDM() ? h('button', { class: 'btn small ghost', text: '+ Add a person here', onclick: () => openPersonEditor(null, [placeRef]) }) : null);
 }
 
@@ -2692,7 +2698,8 @@ function shopView() {
         toast('Fresh stock is on the shelves.');
       } }),
       h('button', { class: 'btn ghost', type: 'button', text: 'Edit', onclick: () => { S.panel = { type: 'shopEdit', id: shop.id, from: S.panel.from }; renderPanel(); } }),
-      !shop.pinId || !pinById(shop.pinId) ? h('button', { class: 'btn ghost', type: 'button', text: 'Place on map', onclick: () => startPlacingShop(shop.id) }) : null) : null,
+      !shop.pinId || !pinById(shop.pinId) ? h('button', { class: 'btn ghost', type: 'button', text: 'Place on map', onclick: () => startPlacingShop(shop.id) }) : null,
+      !shop.pinId || !pinById(shop.pinId) ? h('button', { class: 'btn ghost', type: 'button', id: 'shopUsePin', text: 'Use an existing pin…', onclick: () => pickExistingPin(shop) }) : null) : null,
     sales.length ? h('details', { class: 'legend' },
       h('summary', { text: 'Recent purchases' }),
       h('ul', { class: 'sales' }, sales.map((p) => h('li', { text: `${p.buyer}: ${p.qty} × ${p.itemName}, ${formatPrice(p.total)} · ${ago(p.at)}` })))) : null,
@@ -3331,7 +3338,11 @@ function shopGenView() {
   const keeper = h('input', { type: 'text', maxlength: 60, value: d.proprietor.name });
   const desc = h('textarea', { rows: 2 }); desc.value = d.description;
   const addPerson = h('input', { type: 'checkbox', checked: true });
-  const addPin = h('input', { type: 'checkbox', checked: ref.startsWith('page:') });
+  const spots = freePinsOn(place?.pageId);
+  const addPin = h('select', { id: 'shopPinSel' },
+    h('option', { value: 'new', selected: ref.startsWith('page:'), text: 'Place a new pin (you click the map)' }),
+    spots.length ? h('optgroup', { label: 'Use a pin already on this map' }, spots.map((p) => h('option', { value: p.id, text: p.title }))) : null,
+    h('option', { value: 'none', selected: !ref.startsWith('page:'), text: 'No pin' }));
   const hidden = h('input', { type: 'checkbox', checked: !!SHOP_TYPES[d.type]?.hiddenByDefault });
   const preview = stockFor({ ...d, id: '__preview', createdAt: Date.now(), restockOffset: 0, location: ref });
   return h('div', { class: 'codex editor' },
@@ -3351,7 +3362,7 @@ function shopGenView() {
       h('summary', { text: `This week’s stock (${preview.items.length} items)` }),
       h('ul', { class: 'sales' }, preview.items.map((i) => h('li', { text: `${i.name} ${i.qty == null ? '(service)' : `×${i.qty}`} — ${formatPrice(i.cost)}${i.grade === 'rare' ? ' (under the counter)' : ''}` })))),
     h('label', { class: 'check' }, addPerson, ' Add the proprietor to People'),
-    h('label', { class: 'check' }, addPin, ' Place a pin for it on the map'),
+    field('Pin on the map', addPin),
     h('label', { class: 'check' }, hidden, ' Hidden from players for now'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', type: 'button', text: 'Save shop', onclick: async (e) => {
@@ -3371,7 +3382,9 @@ function shopGenView() {
             });
             await S.store.saveShop({ personId }, id);
           }
-          if (addPin.checked) startPlacingShop(id); else openShop(id);
+          if (addPin.value === 'new') startPlacingShop(id);
+          else if (addPin.value !== 'none') { await attachShopPin(id, addPin.value); openShop(id); }
+          else openShop(id);
         } catch (err) { toast('Could not save the shop: ' + err.message); }
       } }),
       h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => closePanel() })));
@@ -3409,17 +3422,47 @@ function shopEditView() {
             ...(shop.type === 'gaming' || shop.type === 'pleasure' ? { bankShopId: bankSel.value } : {}),
             extras: specials.value(), priceOverrides: overrides.value() }, shop.id);
           const pin = shop.pinId && pinById(shop.pinId);
-          if (pin && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
+          if (pin && !shop.pinShared && (pin.title !== name.value.trim() || !!pin.hidden !== hidden.checked)) await S.store.savePin({ title: name.value.trim() || shop.name, hidden: hidden.checked }, pin.id);
           openShop(shop.id);
         } catch (e) { toast('Could not save: ' + e.message); }
       } }),
       h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => openShop(shop.id) }),
       h('button', { class: 'btn danger', type: 'button', text: 'Close the shop', onclick: async () => {
-        if (!confirm(`Close "${shop.name}" for good? Its pin is removed; its ledger entries and proprietor stay.`)) return;
-        if (shop.pinId && pinById(shop.pinId)) await S.store.deletePin(shop.pinId).catch(() => {});
+        if (!confirm(`Close "${shop.name}" for good? ${shop.pinShared ? 'Its pin stays on the map, no longer tied to the shop;' : 'Its pin is removed;'} its ledger entries and proprietor stay.`)) return;
+        if (shop.pinId && pinById(shop.pinId)) {
+          if (shop.pinShared) await S.store.savePin({ shopId: '' }, shop.pinId).catch(() => {});
+          else await S.store.deletePin(shop.pinId).catch(() => {});
+        }
         await S.store.deleteShop(shop.id).catch((e) => toast(e.message));
         openMarket();
       } })));
+}
+
+// Pins already on a map that no shop has claimed, so a shop can be tied to one the DM placed by hand.
+function freePinsOn(pageId) {
+  const taken = new Set(S.shops.map((x) => x.pinId).filter(Boolean));
+  return S.pins.filter((p) => p.pageId === pageId && !p.shopId && !taken.has(p.id)).sort((a, b) => String(a.title).localeCompare(String(b.title)));
+}
+
+// Tie a shop to a pin that is already there. The pin keeps its name, icon and notes; it just opens the shop.
+async function attachShopPin(shopId, pinId) {
+  const shop = shopById(shopId), pin = pinById(pinId);
+  if (!shop || !pin) return;
+  await S.store.savePin({ shopId }, pinId);
+  await S.store.saveShop({ pinId, pinShared: true }, shopId);
+  const person = shop.personId && personById(shop.personId);
+  if (person && !(person.places || []).includes(`pin:${pinId}`)) await S.store.savePerson({ places: [...(person.places || []), `pin:${pinId}`] }, person.id).catch(() => {});
+}
+
+async function pickExistingPin(shop) {
+  const place = placeOf(shop.location), spots = freePinsOn(place?.pageId);
+  if (!spots.length) { toast('There are no free pins on that map yet. Add one in Edit mode first.'); return; }
+  const ask = await modalBox('Use a pin already on the map', `Pick the pin that marks ${shop.name}. It keeps its name and icon, and opens the shop when clicked.`, (fail) => {
+    const sel = h('select', { id: 'pickPinSel' }, h('option', { value: '', text: 'Choose a pin…' }), spots.map((p) => h('option', { value: p.id, text: p.title })));
+    return { okText: 'Use this pin', nodes: [field('Pin', sel)], focus: sel, read: () => sel.value || fail('Choose a pin.', sel) };
+  });
+  if (!ask) return;
+  try { await attachShopPin(shop.id, ask); openShop(shop.id); } catch (e) { toast('Could not use that pin: ' + e.message); }
 }
 
 // Put a shop's pin on the map: turn to the map its place is on, then the next click places it.
@@ -4940,6 +4983,7 @@ function pinEditor() {
     picture,
     field('Links to page', link, 'Clicking through opens this page, for example a city map from the world map.'),
     secretField(isNew ? null : p.id),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'noLabel', checked: !!p.noLabel }), ' Hide this pin’s name on the map (the map already has it printed)'),
     h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'hidden', checked: !!p.hidden }), ' Hidden from players (DM only)'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', type: 'submit', text: isNew ? 'Place it' : 'Save' }),
@@ -4955,7 +4999,7 @@ function pinEditor() {
     const fd = new FormData(form);
     const data = {
       title: fd.get('title').trim(), kind: fd.get('kind'), body: fd.get('body'),
-      linkPage: fd.get('linkPage'), hidden: fd.get('hidden') === 'on',
+      linkPage: fd.get('linkPage'), hidden: fd.get('hidden') === 'on', noLabel: fd.get('noLabel') === 'on',
     };
     const pic = picture.result();
     Object.assign(data, pictureData(pic));
