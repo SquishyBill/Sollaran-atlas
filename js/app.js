@@ -1230,31 +1230,56 @@ function portraitField(value) {
     file, hidden));
 }
 
-// Free-text group with the existing groups offered as one-click buttons.
+// Free-text group, with the existing groups offered as a folded tree (and a filter) to click through.
 // (Not a <label>: clicking a group button must not focus/trigger anything else.)
 function groupField(value, groups) {
   const input = h('input', { name: 'group', maxlength: 120, value: normGroup(value), placeholder: 'Type a new group, e.g. Emmett / The Roosting Crow' });
-  const chips = h('div', { class: 'group-chips' });
+  const find = h('input', { type: 'search', id: 'groupFind', placeholder: 'Find a group…', autocomplete: 'off' });
+  const tree = h('div', { class: 'group-tree' });
   const inside = h('button', { type: 'button', class: 'btn small ghost', hidden: true });
+  const open = new Set();
+  const parentOf = (g) => g.split(GROUP_SEP).slice(0, -1).join(GROUP_SEP);
+  const last = (g) => g.split(GROUP_SEP).pop();
+  const seedOpen = () => { // start with the chosen group's branch unfolded
+    const parts = normGroup(input.value).split(GROUP_SEP).filter(Boolean);
+    parts.forEach((_, n) => open.add(parts.slice(0, n + 1).join(GROUP_SEP)));
+  };
+  seedOpen();
+  const pick = (g) => { input.value = normGroup(input.value) === g ? '' : g; draw(); };
+  const chip = (g, text) => h('button', { type: 'button', class: `group-pick${normGroup(input.value) === g ? ' on' : ''}`, title: groupLabel(g), text, onclick: () => pick(g) });
+  const branch = (parent) => {
+    const kids = groups.filter((g) => parentOf(g) === parent);
+    return kids.map((g) => {
+      const has = groups.some((x) => parentOf(x) === g), isOpen = open.has(g);
+      return h('div', { class: 'group-node' },
+        h('div', { class: 'group-line' },
+          has ? h('button', { type: 'button', class: 'group-fold', 'aria-expanded': isOpen ? 'true' : 'false', 'aria-label': `${isOpen ? 'Fold' : 'Unfold'} ${last(g)}`, text: isOpen ? '▾' : '▸',
+            onclick: () => { isOpen ? open.delete(g) : open.add(g); draw(); } }) : h('span', { class: 'group-fold-gap' }),
+          chip(g, last(g))),
+        has && isOpen ? h('div', { class: 'group-kids' }, branch(g)) : null);
+    });
+  };
   const draw = () => {
-    const cur = normGroup(input.value);
-    chips.replaceChildren(...groups.map((g) => h('button', {
-      type: 'button', class: `group-chip${cur === g ? ' on' : ''}`,
-      title: groupLabel(g), text: (g.includes(GROUP_SEP) ? '↳ ' : '') + g.split(GROUP_SEP).pop(),
-      onclick: () => { input.value = cur === g ? '' : g; draw(); },
-    })));
+    const q = find.value.trim().toLowerCase();
+    if (q) {
+      const hits = groups.filter((g) => g.toLowerCase().includes(q));
+      tree.replaceChildren(...(hits.length ? hits.map((g) => h('div', { class: 'group-line' }, chip(g, g.split(GROUP_SEP).join(' → ')))) : [h('small', { class: 'muted', text: 'No group matches that. Type a new one above.' })]));
+    } else tree.replaceChildren(...branch(''));
     // once a group is picked, offer to start a new group inside it
+    const cur = normGroup(input.value);
     inside.hidden = !groups.includes(cur);
-    inside.textContent = `+ New group inside ${cur.split(GROUP_SEP).pop()}`;
+    inside.textContent = `+ New group inside ${last(cur)}`;
     inside.onclick = () => { input.value = cur + GROUP_SEP; input.focus(); draw(); };
   };
-  input.addEventListener('input', draw);
+  input.addEventListener('input', () => { seedOpen(); draw(); });
+  find.addEventListener('input', draw);
   draw();
   return h('div', { class: 'field' },
     h('span', { text: 'Group' }),
     input,
     groups.length ? h('small', { text: 'Or pick an existing group:' }) : null,
-    chips,
+    groups.length ? find : null,
+    groups.length ? tree : null,
     inside,
     h('small', { text: 'Typing a name that isn’t listed creates a new group. Use / to put a group inside another, e.g. "Emmett / The Roosting Crow". Leave it blank to list them under "Others".' }));
 }
