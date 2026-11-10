@@ -721,6 +721,14 @@ body.panel-open .about-tab { opacity: 0; pointer-events: none; }
 
 /* group picker in the person editor */
 .group-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.group-tree { max-height: 15em; overflow-y: auto; margin: 6px 0; padding: 6px 8px; border: 1px solid rgba(90, 60, 25, .35); border-radius: 6px; background: rgba(255, 250, 235, .35); }
+.group-line { display: flex; align-items: center; gap: 2px; min-height: 30px; }
+.group-kids { margin-left: 18px; border-left: 1px solid rgba(90, 60, 25, .3); padding-left: 6px; }
+.group-fold, .group-fold-gap { flex: none; width: 24px; height: 28px; }
+.group-fold { border: 0; background: none; color: var(--wax); font-size: 15px; cursor: pointer; }
+.group-pick { border: 0; background: none; padding: 3px 8px; border-radius: 14px; font: 700 12px var(--f-head); letter-spacing: .08em; text-transform: uppercase; color: var(--ink); cursor: pointer; text-align: left; }
+.group-pick:hover { background: rgba(142, 43, 32, .1); }
+.group-pick.on { background: var(--wax); color: #f8e8c4; }
 .group-chip {
   padding: 4px 11px; border-radius: 14px; border: 1px solid rgba(90, 60, 25, .4);
   background: rgba(255, 250, 235, .5); color: var(--ink); font: 700 12px var(--f-head); letter-spacing: .04em;
