@@ -564,6 +564,9 @@ function setupMap() {
     inertia: true, bounceAtZoomLimits: false,
   });
   L.control.zoom({ position: 'bottomright' }).addTo(S.map);
+  // Give the map a starting view straight away. Leaflet will not measure a map's size (invalidateSize does nothing) until it
+  // has a view, so a map first drawn while hidden (size 0) would stay stuck at size 0 and never show its picture.
+  S.map.setView([0, 0], 0, { animate: false });
 
   S.map.on('click', (e) => {
     if (!S.imgSize) return;
