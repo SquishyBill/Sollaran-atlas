@@ -44,7 +44,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -70,6 +70,8 @@ export class LocalStore {
     if (dm) this.handlers.reminders?.(rows(this.db.reminders));
     if (dm) this.handlers.enemies?.(rows(this.db.enemies));
     if (dm) this.handlers.combat?.(this.db.combat.current || null);
+    if (dm) this.handlers.encounters?.(rows(this.db.encounters));
+    else this.handlers.turnorder?.(this.db.turnorder.current || null);
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.sales?.(rows(this.db.sales));
@@ -205,6 +207,14 @@ export class LocalStore {
   }
   async deleteEnemy(id) { delete this.db.enemies[id]; this.persist(); }
   async saveCombat(state) { this.db.combat.current = { ...state, updatedAt: Date.now() }; this.persist(); }
+  async saveEncounter(data, id) {
+    if (!id) { id = 'enc-' + rid(); this.db.encounters[id] = { createdAt: Date.now() }; }
+    this.db.encounters[id] = { ...(this.db.encounters[id] || {}), ...data };
+    this.persist();
+    return id;
+  }
+  async deleteEncounter(id) { delete this.db.encounters[id]; this.persist(); }
+  async saveTurnOrder(view) { this.db.turnorder.current = { ...view, updatedAt: Date.now() }; this.persist(); }
   async deleteReminder(id) { delete this.db.reminders[id]; this.persist(); }
   async updateCalendarLog(id, data) { Object.assign(this.db.calendarLog[id] || {}, data); this.persist(); }
 

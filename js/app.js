@@ -72,7 +72,7 @@ const S = {
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
-  enemies: [], combat: CD.newCombat(),
+  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -142,13 +142,14 @@ async function boot() {
     customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
-    enemies: onEnemies, combat: onCombat,
+    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder,
     ping: onPing, error: onError });
   startCalendarClock();
   nudgeBackup();
   // the combat tracker comes back as it was left, and on its own in a window of its own when asked for (?tracker)
   if (isDM() && trackerMode()) document.body.classList.add('tracker-mode');
   if (isDM() && (trackerMode() || lsGet(CB_OPEN_KEY) === '1')) openCombat();
+  if (isDM()) setupCombatKeys();
   // every player has a backpack from their first visit, so the DM can see who is in the party
   if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
 }
@@ -4943,32 +4944,68 @@ function renderDoc(page) {
 // ─── the combat tracker (DM) ────────────────────────────────────────
 // A dock down the left of the page that stays open as the DM turns from map to map, so the fight runs alongside whatever
 // is on show. The fight lives in the database (combat/current), so a refresh does not lose it, and the same tracker can
-// be opened in a window of its own (?tracker) for a second screen. Only the DM can see any of it.
-const CB = { open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '', starterOpen: null };
+// be opened in a window of its own (?tracker) for a second screen. Only the DM can see any of it, except the turn order the
+// DM chooses to show the players (turnorder/current: names, order, and a word for health, nothing else).
+const CB = {
+  open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '', starterOpen: null,
+  undo: [], cond: null, useForm: null, optsOpen: false, published: null, lastTurn: null, turnStart: Date.now(), keys: false,
+  rollHp: lsGet('atlas-combat-rollhp') === '1', timerOn: lsGet('atlas-combat-timer') === '1',
+  timerSecs: Math.max(5, Math.min(600, Number(lsGet('atlas-combat-secs')) || 60)),
+};
 const CB_OPEN_KEY = 'atlas-combat-open';
 const trackerMode = () => new URLSearchParams(location.search).has('tracker');
 const playerNames = () => [...new Map([...S.roster.map((r) => r.name), ...S.backpacks.map((b) => b.owner), ...S.players.map((p) => p.name)]
   .filter(Boolean).map((n) => String(n).trim()).filter(Boolean).map((n) => [n.toLowerCase(), n])).values()].sort((a, b) => a.localeCompare(b));
 const inFight = (name) => S.combat.combatants.some((x) => x.kind === 'player' && x.name.toLowerCase() === name.toLowerCase());
+const typingNow = () => { const el = document.activeElement; return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable); };
+const possessive = (n) => `${n}${/s$/i.test(n) ? '’' : '’s'}`;
 
 function onEnemies(list) {
   S.enemies = [...list].sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (CB.open && (CB.tab !== 'fight' || CB.adding)) renderCombat(true);
 }
+function onEncounters(list) {
+  S.encounters = list.map((e) => ({ id: e.id, ...CD.normalizeEncounter(e) })).sort((a, b) => a.name.localeCompare(b.name));
+  if (CB.open && CB.tab === 'saved') renderCombat(true);
+}
 function onCombat(doc) {
   const next = CD.normalizeCombat(doc);
   if (BK.same(next, S.combat)) return;
+  watchTurn(next);
   S.combat = next;
   updateCombatButton();
   renderCombat(true);
+  if (CB.published === null) publishTurnOrder();
 }
-// Every change goes through here: shown at once, then kept in the database.
-function saveCombat(next, rolled) {
+// The turn timer starts again whenever the turn (or the round) moves.
+function watchTurn(next) {
+  const key = next.started ? `${next.round}|${next.turn}` : '';
+  if (key !== CB.lastTurn) { CB.lastTurn = key; CB.turnStart = Date.now(); }
+}
+// Every change goes through here: shown at once, remembered for Undo, then kept in the database.
+function saveCombat(next, rolled, { undo = true } = {}) {
+  if (undo) { CB.undo.push(JSON.stringify(S.combat)); if (CB.undo.length > 40) CB.undo.shift(); }
+  watchTurn(next);
   S.combat = next;
   if (rolled !== undefined) CB.rolled = rolled;
   updateCombatButton();
   renderCombat();
   S.store.saveCombat(next).catch((e) => toast('Could not save the fight: ' + e.message));
+  publishTurnOrder();
+}
+function undoCombat() {
+  const prev = CB.undo.pop();
+  if (!prev) { toast('Nothing to undo.'); return; }
+  saveCombat(CD.normalizeCombat(JSON.parse(prev)), [], { undo: false });
+  toast('Undone.');
+}
+// What the players are shown, kept up to date for as long as the DM has it switched on.
+function publishTurnOrder() {
+  if (!isDM()) return;
+  const view = CD.publicView(S.combat), json = JSON.stringify(view);
+  if (json === CB.published) return;
+  CB.published = json;
+  S.store.saveTurnOrder?.(view)?.catch?.(() => {});
 }
 function updateCombatButton() {
   const b = $('#combatBtn');
@@ -4976,6 +5013,31 @@ function updateCombatButton() {
   b.classList.toggle('on', CB.open);
   b.classList.toggle('cb-live', !!S.combat.started);
   b.title = S.combat.started ? `Combat: round ${S.combat.round}` : 'The combat tracker';
+}
+
+// N for the next turn, B to go back, Ctrl+Z to undo, whenever the tracker is open and no box is being typed in.
+function setupCombatKeys() {
+  if (CB.keys) return;
+  CB.keys = true;
+  document.addEventListener('keydown', (e) => {
+    if (!CB.open || !isDM() || e.altKey || typingNow() || document.querySelector('.modal:not([hidden])')) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); undoCombat(); return; }
+    if (e.ctrlKey || e.metaKey || !S.combat.started) return;
+    if (k === 'n') saveCombat(CD.advance(S.combat, 1), []);
+    else if (k === 'b') saveCombat(CD.advance(S.combat, -1), []);
+  });
+  setInterval(tickClock, 1000);
+}
+const clock = () => {
+  const left = CB.timerSecs - Math.floor((Date.now() - CB.turnStart) / 1000);
+  return { left, text: left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Time!', cls: left <= 0 ? 'late' : left <= 10 ? 'low' : '' };
+};
+function tickClock() {
+  const el = $('#cbTimer');
+  if (!el) return;
+  const c = clock();
+  el.textContent = c.text; el.className = `cb-timer ${c.cls}`;
 }
 
 function openCombat(tab) {
@@ -5010,11 +5072,13 @@ function renderCombat(fromRemote) {
   const dock = $('#combatDock');
   if (!dock || !CB.open) return;
   const el = document.activeElement;
-  if (fromRemote && dock.contains(el) && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;   // do not pull the page out from under typing
+  if (fromRemote && dock.contains(el) && el.matches?.("input:not([type=checkbox]):not([type=radio]), textarea, select")) return;   // do not pull the page out from under typing
   const live = new Set(S.combat.combatants.map((x) => x.id));
   for (const id of [...CB.sel]) if (!live.has(id)) CB.sel.delete(id);
+  if (CB.cond && !live.has(CB.cond)) CB.cond = null;
+  if (CB.useForm && !live.has(CB.useForm)) CB.useForm = null;
   const scroll = dock.querySelector('.cb-body')?.scrollTop || 0;
-  const view = CB.tab === 'enemy' ? enemyEditView() : CB.tab === 'library' ? libraryView() : fightView();
+  const view = CB.tab === 'enemy' ? enemyEditView() : CB.tab === 'library' ? libraryView() : CB.tab === 'saved' ? savedView() : CB.tab === 'log' ? logView() : fightView();
   dock.replaceChildren(combatHead(), h('div', { class: 'cb-body' }, view));
   dock.querySelector('.cb-body').scrollTop = scroll;
 }
@@ -5022,8 +5086,9 @@ function renderCombat(fromRemote) {
 function combatHead() {
   const tab = (id, label) => h('button', { class: `cb-tab${CB.tab === id || (id === 'library' && CB.tab === 'enemy') ? ' on' : ''}`, id: `cbTab-${id}`, type: 'button', text: label, onclick: () => { CB.tab = id; CB.edit = null; renderCombat(); } });
   return h('header', { class: 'cb-head' },
-    h('div', { class: 'cb-title' }, h('strong', { text: 'Combat' }), S.combat.started ? h('span', { class: 'cb-live-tag', text: `Round ${S.combat.round}` }) : null),
-    h('div', { class: 'cb-tabs' }, tab('fight', 'Fight'), tab('library', 'Enemies')),
+    h('div', { class: 'cb-title' }, h('strong', { text: 'Combat' }), S.combat.started ? h('span', { class: 'cb-live-tag', text: `Round ${S.combat.round}` }) : null,
+      S.combat.started && S.combat.share ? h('span', { class: 'cb-share-tag', id: 'cbShareTag', title: 'The players can see the turn order', text: 'players can see' }) : null),
+    h('div', { class: 'cb-tabs' }, tab('fight', 'Fight'), tab('library', 'Enemies'), tab('saved', 'Saved'), tab('log', 'Log')),
     trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbPop', type: 'button', title: 'Open the tracker in a window of its own, for a second screen', 'aria-label': 'Open in its own window', onclick: popOutCombat }, h('span', { text: '⧉' })),
     trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbClose', type: 'button', title: 'Put the tracker away (the fight is kept)', 'aria-label': 'Close the tracker', onclick: closeCombat },
       h('span', { text: '✕' })));
@@ -5034,6 +5099,9 @@ function fightView() {
   const s = S.combat, order = CD.slots(s), wrap = h('div', { class: 'cb-fight' });
   wrap.append(roundBar(s, order));
   if (CB.rolled.length) wrap.append(h('p', { class: 'cb-rolled', id: 'cbRolled', text: 'Rolled: ' + CB.rolled.map((r) => `${r.name} ${r.total} (${r.roll}${r.mod ? CD.modText(r.mod) : ''})`).join('; ') }));
+  wrap.append(optionsBox());
+  const diff = diffLine();
+  if (diff) wrap.append(diff);
 
   const picked = [...CB.sel].filter((id) => s.combatants.some((x) => x.id === id && !x.group));
   if (picked.length >= 2) {
@@ -5049,11 +5117,14 @@ function fightView() {
   } else if (s.combatants.filter((x) => !x.group).length >= 2) {
     wrap.append(h('p', { class: 'muted cb-hint', text: 'Tick two or more to put them under one initiative as a group.' }));
   }
-  wrap.append(h('div', { class: 'cb-list', id: 'cbList' }, ...order.map(slotCard)), addSection());
+  wrap.append(h('div', { class: 'cb-list', id: 'cbList' }, ...order.map(slotCard)), addSection(),
+    h('p', { class: 'muted cb-keys', text: 'Keys: N next turn · B back · Ctrl+Z undo' }));
   return wrap;
 }
 
 const slotName = (slot) => (slot.group ? slot.group.name : slot.members[0].name);
+
+const undoBtn = () => h('button', { class: 'btn small ghost', id: 'cbUndo', type: 'button', text: '↶ Undo', title: 'Take back the last change (Ctrl+Z)', disabled: !CB.undo.length, onclick: undoCombat });
 
 function roundBar(s, order) {
   const missing = CD.missingInit(s);
@@ -5065,16 +5136,20 @@ function roundBar(s, order) {
       h('div', { class: 'row' },
         h('button', { class: 'btn small', id: 'cbRoll', type: 'button', text: 'Roll initiative for enemies', disabled: !s.combatants.some((x) => x.kind === 'enemy'), onclick: rollMissing }),
         h('button', { class: 'btn small gold', id: 'cbStart', type: 'button', text: 'Start combat', onclick: startFight }),
-        s.combatants.length ? h('button', { class: 'btn small ghost', id: 'cbClear', type: 'button', text: 'Clear', onclick: () => { if (confirm('Take everyone out of the fight list?')) saveCombat(CD.endCombat(S.combat, { keepPlayers: false }), []); } }) : null));
+        s.combatants.length ? h('button', { class: 'btn small ghost', id: 'cbClear', type: 'button', text: 'Clear', onclick: () => { if (confirm('Take everyone out of the fight list?')) saveCombat(CD.endCombat(S.combat, { keepPlayers: false }), []); } }) : null,
+        undoBtn()));
   }
-  const cur = order.find((x) => x.key === s.turn);
+  const cur = order.find((x) => x.key === s.turn), c = clock();
   return h('div', { class: 'cb-round live' },
     h('div', { class: 'cb-round-top' }, h('div', { class: 'cb-round-n' }, 'Round ', h('b', { id: 'cbRoundN', text: String(s.round) })),
-      h('div', { class: 'cb-turn', id: 'cbTurn', text: cur ? `${slotName(cur)}${/s$/i.test(slotName(cur)) ? '’' : '’s'} turn` : '' })),
+      h('div', { class: 'cb-turnbox' },
+        h('div', { class: 'cb-turn', id: 'cbTurn', text: cur ? `${possessive(slotName(cur))} turn` : '' }),
+        CB.timerOn ? h('span', { class: `cb-timer ${c.cls}`, id: 'cbTimer', title: 'Time on this turn', text: c.text }) : null)),
     h('div', { class: 'row' },
       h('button', { class: 'btn small ghost', id: 'cbPrev', type: 'button', text: '◀ Back', onclick: () => saveCombat(CD.advance(S.combat, -1), []) }),
       h('button', { class: 'btn', id: 'cbNext', type: 'button', text: 'Next turn ▶', onclick: () => saveCombat(CD.advance(S.combat, 1), []) }),
-      h('button', { class: 'btn small ghost', id: 'cbEnd', type: 'button', text: 'End combat', onclick: endFight })),
+      h('button', { class: 'btn small ghost', id: 'cbEnd', type: 'button', text: 'End combat', onclick: endFight }),
+      undoBtn()),
     missing.length ? h('div', { class: 'row cb-late' }, h('small', { text: `No initiative yet: ${missing.join(', ')}` }),
       h('button', { class: 'btn small ghost', id: 'cbRollLate', type: 'button', text: 'Roll for the enemies', onclick: rollMissing })) : null);
 }
@@ -5086,9 +5161,47 @@ function startFight() {
   toast(`Round 1. ${first ? slotName(first) : 'Someone'} goes first.`);
 }
 function endFight() {
-  const s = S.combat;
-  if (!confirm(`End the fight after ${s.round} round${s.round === 1 ? '' : 's'}? The enemies go; the players stay in the list.`)) return;
+  const s = S.combat, xp = CD.fightXp(s), pcs = s.combatants.filter((x) => x.kind === 'player').length;
+  if (!confirm(`End the fight after ${s.round} round${s.round === 1 ? '' : 's'}? The enemies go; the players stay in the list. The log is kept on the Log tab.`)) return;
   saveCombat(CD.endCombat(s), []);
+  if (xp.rated) toast(`Fight over. ${xp.earned} XP earned${pcs && xp.earned ? ` (${Math.floor(xp.earned / pcs)} each for ${pcs} player${pcs === 1 ? '' : 's'})` : ''}.`);
+}
+
+// Settings for the table: what the players see, the party's level, rolled hit points and the turn timer.
+function optionsBox() {
+  const s = S.combat;
+  const box = (id, label, checked, on, { disabled = false, title = '' } = {}) => h('label', { class: 'cb-opt', title },
+    h('input', { type: 'checkbox', id, checked, disabled, onchange: (e) => on(e.target.checked) }), ' ', label);
+  const level = h('input', { type: 'number', id: 'cbLevel', class: 'cb-lvl', min: 1, max: 20, value: s.level ?? '', placeholder: '—', 'aria-label': 'Party level' });
+  level.addEventListener('change', () => saveCombat(CD.setLevel(S.combat, level.value)));
+  const secs = h('input', { type: 'number', id: 'cbTimerSecs', class: 'cb-lvl', min: 5, max: 600, value: CB.timerSecs, 'aria-label': 'Seconds per turn' });
+  secs.addEventListener('change', () => { CB.timerSecs = Math.max(5, Math.min(600, Number(secs.value) || 60)); lsSet('atlas-combat-secs', String(CB.timerSecs)); renderCombat(); });
+  const d = h('details', { class: 'cb-opts', id: 'cbOpts', open: CB.optsOpen },
+    h('summary', { text: 'Table options' }),
+    h('div', { class: 'cb-opts-body' },
+      box('cbShare', 'Show the players the turn order', s.share, (v) => saveCombat(CD.setShare(S.combat, { on: v })), { title: 'They see names, the order, whose turn it is and conditions. No armor, attacks or notes.' }),
+      box('cbShareHealth', 'with a word for each enemy’s health (Unhurt, Hurt, Bloodied, Down)', s.showHealth, (v) => saveCombat(CD.setShare(S.combat, { health: v })), { disabled: !s.share }),
+      h('div', { class: 'cb-opt' }, h('span', { text: 'Party level' }), level, h('small', { text: 'for the difficulty estimate' })),
+      box('cbRollHp', 'Roll each new enemy’s hit points from its hit dice', CB.rollHp, (v) => { CB.rollHp = v; lsSet('atlas-combat-rollhp', v ? '1' : '0'); }, { title: 'Where the enemy has hit dice. Otherwise it keeps its average.' }),
+      h('div', { class: 'cb-opt' },
+        box('cbTimerOn', 'Turn timer', CB.timerOn, (v) => { CB.timerOn = v; lsSet('atlas-combat-timer', v ? '1' : '0'); CB.turnStart = Date.now(); renderCombat(); }),
+        secs, h('small', { text: 'seconds' }))));
+  d.addEventListener('toggle', () => { CB.optsOpen = d.open; });
+  return d;
+}
+
+// How hard the fight is, by the usual guideline, and the experience it is worth.
+function diffLine() {
+  const s = S.combat, xp = CD.fightXp(s);
+  if (!s.combatants.some((x) => x.kind === 'enemy')) return null;
+  const d = CD.difficulty(s), parts = [];
+  if (d) parts.push(h('b', { class: `cb-diff ${d.label.toLowerCase()}`, id: 'cbDiff', text: d.label }),
+    ` for ${d.players} level ${d.level} player${d.players === 1 ? '' : 's'}: ${d.xp} XP${d.mult !== 1 ? `, ${d.adjusted} for their numbers` : ''} (Deadly from ${d.deadly}).`);
+  else if (!s.level) parts.push('Set the party level under Table options to see how hard this is.');
+  else if (!s.combatants.some((x) => x.kind === 'player')) parts.push('Add the players to see how hard this is.');
+  if (xp.rated) parts.push(` XP earned so far: ${xp.earned} of ${xp.total}.`);
+  if (xp.unrated) parts.push(` ${xp.unrated} with no challenge rating ${xp.unrated === 1 ? 'is' : 'are'} not counted.`);
+  return parts.length ? h('p', { class: 'cb-xp', id: 'cbXp' }, ...parts) : null;
 }
 
 // A place in the turn order: a group with its members, or one combatant alone.
@@ -5120,8 +5233,83 @@ const rollBtn = (slot) => (slot.members.some((x) => x.kind === 'player') ? null
 const swatches = (current, pick) => h('div', { class: 'cb-swatches', role: 'group', 'aria-label': 'Colours' },
   ...CD.COLORS.map((c) => h('button', { class: `cb-sw${c.id === current ? ' on' : ''}`, type: 'button', style: `--c:${c.hex}`, title: c.name, 'aria-label': c.name, onclick: () => pick(c.id) })));
 
+// Reaction, and the conditions on this combatant.
+function condsLine(x) {
+  const react = h('button', { class: `cb-react${x.react ? ' used' : ''}`, type: 'button', 'aria-pressed': String(x.react), text: x.react ? 'Reaction used' : 'Reaction ready',
+    title: x.react ? 'The reaction is used. It comes back at the start of their turn (click to ready it now).' : 'Click when the reaction is used. It comes back at the start of their turn.',
+    onclick: () => saveCombat(CD.setReaction(S.combat, x.id, !x.react)) });
+  const chips = x.conds.map((c) => h('button', { class: `cb-cond${/^concentrat/i.test(c.name) ? ' conc' : ''}`, type: 'button', 'aria-label': `Take ${c.name} off ${x.name}`,
+    title: `${c.note ? c.note + '. ' : ''}${c.rounds != null ? `${c.rounds} round${c.rounds === 1 ? '' : 's'} left. ` : ''}Click to take it off.`,
+    text: `${c.name}${c.rounds != null ? ` · ${c.rounds}` : ''}`, onclick: () => saveCombat(CD.removeCondition(S.combat, x.id, c.name)) }));
+  const add = h('button', { class: 'linklike cb-addcond', type: 'button', text: '+ condition', onclick: () => { CB.cond = CB.cond === x.id ? null : x.id; renderCombat(); } });
+  return h('div', { class: 'cb-conds' }, react, ...chips, add);
+}
+function condForm(x) {
+  const pick = h('select', { id: 'cbCondPick', 'aria-label': 'Condition' }, ...CD.CONDITIONS.map((c) => h('option', { value: c, text: c })), h('option', { value: '', text: 'Something else…' }));
+  const custom = h('input', { type: 'text', id: 'cbCondCustom', maxlength: 40, placeholder: 'Name', hidden: true, 'aria-label': 'Name of the condition' });
+  pick.addEventListener('change', () => { custom.hidden = pick.value !== ''; if (!custom.hidden) custom.focus(); });
+  const rounds = h('input', { type: 'number', id: 'cbCondRounds', min: 1, max: 999, placeholder: 'rounds', title: 'How many rounds it lasts (blank: until taken off)', 'aria-label': 'Rounds it lasts' });
+  const note = h('input', { type: 'text', id: 'cbCondNote', maxlength: 80, placeholder: 'note (optional)', 'aria-label': 'A note' });
+  const add = () => {
+    const name = pick.value || custom.value.trim();
+    if (!name) { toast('Name the condition.'); return; }
+    CB.cond = null;
+    saveCombat(CD.addCondition(S.combat, x.id, name, rounds.value, note.value));
+  };
+  for (const el of [rounds, note, custom]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  return h('div', { class: 'cb-form cb-condform' }, pick, custom, rounds, note,
+    h('button', { class: 'btn small', id: 'cbCondAdd', type: 'button', text: 'Add', onclick: add }),
+    h('button', { class: 'linklike', type: 'button', text: 'cancel', onclick: () => { CB.cond = null; renderCombat(); } }),
+    h('small', { text: 'With rounds, it counts down at the end of their turn and clears itself.' }));
+}
+
+// Death saves: three successes, three failures.
+function savesLine(x) {
+  const pip = (kind, i) => h('button', { class: `cb-pip ${kind}${x.saves[kind] >= i ? ' on' : ''}`, type: 'button', 'aria-pressed': String(x.saves[kind] >= i),
+    title: kind === 'ok' ? 'A success' : 'A failure', 'aria-label': `${kind === 'ok' ? 'Success' : 'Failure'} ${i} for ${x.name}`,
+    onclick: () => saveCombat(CD.setSaves(S.combat, x.id, { [kind]: x.saves[kind] === i ? i - 1 : i })) });
+  return h('div', { class: 'cb-saves' },
+    h('span', { class: 'cb-lbl', text: 'Death saves' }),
+    h('span', { class: 'cb-pips ok', title: 'Successes' }, ...[1, 2, 3].map((i) => pip('ok', i))),
+    h('span', { class: 'cb-pips bad', title: 'Failures' }, ...[1, 2, 3].map((i) => pip('bad', i))),
+    x.saves.ok || x.saves.bad ? h('button', { class: 'linklike', type: 'button', text: 'clear', onclick: () => saveCombat(CD.setSaves(S.combat, x.id, { ok: 0, bad: 0 })) }) : null,
+    x.kind === 'enemy' ? h('button', { class: 'linklike', type: 'button', text: 'turn off', onclick: () => saveCombat(CD.setSaves(S.combat, x.id, { on: false, ok: 0, bad: 0 })) }) : null);
+}
+
+// Abilities with limited uses: legendary actions, "3/Day", and anything that recharges.
+function usesLine(x) {
+  if (!x.uses.length) return null;
+  return h('div', { class: 'cb-uses' }, ...x.uses.map((u) => {
+    const left = u.max - u.used, rc = `${u.recharge}${u.recharge < 6 ? '–6' : ''}`;
+    return h('div', { class: `cb-use${left === 0 ? ' out' : ''}`, 'data-use': u.name },
+      h('span', { class: 'cb-use-name', text: u.name }),
+      h('span', { class: 'cb-use-n', text: u.recharge ? (u.used ? 'spent' : 'ready') : `${left}/${u.max}` }),
+      h('button', { class: 'cb-use-btn', type: 'button', title: `Use ${u.name}`, 'aria-label': `Use ${u.name} (${x.name})`, disabled: left === 0, text: 'use', onclick: () => saveCombat(CD.spendUse(S.combat, x.id, u.id, 1)) }),
+      h('button', { class: 'cb-use-btn', type: 'button', title: 'Give one back', 'aria-label': `Give one ${u.name} back (${x.name})`, disabled: u.used === 0, text: '+', onclick: () => saveCombat(CD.spendUse(S.combat, x.id, u.id, -1)) }),
+      u.recharge && u.used ? h('button', { class: 'cb-use-btn roll', type: 'button', title: `Roll a d6: it is back on ${rc}`, 'aria-label': `Roll to recharge ${u.name} (${x.name})`, text: '🎲',
+        onclick: () => { const r = CD.rechargeUse(S.combat, x.id, u.id); saveCombat(r.state); toast(`Rolled ${r.roll}: ${u.name} ${r.back ? 'is ready again.' : `is still spent (needs ${u.recharge}).`}`); } }) : null,
+      u.reset === 'turn' ? h('small', { class: 'cb-use-note', text: 'back each turn' }) : u.recharge ? h('small', { class: 'cb-use-note', text: `recharge ${rc}` }) : null,
+      h('button', { class: 'linklike cb-use-x', type: 'button', text: '×', title: `Take ${u.name} off the list`, 'aria-label': `Remove ${u.name} (${x.name})`, onclick: () => saveCombat(CD.removeUse(S.combat, x.id, u.id)) }));
+  }));
+}
+function useForm(x) {
+  const name = h('input', { type: 'text', id: 'cbUseName', maxlength: 60, placeholder: 'e.g. Legendary actions', 'aria-label': 'Name of the ability' });
+  const max = h('input', { type: 'number', id: 'cbUseMax', min: 1, max: 99, value: 1, title: 'How many uses', 'aria-label': 'How many uses' });
+  const rc = h('select', { id: 'cbUseRecharge', 'aria-label': 'Recharge' }, h('option', { value: '', text: 'no recharge roll' }), ...[6, 5, 4, 3, 2].map((n) => h('option', { value: n, text: `recharge ${n}${n < 6 ? '–6' : ''}` })));
+  const turn = h('input', { type: 'checkbox', id: 'cbUseTurn' });
+  const add = () => {
+    if (!name.value.trim()) { toast('Name the ability.'); return; }
+    CB.useForm = null;
+    saveCombat(CD.addUse(S.combat, x.id, { name: name.value, max: Number(max.value) || 1, recharge: rc.value ? Number(rc.value) : null, reset: turn.checked ? 'turn' : '' }));
+  };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  return h('div', { class: 'cb-form cb-useform' }, name, max, rc, h('label', { class: 'cb-grp' }, turn, ' back each turn'),
+    h('button', { class: 'btn small', id: 'cbUseAdd', type: 'button', text: 'Add', onclick: add }),
+    h('button', { class: 'linklike', type: 'button', text: 'cancel', onclick: () => { CB.useForm = null; renderCombat(); } }));
+}
+
 function memberRow(x, { slot, inGroup, cur } = {}) {
-  const hex = CD.colorHex(x.color), down = CD.isDown(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text;
+  const hex = CD.colorHex(x.color), down = CD.isDown(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text, fight = S.combat, dy = CD.dying(x);
   const dmg = h('input', { type: 'number', min: 0, class: 'cb-dmg', placeholder: 'amount', 'aria-label': `Damage or healing for ${x.name}` });
   const apply = (sign) => { const n = Math.abs(Math.floor(Number(dmg.value))); if (n) saveCombat(CD.hit(S.combat, x.id, sign * n)); };
   dmg.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(-1); } });
@@ -5129,29 +5317,41 @@ function memberRow(x, { slot, inGroup, cur } = {}) {
   hp.addEventListener('change', () => saveCombat(CD.setHp(S.combat, x.id, hp.value)));
   const max = h('input', { type: 'number', min: 1, class: 'cb-hp cb-hpmax', value: x.max ?? '', title: 'Most hit points', 'aria-label': `Most hit points of ${x.name}` });
   max.addEventListener('change', () => saveCombat(CD.setHp(S.combat, x.id, undefined, max.value)));
+  const temp = h('input', { type: 'number', min: 0, class: 'cb-hp cb-temp', value: x.temp || '', placeholder: 'temp', title: 'Temporary hit points: damage comes off these first', 'aria-label': `Temporary hit points of ${x.name}` });
+  temp.addEventListener('change', () => saveCombat(CD.setTemp(S.combat, x.id, temp.value)));
   const pick = h('input', { type: 'checkbox', class: 'cb-pick', checked: CB.sel.has(x.id), 'aria-label': `Pick ${x.name} to group`,
     onchange: (e) => { if (e.target.checked) CB.sel.add(x.id); else CB.sel.delete(x.id); renderCombat(); } });
-  return h('div', { class: `cb-row${cur ? ' current' : ''}${down ? ' down' : ''}${x.kind === 'player' ? ' player' : ''}${inGroup ? ' ingroup' : ''}`, style: `--c:${hex}`, 'data-id': x.id },
+  return h('div', { class: `cb-row${cur ? ' current' : ''}${down ? ' down' : ''}${x.kind === 'player' ? ' player' : ''}${inGroup ? ' ingroup' : ''}${dy === 'dead' ? ' down' : ''}`, style: `--c:${hex}`, 'data-id': x.id },
     h('div', { class: 'cb-line1' },
       inGroup ? null : pick,
       cur && !inGroup ? h('span', { class: 'cb-mark', text: '▶' }) : null,
       h('button', { class: 'cb-name linklike', type: 'button', title: 'Rename', text: x.name, onclick: () => { const n = prompt('Name', x.name); if (n?.trim()) saveCombat(CD.renameCombatant(S.combat, x.id, n)); } }),
       x.kind === 'player' ? h('span', { class: 'cb-chip pc', text: 'Player' }) : null,
       down ? h('span', { class: 'cb-chip down', text: 'Down' }) : null,
+      dy ? h('span', { class: `cb-chip ${dy === 'dead' ? 'down' : dy === 'stable' ? 'ok' : 'dying'}`, text: dy === 'dead' ? 'Dead' : dy === 'stable' ? 'Stable' : 'Dying' }) : null,
+      fight.share && x.hidden ? h('span', { class: 'cb-chip hid', title: 'The players cannot see this one', text: 'Hidden' }) : null,
       x.kind === 'enemy' ? h('button', { class: 'cb-chip ac', type: 'button', title: 'Armor Class (click to change)', text: x.ac == null ? 'AC —' : `AC ${x.ac}`,
         onclick: () => { const v = prompt(`Armor Class of ${x.name}`, x.ac ?? ''); if (v !== null) saveCombat(CD.setAc(S.combat, x.id, v)); } }) : null,
       inGroup ? null : initBox(slot), inGroup ? null : rollBtn(slot)),
     x.kind === 'enemy' ? h('div', { class: 'cb-line2' },
-      h('span', { class: 'cb-lbl', text: 'HP' }), hp, h('span', { class: 'cb-sl', text: '/' }), max,
+      h('span', { class: 'cb-lbl', text: 'HP' }), hp, h('span', { class: 'cb-sl', text: '/' }), max, temp,
       dmg,
       h('button', { class: 'cb-hit', type: 'button', title: 'Damage', 'aria-label': `Damage ${x.name}`, text: '−', onclick: () => apply(-1) }),
       h('button', { class: 'cb-heal', type: 'button', title: 'Heal', 'aria-label': `Heal ${x.name}`, text: '+', onclick: () => apply(1) })) : null,
+    condsLine(x),
+    x.saves.on ? savesLine(x) : null,
+    usesLine(x),
     h('div', { class: 'cb-line3' },
       detail ? h('button', { class: 'linklike', type: 'button', text: open ? '▾ attacks and notes' : '▸ attacks and notes', onclick: () => { if (open) CB.expanded.delete(x.id); else CB.expanded.add(x.id); renderCombat(); } }) : null,
       h('button', { class: 'cb-dot', type: 'button', title: 'Colour', 'aria-label': `Colour of ${x.name}`, onclick: () => { CB.picker = CB.picker === x.id ? null : x.id; renderCombat(); } }),
+      x.kind === 'enemy' && !x.saves.on ? h('button', { class: 'linklike cb-dsave', type: 'button', text: 'death saves', title: 'Keep death saves for this one', onclick: () => saveCombat(CD.setSaves(S.combat, x.id, { on: true })) }) : null,
+      h('button', { class: 'linklike cb-adduse', type: 'button', text: '+ ability', title: 'Legendary actions, uses per day, or something that recharges', onclick: () => { CB.useForm = CB.useForm === x.id ? null : x.id; renderCombat(); } }),
+      fight.share ? h('button', { class: 'linklike cb-vis', type: 'button', text: x.hidden ? 'show to players' : 'hide from players', title: x.hidden ? 'Put them back on the players’ turn order' : 'Keep them off the players’ turn order', onclick: () => saveCombat(CD.setHidden(S.combat, x.id, !x.hidden)) }) : null,
       inGroup ? h('button', { class: 'linklike', type: 'button', text: 'leave group', onclick: () => saveCombat(CD.removeFromGroup(S.combat, x.id)) }) : null,
       h('button', { class: 'linklike cb-del', type: 'button', text: 'remove', title: 'Take them out of the fight', onclick: () => saveCombat(CD.removeCombatant(S.combat, x.id)) })),
     CB.picker === x.id ? swatches(x.color, (c) => { CB.picker = null; saveCombat(CD.recolorCombatant(S.combat, x.id, c)); }) : null,
+    CB.cond === x.id ? condForm(x) : null,
+    CB.useForm === x.id ? useForm(x) : null,
     open && detail ? h('div', { class: 'cb-detail' },
       x.attacks ? h('div', {}, h('b', { text: 'Attacks' }), h('pre', { text: x.attacks })) : null,
       x.text ? h('div', {}, h('b', { text: 'Notes' }), h('pre', { text: x.text })) : null) : null);
@@ -5179,7 +5379,10 @@ function addSection() {
   box.append(h('div', { class: 'cb-addrow' }, other, otherInit, h('button', { class: 'btn small ghost', id: 'cbAddOther', type: 'button', text: 'Add', onclick: () => { if (other.value.trim()) addPlayer(other.value, otherInit.value); } })));
 
   // enemies: from your list or the starter monsters, or a quick one made on the spot
-  box.append(h('h3', { text: 'Enemies' }), ...enemyBrowser({}));
+  box.append(h('h3', { text: 'Enemies' }),
+    h('label', { class: 'cb-opt cb-rollhp', title: 'Where the enemy has hit dice. Otherwise it keeps its average.' },
+      h('input', { type: 'checkbox', id: 'cbRollHp2', checked: CB.rollHp, onchange: (e) => { CB.rollHp = e.target.checked; lsSet('atlas-combat-rollhp', CB.rollHp ? '1' : '0'); } }), ' roll their hit points from the hit dice'),
+    ...enemyBrowser({}));
   const f = {
     name: h('input', { type: 'text', id: 'qkName', maxlength: 80, placeholder: 'Name', 'aria-label': 'Name' }),
     ac: h('input', { type: 'number', id: 'qkAc', min: 0, max: 40, placeholder: 'AC', 'aria-label': 'Armor Class' }),
@@ -5208,7 +5411,7 @@ function enemyBrowser({ manage } = {}) {
     const found = BD.findMonsters(CB.query);
     starters.replaceChildren(...(found.length ? found.map((m) => libraryRow(m, { starter: true })) : [note('No starter monster has that name.')]));
   };
-  const search = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy\u2026', value: CB.query, 'aria-label': 'Find an enemy' });
+  const search = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy…', value: CB.query, 'aria-label': 'Find an enemy' });
   search.addEventListener('input', () => { CB.query = search.value; fill(); });
   const details = h('details', { class: 'cb-starter', id: 'cbStarter', open: CB.starterOpen ?? !S.enemies.length },
     h('summary', { text: `Starter monsters (${BD.BESTIARY.length}), weakest first` }), starters, h('p', { class: 'cb-srd', text: BD.SRD_NOTICE }));
@@ -5231,9 +5434,11 @@ function libraryRow(e, { manage, starter } = {}) {
   const grp = h('input', { type: 'checkbox', class: 'cb-grp-in', 'aria-label': `Add the ${e.name} as one group` });
   const add = () => {
     const n = Math.max(1, Math.min(40, parseInt(count.value, 10) || 1));
-    saveCombat(CD.addEnemies(S.combat, e, n, { asGroup: grp.checked }).state, []);
+    const r = CD.addEnemies(S.combat, e, n, { asGroup: grp.checked, rollHp: CB.rollHp });
+    saveCombat(r.state, []);
+    if (CB.rollHp && e.hpDice) toast(`Hit points rolled: ${r.ids.map((id) => r.state.combatants.find((c) => c.id === id)?.hp).join(', ')}.`);
   };
-  const stats = [starter ? `CR ${e.cr}` : '', e.ac != null ? `AC ${e.ac}` : '', e.hp != null ? `HP ${e.hp}` : '', e.mod ? `Init ${CD.modText(e.mod)}` : ''].filter(Boolean).join(' \u00b7 ');
+  const stats = [e.cr !== undefined && e.cr !== '' ? `CR ${e.cr}` : '', e.ac != null ? `AC ${e.ac}` : '', e.hp != null ? `HP ${e.hp}` : '', e.mod ? `Init ${CD.modText(e.mod)}` : ''].filter(Boolean).join(' · ');
   return h('div', { class: `cb-lib${starter ? ' starter' : ''}`, style: `--c:${CD.colorHex(e.color)}`, 'data-id': e.id },
     h('div', { class: 'cb-lib-main' }, h('b', { class: 'cb-name', text: e.name }), h('small', { text: stats })),
     h('div', { class: 'cb-lib-add' }, count,
@@ -5266,6 +5471,8 @@ function enemyEditView() {
     ac: h('input', { type: 'number', id: 'enAc', min: 0, max: 40, value: e.ac ?? '' }),
     hp: h('input', { type: 'number', id: 'enHp', min: 1, max: 9999, value: e.hp ?? '' }),
     mod: h('input', { type: 'number', id: 'enMod', min: -10, max: 30, value: e.mod || '' , placeholder: '0' }),
+    cr: h('input', { type: 'text', id: 'enCr', maxlength: 4, value: e.cr || '', placeholder: 'e.g. 1/4' }),
+    dice: h('input', { type: 'text', id: 'enDice', maxlength: 12, value: e.hpDice || '', placeholder: 'e.g. 2d6+2' }),
     attacks: h('textarea', { id: 'enAttacks', rows: 5, placeholder: 'Scimitar. +4 to hit, 5 ft., 5 (1d6 + 2) slashing.' }),
     text: h('textarea', { id: 'enText', rows: 6, placeholder: 'Traits, tactics, anything you want in front of you.' }),
   };
@@ -5279,13 +5486,15 @@ function enemyEditView() {
     if (p.name) { f.name.value = p.name; got.push('name'); }
     if (p.ac != null) { f.ac.value = p.ac; got.push('AC'); }
     if (p.hp != null) { f.hp.value = p.hp; got.push('HP'); }
+    if (p.hpDice) { f.dice.value = p.hpDice; got.push('hit dice'); }
+    if (p.cr) { f.cr.value = p.cr; got.push('challenge rating'); }
     if (p.mod != null) { f.mod.value = p.mod || ''; got.push('initiative bonus'); }
     if (p.attacks) { f.attacks.value = p.attacks; got.push('attacks'); }
     if (p.text) { f.text.value = p.text; got.push('notes'); }
     toast(got.length ? `Filled in: ${got.join(', ')}. Check them over.` : 'I could not find anything to fill in. You can type it in yourself.');
   };
   const save = async () => {
-    const clean = CD.enemyFrom({ name: f.name.value, ac: f.ac.value, hp: f.hp.value, mod: f.mod.value, color, attacks: f.attacks.value, text: f.text.value });
+    const clean = CD.enemyFrom({ name: f.name.value, ac: f.ac.value, hp: f.hp.value, mod: f.mod.value, cr: f.cr.value, hpDice: f.dice.value, color, attacks: f.attacks.value, text: f.text.value });
     if (clean.error) { toast(clean.error); return; }
     try { await S.store.saveEnemy(clean, isNew ? undefined : e.id); CB.tab = 'library'; CB.edit = null; renderCombat(); toast(`${clean.name} is on your list.`); }
     catch (err) { toast('Could not save: ' + err.message); }
@@ -5296,12 +5505,96 @@ function enemyEditView() {
     h('button', { class: 'btn small ghost', id: 'enFill', type: 'button', text: 'Fill in from the text', onclick: fillFromText }),
     field('Name', f.name),
     h('div', { class: 'row gen-pickers' }, field('Armor Class', f.ac), field('Hit points', f.hp), field('Initiative bonus', f.mod)),
+    h('div', { class: 'row gen-pickers' }, field('Challenge rating', f.cr, 'For the XP and the difficulty.'), field('Hit dice', f.dice, 'To roll hit points.')),
     field('Colour', sw),
     field('Attacks', f.attacks),
-    field('Text', f.text),
+    field('Text', f.text, 'Legendary actions, “(3/Day)” and “(Recharge 5–6)” are picked up and tracked for you.'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', id: 'enSave', type: 'submit', text: 'Save' }),
       h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => { CB.tab = 'library'; CB.edit = null; renderCombat(); } })));
+}
+
+// ── saved fights ────────────────────────────────────────────────────
+// Keep a fight's enemies under a name, to bring back another time at full strength.
+function savedView() {
+  const enemies = S.combat.combatants.filter((x) => x.kind === 'enemy');
+  const name = h('input', { type: 'text', id: 'svName', maxlength: 60, placeholder: 'e.g. Goblin ambush', 'aria-label': 'A name for this fight' });
+  const save = async () => {
+    const enc = CD.encounterFrom(S.combat, name.value);
+    if (enc.error) { toast(enc.error); return; }
+    const same = S.encounters.find((x) => x.name.toLowerCase() === enc.name.toLowerCase());
+    if (same && !confirm(`“${same.name}” is already saved. Replace it?`)) return;
+    try { await S.store.saveEncounter(enc, same?.id); name.value = ''; toast(`“${enc.name}” is saved.`); } catch (e) { toast('Could not save: ' + e.message); }
+  };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  const sum = (enc) => { const by = new Map(); for (const i of enc.items) { const b = i.name.replace(/\s+\d+$/, ''); by.set(b, (by.get(b) || 0) + 1); } return [...by].map(([n, c]) => (c > 1 ? `${c} ${n}` : n)).join(', '); };
+  const row = (enc) => {
+    const xp = enc.items.reduce((t, i) => t + (CD.xpOf(i.cr) || 0), 0);
+    return h('div', { class: 'cb-lib cb-saved', 'data-id': enc.id },
+      h('div', { class: 'cb-lib-main' }, h('b', { class: 'cb-name', text: enc.name }), h('small', { text: `${sum(enc)}${xp ? ` · ${xp} XP` : ''}` })),
+      h('div', { class: 'cb-lib-add' },
+        h('button', { class: 'btn small cb-load', type: 'button', text: 'Add to the fight', onclick: () => { saveCombat(CD.loadEncounter(S.combat, enc, { rollHp: CB.rollHp }), []); CB.tab = 'fight'; renderCombat(); toast(`“${enc.name}” is in the fight.`); } })),
+      h('div', { class: 'cb-lib-manage' }, h('button', { class: 'linklike cb-del', type: 'button', text: 'delete', onclick: async () => {
+        if (!confirm(`Delete “${enc.name}”?`)) return;
+        await S.store.deleteEncounter(enc.id).catch((err) => toast(err.message));
+      } })));
+  };
+  return h('div', { class: 'cb-saved-view' },
+    h('h4', { class: 'cb-sub', text: 'Save this fight' }),
+    h('p', { class: 'muted', text: enemies.length ? `The ${enemies.length} enem${enemies.length === 1 ? 'y' : 'ies'} in the fight now, and how they are grouped. The players are not saved.` : 'Put some enemies in the fight first, then save them here.' }),
+    h('div', { class: 'cb-saverow' }, name, h('button', { class: 'btn small', id: 'svSave', type: 'button', text: 'Save', disabled: !enemies.length, onclick: save })),
+    h('h4', { class: 'cb-sub', text: 'Saved fights' }),
+    h('div', { class: 'cb-libs', id: 'svList' }, ...(S.encounters.length ? S.encounters.map(row) : [h('p', { class: 'muted', text: 'Nothing saved yet.' })])));
+}
+
+// ── the log ─────────────────────────────────────────────────────────
+function logView() {
+  const log = S.combat.log;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(log.map((l) => `[Round ${l.r}] ${l.t}`).join('\n')); toast('The log is copied.'); } catch { toast('Could not copy it. Select the text and copy by hand.'); }
+  };
+  return h('div', { class: 'cb-log-view' },
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small ghost', id: 'cbLogCopy', type: 'button', text: 'Copy the log', disabled: !log.length, onclick: copy }),
+      h('button', { class: 'btn small ghost', id: 'cbLogClear', type: 'button', text: 'Clear it', disabled: !log.length, onclick: () => { if (confirm('Clear the log?')) saveCombat(CD.normalizeCombat({ ...S.combat, log: [] })); } })),
+    log.length
+      ? h('ol', { class: 'cb-log', id: 'cbLog' }, ...[...log].reverse().map((l) => h('li', {}, h('small', { class: 'cb-logr', text: `R${l.r}` }), ' ', l.t)))
+      : h('p', { class: 'muted', text: 'Nothing yet. Once the fight starts this fills in: damage, healing, conditions, new rounds and recharge rolls. It stays after the fight ends.' }));
+}
+
+// ── what the players see ────────────────────────────────────────────
+// A small card over the map, only while the DM has the turn order switched on.
+const TB = { open: lsGet('atlas-turn-open') !== '0' };
+function onTurnOrder(doc) {
+  S.turnOrder = doc && doc.on ? doc : null;
+  renderTurnBox();
+}
+function renderTurnBox() {
+  const box = $('#turnBox');
+  if (!box) return;
+  const t = S.turnOrder;
+  if (!t || isDM()) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  const me = String(myName() || '').trim().toLowerCase();
+  const isMe = (r) => r.kind === 'player' && !!me && r.name.toLowerCase() === me;
+  const order = t.order || [], at = order.findIndex((r) => r.current);
+  const next = at >= 0 ? [...order.slice(at + 1), ...order.slice(0, at)].find((r) => !r.down) : null;
+  const cur = order[at];
+  const row = (r) => h('li', { class: `tb-row${r.current ? ' current' : ''}${r.down ? ' down' : ''}${r.kind === 'player' ? ' player' : ''}${isMe(r) ? ' me' : ''}`, style: `--c:${CD.colorHex(r.color)}` },
+    h('span', { class: 'tb-init', text: r.init ?? '' }),
+    h('span', { class: 'tb-name', text: r.name }),
+    r.count ? h('small', { class: 'tb-count', text: `× ${r.count}` }) : null,
+    r.health ? h('span', { class: `tb-health ${String(r.health).toLowerCase().split(' ')[0]}`, text: r.health }) : null,
+    ...(r.conds || []).map((c) => h('span', { class: 'tb-cond', text: c })));
+  box.className = `turn-box${cur && isMe(cur) ? ' mine' : ''}`;
+  box.replaceChildren(
+    h('button', { class: 'tb-head', id: 'tbHead', type: 'button', 'aria-expanded': String(TB.open), title: TB.open ? 'Fold the turn order away' : 'Show the turn order',
+      onclick: () => { TB.open = !TB.open; lsSet('atlas-turn-open', TB.open ? '1' : '0'); renderTurnBox(); } },
+      h('span', { class: 'tb-round', text: `Round ${t.round}` }),
+      h('span', { class: 'tb-turn', id: 'tbTurn', text: cur ? (isMe(cur) ? 'Your turn!' : `${possessive(cur.name)} turn`) : '' }),
+      h('span', { class: 'tb-caret', text: TB.open ? '▾' : '▸' })),
+    next && TB.open ? h('div', { class: 'tb-next', id: 'tbNext', text: `Up next: ${next.name}` }) : null,
+    TB.open ? h('ol', { class: 'tb-list', id: 'tbList' }, ...order.map(row)) : null);
 }
 
 // ─── DM editors ─────────────────────────────────────────────────────

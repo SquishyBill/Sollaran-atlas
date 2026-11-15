@@ -84,6 +84,9 @@ export class FirebaseStore {
     // The combat tracker (the DM's alone): the library of enemies, and the fight that is going on.
     if (this.isDM) onSnapshot(this.col('enemies'), (s) => h.enemies?.(list(s)), err);
     if (this.isDM) onSnapshot(this.ref('combat', 'current'), (s) => h.combat?.(s.exists() ? s.data() : null), err);
+    // Saved fights (the DM's), and the turn order the DM chooses to show the players (everyone else reads it).
+    if (this.isDM) onSnapshot(this.col('encounters'), (s) => h.encounters?.(list(s)), err);
+    else onSnapshot(this.ref('turnorder', 'current'), (s) => h.turnorder?.(s.exists() ? s.data() : null), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -279,6 +282,13 @@ export class FirebaseStore {
   }
   deleteEnemy(id) { return this.F.deleteDoc(this.ref('enemies', id)); }
   saveCombat(state) { return this.F.setDoc(this.ref('combat', 'current'), { ...state, updatedAt: Date.now() }); }
+  async saveEncounter(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('encounters'), { createdAt: Date.now(), ...data })).id;
+    await this.F.setDoc(this.ref('encounters', id), data);
+    return id;
+  }
+  deleteEncounter(id) { return this.F.deleteDoc(this.ref('encounters', id)); }
+  saveTurnOrder(view) { return this.F.setDoc(this.ref('turnorder', 'current'), { ...view, updatedAt: Date.now() }); }
   deleteReminder(id) { return this.F.deleteDoc(this.ref('reminders', id)); }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 
