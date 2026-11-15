@@ -44,7 +44,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder', 'initiative']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -72,6 +72,8 @@ export class LocalStore {
     if (dm) this.handlers.combat?.(this.db.combat.current || null);
     if (dm) this.handlers.encounters?.(rows(this.db.encounters));
     else this.handlers.turnorder?.(this.db.turnorder.current || null);
+    this.handlers.turnask?.(this.db.turnorder.ask || null);
+    if (dm) this.handlers.initiative?.(rows(this.db.initiative));
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.sales?.(rows(this.db.sales));
@@ -215,6 +217,8 @@ export class LocalStore {
   }
   async deleteEncounter(id) { delete this.db.encounters[id]; this.persist(); }
   async saveTurnOrder(view) { this.db.turnorder.current = { ...view, updatedAt: Date.now() }; this.persist(); }
+  async saveInitiativeAsk(data) { this.db.turnorder.ask = { ...data, updatedAt: Date.now() }; this.persist(); }
+  async sendInitiative({ name, value, ask }) { this.db.initiative[this.uid] = { name, value, ask, at: Date.now() }; this.persist(); }
   async deleteReminder(id) { delete this.db.reminders[id]; this.persist(); }
   async updateCalendarLog(id, data) { Object.assign(this.db.calendarLog[id] || {}, data); this.persist(); }
 

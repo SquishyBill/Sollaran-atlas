@@ -1381,3 +1381,24 @@ label.cb-opt { flex-wrap: nowrap; align-items: flex-start; }
   .cb-tabs { order: 5; flex-basis: 100%; }
   .cb-tabs .cb-tab { flex: 1; }
 }
+
+/* ─── concentration, and asking the players for initiative ─── */
+.cb-concheck { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 5px; padding: 5px 8px; border-radius: 5px; border: 1px solid rgba(58, 98, 168, .7); background: rgba(214, 230, 244, .9); }
+.cb-conctext { flex: 1; min-width: 150px; font: 700 14px var(--f-head); color: #26467f; }
+.cb-concask { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+.cb-concask small { color: var(--ink-faint); }
+.cb-concdmg { width: 88px; text-align: center; }
+.cb-askrow { margin-top: 6px; align-items: center; }
+.cb-askrow small { color: var(--ink-soft); font-style: italic; }
+.init-box {
+  position: fixed; top: calc(var(--bar) + 14px); left: 14px; width: min(300px, calc(100vw - 28px)); z-index: 21; padding: 12px 14px 14px;
+  background: var(--parchment); color: var(--ink); border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(90, 60, 25, .5), 0 0 0 5px #b07a00, 0 0 22px 4px rgba(217, 168, 43, .75), 14px 14px 40px rgba(0, 0, 0, .5);
+}
+.init-box[hidden] { display: none; }
+.ib-title { font: 700 20px var(--f-head); color: var(--wax); }
+.ib-lead { margin: 4px 0 8px; font-size: 16px; color: var(--ink-soft); }
+.ib-row { display: flex; gap: 8px; align-items: center; }
+.ib-row input { width: 90px; text-align: center; font: 700 22px var(--f-head); }
+.ib-sent { margin: 8px 0 0; font-style: italic; color: #2f5a27; }
+@media (max-width: 760px) { .init-box { left: 8px; right: 8px; width: auto; top: calc(var(--bar) + 8px); } }

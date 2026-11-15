@@ -87,6 +87,9 @@ export class FirebaseStore {
     // Saved fights (the DM's), and the turn order the DM chooses to show the players (everyone else reads it).
     if (this.isDM) onSnapshot(this.col('encounters'), (s) => h.encounters?.(list(s)), err);
     else onSnapshot(this.ref('turnorder', 'current'), (s) => h.turnorder?.(s.exists() ? s.data() : null), err);
+    // Asking the players for their initiative: the question (everyone reads it) and, for the DM, their answers.
+    onSnapshot(this.ref('turnorder', 'ask'), (s) => h.turnask?.(s.exists() ? s.data() : null), err);
+    if (this.isDM) onSnapshot(this.col('initiative'), (s) => h.initiative?.(list(s)), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -289,6 +292,8 @@ export class FirebaseStore {
   }
   deleteEncounter(id) { return this.F.deleteDoc(this.ref('encounters', id)); }
   saveTurnOrder(view) { return this.F.setDoc(this.ref('turnorder', 'current'), { ...view, updatedAt: Date.now() }); }
+  saveInitiativeAsk(data) { return this.F.setDoc(this.ref('turnorder', 'ask'), { ...data, updatedAt: Date.now() }); }
+  sendInitiative({ name, value, ask }) { return this.F.setDoc(this.ref('initiative', this.uid), { name, value, ask, at: Date.now() }); }
   deleteReminder(id) { return this.F.deleteDoc(this.ref('reminders', id)); }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 

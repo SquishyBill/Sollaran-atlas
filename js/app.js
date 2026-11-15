@@ -72,7 +72,7 @@ const S = {
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
-  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null,
+  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null, initAsk: null, initiative: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -142,7 +142,7 @@ async function boot() {
     customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
-    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder,
+    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder, turnask: onTurnAsk, initiative: onInitiative,
     ping: onPing, error: onError });
   startCalendarClock();
   nudgeBackup();
@@ -4948,7 +4948,7 @@ function renderDoc(page) {
 // DM chooses to show the players (turnorder/current: names, order, and a word for health, nothing else).
 const CB = {
   open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '', starterOpen: null,
-  undo: [], cond: null, useForm: null, optsOpen: false, published: null, lastTurn: null, turnStart: Date.now(), keys: false,
+  undo: [], cond: null, useForm: null, optsOpen: false, published: null, lastTurn: null, turnStart: Date.now(), keys: false, seen: false,
   rollHp: lsGet('atlas-combat-rollhp') === '1', timerOn: lsGet('atlas-combat-timer') === '1',
   timerSecs: Math.max(5, Math.min(600, Number(lsGet('atlas-combat-secs')) || 60)),
 };
@@ -4969,13 +4969,16 @@ function onEncounters(list) {
   if (CB.open && CB.tab === 'saved') renderCombat(true);
 }
 function onCombat(doc) {
+  const first = !CB.seen;
+  CB.seen = true;                       // only now is it safe to write answers into the fight
   const next = CD.normalizeCombat(doc);
-  if (BK.same(next, S.combat)) return;
+  if (BK.same(next, S.combat)) { if (first) applyInitiatives(); return; }
   watchTurn(next);
   S.combat = next;
   updateCombatButton();
   renderCombat(true);
   if (CB.published === null) publishTurnOrder();
+  if (first) applyInitiatives();
 }
 // The turn timer starts again whenever the turn (or the round) moves.
 function watchTurn(next) {
@@ -4983,13 +4986,13 @@ function watchTurn(next) {
   if (key !== CB.lastTurn) { CB.lastTurn = key; CB.turnStart = Date.now(); }
 }
 // Every change goes through here: shown at once, remembered for Undo, then kept in the database.
-function saveCombat(next, rolled, { undo = true } = {}) {
+function saveCombat(next, rolled, { undo = true, quiet = false } = {}) {
   if (undo) { CB.undo.push(JSON.stringify(S.combat)); if (CB.undo.length > 40) CB.undo.shift(); }
   watchTurn(next);
   S.combat = next;
   if (rolled !== undefined) CB.rolled = rolled;
   updateCombatButton();
-  renderCombat();
+  renderCombat(quiet);
   S.store.saveCombat(next).catch((e) => toast('Could not save the fight: ' + e.message));
   publishTurnOrder();
 }
@@ -5137,7 +5140,11 @@ function roundBar(s, order) {
         h('button', { class: 'btn small', id: 'cbRoll', type: 'button', text: 'Roll initiative for enemies', disabled: !s.combatants.some((x) => x.kind === 'enemy'), onclick: rollMissing }),
         h('button', { class: 'btn small gold', id: 'cbStart', type: 'button', text: 'Start combat', onclick: startFight }),
         s.combatants.length ? h('button', { class: 'btn small ghost', id: 'cbClear', type: 'button', text: 'Clear', onclick: () => { if (confirm('Take everyone out of the fight list?')) saveCombat(CD.endCombat(S.combat, { keepPlayers: false }), []); } }) : null,
-        undoBtn()));
+        undoBtn()),
+      h('div', { class: 'row cb-askrow' },
+        h('button', { class: `btn small ${askOpen(S.initAsk) ? 'gold' : 'ghost'}`, id: 'cbAsk', type: 'button', text: askOpen(S.initAsk) ? 'Stop asking' : 'Ask players for initiative',
+          title: 'Each player gets a box on their own screen to send what they rolled', onclick: () => askInitiative(!askOpen(S.initAsk)) }),
+        askOpen(S.initAsk) ? h('small', { id: 'cbAskNote', text: CD.waitingFor(s).length ? `Asked. Waiting for: ${CD.waitingFor(s).join(', ')}.` : 'Asked. Players not in the fight yet are added when they answer.' }) : null));
   }
   const cur = order.find((x) => x.key === s.turn), c = clock();
   return h('div', { class: 'cb-round live' },
@@ -5156,6 +5163,7 @@ function roundBar(s, order) {
 function startFight() {
   const r = CD.start(S.combat);
   if (r.error) { toast(r.error); return; }
+  if (askOpen(S.initAsk)) askInitiative(false);
   saveCombat(r.state, []);
   const first = CD.slots(r.state).find((x) => x.key === r.state.turn);
   toast(`Round 1. ${first ? slotName(first) : 'Someone'} goes first.`);
@@ -5163,6 +5171,7 @@ function startFight() {
 function endFight() {
   const s = S.combat, xp = CD.fightXp(s), pcs = s.combatants.filter((x) => x.kind === 'player').length;
   if (!confirm(`End the fight after ${s.round} round${s.round === 1 ? '' : 's'}? The enemies go; the players stay in the list. The log is kept on the Log tab.`)) return;
+  if (askOpen(S.initAsk)) askInitiative(false);
   saveCombat(CD.endCombat(s), []);
   if (xp.rated) toast(`Fight over. ${xp.earned} XP earned${pcs && xp.earned ? ` (${Math.floor(xp.earned / pcs)} each for ${pcs} player${pcs === 1 ? '' : 's'})` : ''}.`);
 }
@@ -5263,6 +5272,21 @@ function condForm(x) {
     h('small', { text: 'With rounds, it counts down at the end of their turn and clears itself.' }));
 }
 
+// Concentration: a check is asked for when damage is taken, and is answered here.
+function concLine(x) {
+  const c = CD.concentrating(x);
+  if (!c) return null;
+  if (c.check) return h('div', { class: 'cb-concheck', 'data-conc': x.name },
+    h('span', { class: 'cb-conctext', text: `Concentration check: DC ${c.check} Constitution save.` }),
+    h('button', { class: 'btn small cb-kept', type: 'button', text: 'Kept it', onclick: () => saveCombat(CD.resolveConcentration(S.combat, x.id, true)) }),
+    h('button', { class: 'btn small ghost cb-lost', type: 'button', text: 'Lost it', title: 'The spell ends', onclick: () => saveCombat(CD.resolveConcentration(S.combat, x.id, false)) }));
+  const dmg = h('input', { type: 'number', min: 1, class: 'cb-concdmg', placeholder: 'damage', 'aria-label': `Damage taken by ${x.name}, for a concentration check` });
+  const go = () => { const n = Math.floor(Number(dmg.value)); if (n > 0) saveCombat(CD.concentrationCheck(S.combat, x.id, n)); };
+  dmg.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  return h('div', { class: 'cb-concask' }, h('small', { text: 'Concentrating. Hit for:' }), dmg,
+    h('button', { class: 'cb-use-btn cb-concgo', type: 'button', text: 'check', title: 'The save needed for this much damage', onclick: go }));
+}
+
 // Death saves: three successes, three failures.
 function savesLine(x) {
   const pip = (kind, i) => h('button', { class: `cb-pip ${kind}${x.saves[kind] >= i ? ' on' : ''}`, type: 'button', 'aria-pressed': String(x.saves[kind] >= i),
@@ -5311,7 +5335,16 @@ function useForm(x) {
 function memberRow(x, { slot, inGroup, cur } = {}) {
   const hex = CD.colorHex(x.color), down = CD.isDown(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text, fight = S.combat, dy = CD.dying(x);
   const dmg = h('input', { type: 'number', min: 0, class: 'cb-dmg', placeholder: 'amount', 'aria-label': `Damage or healing for ${x.name}` });
-  const apply = (sign) => { const n = Math.abs(Math.floor(Number(dmg.value))); if (n) saveCombat(CD.hit(S.combat, x.id, sign * n)); };
+  const apply = (sign) => {
+    const n = Math.abs(Math.floor(Number(dmg.value)));
+    if (!n) return;
+    const next = CD.hit(S.combat, x.id, sign * n);
+    saveCombat(next);
+    if (sign < 0 && CD.concentrating(x)) {
+      const after = next.combatants.find((c) => c.id === x.id), cc = after && CD.concentrating(after);
+      toast(cc?.check ? `${x.name} is concentrating: DC ${cc.check} Constitution save.` : `${x.name} loses concentration.`);
+    }
+  };
   dmg.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(-1); } });
   const hp = h('input', { type: 'number', min: 0, class: 'cb-hp', value: x.hp ?? '', title: 'Hit points now', 'aria-label': `Hit points of ${x.name}` });
   hp.addEventListener('change', () => saveCombat(CD.setHp(S.combat, x.id, hp.value)));
@@ -5339,6 +5372,7 @@ function memberRow(x, { slot, inGroup, cur } = {}) {
       h('button', { class: 'cb-hit', type: 'button', title: 'Damage', 'aria-label': `Damage ${x.name}`, text: '−', onclick: () => apply(-1) }),
       h('button', { class: 'cb-heal', type: 'button', title: 'Heal', 'aria-label': `Heal ${x.name}`, text: '+', onclick: () => apply(1) })) : null,
     condsLine(x),
+    concLine(x),
     x.saves.on ? savesLine(x) : null,
     usesLine(x),
     h('div', { class: 'cb-line3' },
@@ -5562,6 +5596,52 @@ function logView() {
       : h('p', { class: 'muted', text: 'Nothing yet. Once the fight starts this fills in: damage, healing, conditions, new rounds and recharge rolls. It stays after the fight ends.' }));
 }
 
+// ── asking the players for their initiative ──────────────────────────
+// The DM presses a button; each player gets a box to send what they rolled, and it lands in the fight. An ask closes itself
+// after four hours, in case it was left open.
+const askOpen = (a) => !!a?.open && Date.now() - (Number(a.updatedAt) || Date.now()) < 4 * 3600 * 1000;
+function onTurnAsk(doc) {
+  S.initAsk = doc || null;
+  if (isDM()) { applyInitiatives(); if (CB.open && !S.combat.started) renderCombat(true); } else renderInitBox();
+}
+function onInitiative(list) { S.initiative = list; applyInitiatives(); }
+// Answers to the current ask go into the fight (a player already there has their number set; one who is not is added).
+function applyInitiatives() {
+  if (!isDM() || !CB.seen || !askOpen(S.initAsk) || S.combat.started) return;
+  const r = CD.applyInitiative(S.combat, S.initiative, S.initAsk.id);
+  if (!r.changed.length) return;
+  saveCombat(r.state, undefined, { undo: false, quiet: true });
+  toast(`Initiative in: ${r.changed.map((c) => `${c.name} ${c.value}`).join(', ')}.`);
+}
+function askInitiative(on) {
+  const id = on ? Math.random().toString(36).slice(2, 10) : (S.initAsk?.id || '');
+  S.initAsk = { open: on, id, updatedAt: Date.now() };
+  S.store.saveInitiativeAsk({ open: on, id }).catch((e) => toast('Could not ask the players: ' + e.message));
+  renderCombat();
+}
+const IB = { ask: null, sent: null };
+function renderInitBox() {
+  const box = $('#initBox');
+  if (!box) return;
+  const a = S.initAsk;
+  if (isDM() || !askOpen(a)) { box.hidden = true; box.replaceChildren(); return; }
+  if (IB.ask !== a.id) { IB.ask = a.id; IB.sent = null; }
+  box.hidden = false;
+  const input = h('input', { type: 'number', id: 'ibValue', min: -20, max: 60, step: 1, placeholder: 'e.g. 14', 'aria-label': 'What you rolled for initiative', value: IB.sent ?? '' });
+  const send = async () => {
+    const v = Math.floor(Number(input.value));
+    if (input.value === '' || !Number.isFinite(v) || v < -20 || v > 60) { toast('Type your initiative: the total of your d20 and your bonus.'); return; }
+    try { await S.store.sendInitiative({ name: String(myName() || '').trim() || 'Player', value: v, ask: a.id }); IB.sent = v; toast(`Sent: ${v}.`); renderInitBox(); }
+    catch (e) { toast('Could not send: ' + e.message); }
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  box.replaceChildren(...[
+    h('div', { class: 'ib-title', text: 'Roll for initiative!' }),
+    h('p', { class: 'ib-lead', text: 'Type the total of your d20 and your bonus.' }),
+    h('div', { class: 'ib-row' }, input, h('button', { class: 'btn small', id: 'ibSend', type: 'button', text: IB.sent == null ? 'Send' : 'Send again', onclick: send })),
+    IB.sent != null ? h('p', { class: 'ib-sent', id: 'ibSent', text: `The DM has your ${IB.sent}.` }) : null].filter(Boolean));
+}
+
 // ── what the players see ────────────────────────────────────────────
 // A small card over the map, only while the DM has the turn order switched on.
 const TB = { open: lsGet('atlas-turn-open') !== '0' };
@@ -5587,14 +5667,14 @@ function renderTurnBox() {
     r.health ? h('span', { class: `tb-health ${String(r.health).toLowerCase().split(' ')[0]}`, text: r.health }) : null,
     ...(r.conds || []).map((c) => h('span', { class: 'tb-cond', text: c })));
   box.className = `turn-box${cur && isMe(cur) ? ' mine' : ''}`;
-  box.replaceChildren(
+  box.replaceChildren(...[
     h('button', { class: 'tb-head', id: 'tbHead', type: 'button', 'aria-expanded': String(TB.open), title: TB.open ? 'Fold the turn order away' : 'Show the turn order',
       onclick: () => { TB.open = !TB.open; lsSet('atlas-turn-open', TB.open ? '1' : '0'); renderTurnBox(); } },
       h('span', { class: 'tb-round', text: `Round ${t.round}` }),
       h('span', { class: 'tb-turn', id: 'tbTurn', text: cur ? (isMe(cur) ? 'Your turn!' : `${possessive(cur.name)} turn`) : '' }),
       h('span', { class: 'tb-caret', text: TB.open ? '▾' : '▸' })),
     next && TB.open ? h('div', { class: 'tb-next', id: 'tbNext', text: `Up next: ${next.name}` }) : null,
-    TB.open ? h('ol', { class: 'tb-list', id: 'tbList' }, ...order.map(row)) : null);
+    TB.open ? h('ol', { class: 'tb-list', id: 'tbList' }, ...order.map(row)) : null].filter(Boolean));
 }
 
 // ─── DM editors ─────────────────────────────────────────────────────

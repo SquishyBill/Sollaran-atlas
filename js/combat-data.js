@@ -83,7 +83,8 @@ export function findUses(...texts) {
 // ── making things safe ──────────────────────────────────────────────
 const normConds = (a) => (Array.isArray(a) ? a : []).filter((c) => c && c.name).slice(0, 16).map((c) => {
   const r = int(c.rounds);
-  return { name: text(c.name, 40), rounds: r != null && r > 0 ? Math.min(r, 999) : null, note: text(c.note, 80) };
+  const k = int(c.check);
+  return { name: text(c.name, 40), rounds: r != null && r > 0 ? Math.min(r, 999) : null, note: text(c.note, 80), check: k != null && k > 0 ? Math.min(k, 500) : null };
 });
 const normUses = (a) => (Array.isArray(a) ? a : []).filter((u) => u && u.name).slice(0, 12).map((u) => {
   const max = clamp(int(u.max) ?? 1, 1, 99), rc = int(u.recharge);
@@ -309,6 +310,27 @@ export function rollInitiative(state, { only = 'missing', rng = Math.random } = 
   return { state: s, rolled };
 }
 
+// Players send their own initiative from their own screen. Each answer carries the id of the "ask" it is for; only answers to
+// the current ask count. A player already in the fight has their initiative set; one who is not is added with it.
+// Returns { state, changed: [{ name, value }] }.
+export function applyInitiative(state, entries, askId) {
+  let s = clone(state);
+  const changed = [];
+  if (s.started || !askId) return { state: s, changed };
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || e.ask !== askId) continue;
+    const v = int(e.value), name = text(e.name, 80);
+    if (v == null || v < -20 || v > 60 || !name) continue;
+    const pc = s.combatants.find((x) => x.kind === 'player' && x.name.toLowerCase() === name.toLowerCase());
+    if (pc) { if (pc.init === v) continue; pc.init = v; changed.push({ name: pc.name, value: v }); continue; }
+    const r = addPlayer(s, name, v);
+    if (r.id) { s = r.state; changed.push({ name, value: v }); }
+  }
+  return { state: s, changed };
+}
+// The players in the fight who have not given an initiative yet.
+export const waitingFor = (state) => state.combatants.filter((x) => x.kind === 'player' && x.init == null).map((x) => x.name);
+
 // ── the rounds ──────────────────────────────────────────────────────
 
 export const missingInit = (state) => slots(state).filter((s) => s.init == null).map((s) => (s.group ? s.group.name : s.members[0].name));
@@ -430,6 +452,7 @@ export function hit(state, id, delta) {
     x.hp = Math.max(0, x.hp - (-d - soak));
     say(s, `${x.name} takes ${-d}${soak ? ` (${soak} soaked by temporary hit points)` : ''}`);
     if (before > 0 && x.hp === 0 && x.kind === 'enemy') say(s, `${x.name} goes down`);
+    if (-d > 0) askConcentration(s, x, -d);
   } else {
     x.hp = Math.min(x.max ?? Infinity, x.hp + d);
     if (x.hp > before) say(s, `${x.name} heals ${x.hp - before}`);
@@ -456,12 +479,47 @@ const find = (s, id) => s.combatants.find((c) => c.id === id);
 export function addCondition(state, id, name, rounds, note) {
   const s = clone(state), x = find(s, id), n = text(name, 40);
   if (!x || !n) return s;
-  const r = int(rounds), c = { name: n, rounds: r != null && r > 0 ? Math.min(r, 999) : null, note: text(note, 80) };
+  const r = int(rounds), c = { name: n, rounds: r != null && r > 0 ? Math.min(r, 999) : null, note: text(note, 80), check: null };
   const at = x.conds.findIndex((k) => k.name.toLowerCase() === n.toLowerCase());
   if (at >= 0) x.conds[at] = c; else if (x.conds.length < 16) x.conds.push(c);
   say(s, `${x.name} is ${n}${c.rounds ? ` for ${c.rounds} round${c.rounds === 1 ? '' : 's'}` : ''}${c.note ? ` (${c.note})` : ''}`);
+  if (INCAPACITATING.includes(n.toLowerCase())) endConcentration(s, x);
   return s;
 }
+// ── concentration ───────────────────────────────────────────────────
+// Whatever is concentrating carries a condition whose name starts with "Concentrat". Damage to it asks for a Constitution save
+// (DC 10, or half the damage if that is more); being downed or incapacitated ends it.
+const INCAPACITATING = ['incapacitated', 'paralyzed', 'petrified', 'stunned', 'unconscious'];
+export const concentrating = (x) => x.conds.find((c) => /^concentrat/i.test(c.name)) || null;
+export const concentrationDc = (damage) => Math.max(10, Math.floor(damage / 2));
+function endConcentration(s, x) {
+  const c = concentrating(x);
+  if (!c) return;
+  x.conds = x.conds.filter((k) => k !== c);
+  say(s, `${x.name} loses concentration`);
+}
+function askConcentration(s, x, damage) {
+  const c = concentrating(x);
+  if (!c) return;
+  if (isDown(x)) { endConcentration(s, x); return; }
+  const dc = concentrationDc(damage);
+  c.check = Math.max(c.check || 0, dc);
+  say(s, `${x.name} must make a DC ${dc} Constitution saving throw to keep concentrating`);
+}
+// For damage the tracker was not told about (a player's): ask for the check by hand.
+export function concentrationCheck(state, id, damage) {
+  const s = clone(state), x = find(s, id), d = int(damage);
+  if (x && d != null && d > 0) askConcentration(s, x, d);
+  return s;
+}
+// The save was made (kept) or failed (lost: it ends).
+export function resolveConcentration(state, id, kept) {
+  const s = clone(state), x = find(s, id), c = x && concentrating(x);
+  if (!c) return s;
+  if (kept) { c.check = null; say(s, `${x.name} keeps concentrating`); } else endConcentration(s, x);
+  return s;
+}
+
 export function removeCondition(state, id, name) {
   const s = clone(state), x = find(s, id);
   if (!x) return s;
