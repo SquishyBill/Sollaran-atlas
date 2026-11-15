@@ -92,7 +92,16 @@ const normUses = (a) => (Array.isArray(a) ? a : []).filter((u) => u && u.name).s
 });
 const normSaves = (s) => ({ on: !!s?.on, ok: clamp(int(s?.ok) ?? 0, 0, 3), bad: clamp(int(s?.bad) ?? 0, 0, 3) });
 
-export const newCombat = () => ({ round: 0, started: false, turn: null, groups: [], combatants: [], log: [], level: null, share: false, showHealth: true, xpEarned: 0 });
+// sheet: what is remembered about each player between fights (their most hit points, how hurt they are, their armor), so the
+// numbers are there when they are added to the next fight.
+export const newCombat = () => ({ round: 0, started: false, turn: null, groups: [], combatants: [], log: [], level: null, share: false, showHealth: true, xpEarned: 0, sheet: [] });
+const normSheet = (a) => {
+  const seen = new Set();
+  return (Array.isArray(a) ? a : []).filter((e) => e && e.name && !seen.has(String(e.name).trim().toLowerCase()) && seen.add(String(e.name).trim().toLowerCase())).slice(0, 40).map((e) => {
+    const max = int(e.max), hp = int(e.hp), ac = int(e.ac);
+    return { name: text(e.name, 80), max: max != null && max >= 1 ? Math.min(max, 9999) : null, hp: hp != null && hp >= 0 ? Math.min(hp, 9999) : null, ac: ac != null && ac >= 0 && ac <= 40 ? ac : null };
+  }).filter((e) => e.name);
+};
 
 // A blank combatant, with everything it can have.
 const blank = (o) => ({ id: rid(), kind: 'enemy', name: '', color: 'grey', ac: null, hp: null, max: null, temp: 0, mod: 0, init: null, group: null, attacks: '', text: '', ref: '',
@@ -114,7 +123,20 @@ export function normalizeCombat(raw) {
   const log = (Array.isArray(c.log) ? c.log : []).filter((l) => l && l.t).slice(-300).map((l) => ({ r: Math.max(0, int(l.r) ?? 0), t: text(l.t, 200) }));
   const level = int(c.level);
   return { round: Math.max(0, int(c.round) ?? 0), started: !!c.started, turn: typeof c.turn === 'string' ? c.turn : null, groups, combatants, log,
-    level: level != null && level >= 1 && level <= 20 ? level : null, share: !!c.share, showHealth: c.showHealth !== false, xpEarned: Math.max(0, int(c.xpEarned) ?? 0) };
+    level: level != null && level >= 1 && level <= 20 ? level : null, share: !!c.share, showHealth: c.showHealth !== false, xpEarned: Math.max(0, int(c.xpEarned) ?? 0), sheet: normSheet(c.sheet) };
+}
+
+// Keep what is remembered about the players up to date with the fight. A player with nothing set is forgotten.
+function syncSheet(s) {
+  const by = new Map(s.sheet.map((e) => [e.name.toLowerCase(), e]));
+  for (const x of s.combatants) {
+    if (x.kind !== 'player') continue;
+    const key = x.name.toLowerCase();
+    if (x.max == null && x.hp == null && x.ac == null) by.delete(key);
+    else by.set(key, { name: x.name, max: x.max, hp: x.hp, ac: x.ac });
+  }
+  s.sheet = normSheet([...by.values()]);
+  return s;
 }
 
 // An enemy typed in (or pasted in) for the library, tidied, or { error }.
@@ -203,7 +225,9 @@ export function addPlayer(state, name, init = null) {
   const s = clone(state), clean = text(name, 80);
   if (!clean || s.combatants.some((x) => x.kind === 'player' && x.name.toLowerCase() === clean.toLowerCase())) return { state: s, id: null };
   const id = rid();
-  s.combatants.push(blank({ id, kind: 'player', name: clean, color: nextColor(s.combatants.filter((x) => x.kind === 'player').map((x) => x.color)), init: int(init), saves: { on: true, ok: 0, bad: 0 } }));
+  const mem = s.sheet.find((e) => e.name.toLowerCase() === clean.toLowerCase());
+  s.combatants.push(blank({ id, kind: 'player', name: clean, color: nextColor(s.combatants.filter((x) => x.kind === 'player').map((x) => x.color)), init: int(init), saves: { on: true, ok: 0, bad: 0 },
+    ...(mem ? { max: mem.max, hp: mem.hp ?? mem.max, ac: mem.ac } : {}) }));
   say(s, `${clean} joins the fight`);
   return { state: s, id };
 }
@@ -268,6 +292,8 @@ export function recolorCombatant(state, id, color) { const s = clone(state), x =
 
 export const slotKeyOf = (state, x) => (x.group && state.groups.some((g) => g.id === x.group) ? `g:${x.group}` : `c:${x.id}`);
 export const isDown = (x) => x.kind === 'enemy' && x.hp != null && x.hp <= 0;
+// At 0 hit points: an enemy is down for good, a player is unconscious and makes death saves.
+export const isOut = (x) => x.hp != null && x.hp <= 0;
 
 // The turn order, highest first. Ties go to the higher bonus, then to whoever was put in first. Nobody with no initiative
 // yet is lost: they wait at the bottom.
@@ -451,12 +477,21 @@ export function hit(state, id, delta) {
     x.temp -= soak;
     x.hp = Math.max(0, x.hp - (-d - soak));
     say(s, `${x.name} takes ${-d}${soak ? ` (${soak} soaked by temporary hit points)` : ''}`);
-    if (before > 0 && x.hp === 0 && x.kind === 'enemy') say(s, `${x.name} goes down`);
+    if (before > 0 && x.hp === 0) say(s, x.kind === 'enemy' ? `${x.name} goes down` : `${x.name} drops to 0 hit points`);
+    // hit while already at 0: a failed death save (a stable one starts again)
+    if (before === 0 && x.hp === 0 && x.saves.on && -d - soak > 0 && dying(x) !== 'dead') {
+      if (dying(x) === 'stable') { x.saves.ok = 0; x.saves.bad = 0; }
+      x.saves.bad = Math.min(3, x.saves.bad + 1);
+      say(s, x.saves.bad >= 3 ? `${x.name} takes damage at 0 hit points and has died (three failed death saves)` : `${x.name} takes damage at 0 hit points: a failed death save (${x.saves.bad} of 3)`);
+    }
     if (-d > 0) askConcentration(s, x, -d);
   } else {
     x.hp = Math.min(x.max ?? Infinity, x.hp + d);
     if (x.hp > before) say(s, `${x.name} heals ${x.hp - before}`);
+    // back on their feet: the death saves start over
+    if (before === 0 && x.hp > 0 && x.saves.on && (x.saves.ok || x.saves.bad)) { x.saves.ok = 0; x.saves.bad = 0; say(s, `${x.name} is conscious again`); }
   }
+  if (x.kind === 'player') syncSheet(s);
   return s;
 }
 // hp and max: leave undefined to keep it, or give '' to clear it.
@@ -466,10 +501,12 @@ export function setHp(state, id, hp, max) {
   const pick = (v, cur) => (v === undefined ? cur : v === '' || v === null ? null : (int(v) ?? cur));
   x.hp = pick(hp, x.hp); x.max = pick(max, x.max);
   if (x.hp != null) x.hp = Math.max(0, x.hp);
+  if (x.hp == null && x.max != null && hp === undefined) x.hp = x.max;          // a most with nothing said about the rest: full health
   if (x.hp != null && x.max != null && x.hp > x.max) x.max = x.hp;
+  if (x.kind === 'player') syncSheet(s);
   return s;
 }
-export function setAc(state, id, ac) { const s = clone(state), x = s.combatants.find((c) => c.id === id); if (x) x.ac = int(ac); return s; }
+export function setAc(state, id, ac) { const s = clone(state), x = s.combatants.find((c) => c.id === id); if (x) { x.ac = int(ac); if (x.kind === 'player') syncSheet(s); } return s; }
 export function setTemp(state, id, n) { const s = clone(state), x = s.combatants.find((c) => c.id === id); if (x) x.temp = Math.max(0, int(n) ?? 0); return s; }
 
 // ── conditions, reactions, death saves and abilities with uses ───────
@@ -501,7 +538,7 @@ function endConcentration(s, x) {
 function askConcentration(s, x, damage) {
   const c = concentrating(x);
   if (!c) return;
-  if (isDown(x)) { endConcentration(s, x); return; }
+  if (isOut(x)) { endConcentration(s, x); return; }
   const dc = concentrationDc(damage);
   c.check = Math.max(c.check || 0, dc);
   say(s, `${x.name} must make a DC ${dc} Constitution saving throw to keep concentrating`);
@@ -572,6 +609,25 @@ export function rechargeUse(state, id, useId, { rng = Math.random } = {}) {
 }
 
 // ── settings that belong to the fight ───────────────────────────────
+// A long rest for the party: everyone back to full hit points, no temporary ones, no conditions (a spell being concentrated on ends
+// too), death saves cleared and reactions ready.
+export function longRest(state) {
+  const s = clone(state), pcs = s.combatants.filter((x) => x.kind === 'player');
+  if (!pcs.length) return s;
+  for (const x of pcs) {
+    if (x.max != null) x.hp = x.max;
+    x.temp = 0; x.conds = []; x.react = false; x.saves = { ...x.saves, ok: 0, bad: 0 };
+  }
+  say(s, 'The party takes a long rest');
+  return syncSheet(s);
+}
+// Forget what is remembered about a player (they are not coming back).
+export function forgetPlayer(state, name) {
+  const s = clone(state);
+  s.sheet = s.sheet.filter((e) => e.name.toLowerCase() !== String(name || '').trim().toLowerCase());
+  return s;
+}
+
 export function setLevel(state, level) { const s = clone(state), n = int(level); s.level = n != null && n >= 1 && n <= 20 ? n : null; return s; }
 export function setShare(state, { on, health } = {}) { const s = clone(state); if (on != null) s.share = !!on; if (health != null) s.showHealth = !!health; return s; }
 
@@ -633,7 +689,7 @@ export function publicView(state) {
       count: sl.group ? seen.length : 0, down: seen.every(isDown), conds: conds(seen) };
     if (row.kind === 'enemy' && s.showHealth) {
       row.health = sl.group ? `${seen.filter((x) => !isDown(x)).length} of ${seen.length} standing` : healthWord(seen[0]);
-    }
+    } else if (row.kind === 'player' && seen.length === 1 && isOut(seen[0])) row.health = 'Down';
     order.push(row);
   }
   const cur = order.find((r) => r.current);

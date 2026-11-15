@@ -44,7 +44,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder', 'initiative']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder', 'initiative', 'handouts', 'reveals']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -74,6 +74,8 @@ export class LocalStore {
     else this.handlers.turnorder?.(this.db.turnorder.current || null);
     this.handlers.turnask?.(this.db.turnorder.ask || null);
     if (dm) this.handlers.initiative?.(rows(this.db.initiative));
+    if (dm) this.handlers.handouts?.(rows(this.db.handouts));
+    this.handlers.reveals?.(rows(this.db.reveals).filter((r) => dm || r.to === 'all' || r.to === this.uid));
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
     this.handlers.sales?.(rows(this.db.sales));
@@ -220,6 +222,23 @@ export class LocalStore {
   async saveInitiativeAsk(data) { this.db.turnorder.ask = { ...data, updatedAt: Date.now() }; this.persist(); }
   async sendInitiative({ name, value, ask }) { this.db.initiative[this.uid] = { name, value, ask, at: Date.now() }; this.persist(); }
   async deleteReminder(id) { delete this.db.reminders[id]; this.persist(); }
+  async saveHandout(data, id) {
+    if (!id) { id = 'ho-' + rid(); this.db.handouts[id] = { createdAt: Date.now(), sentTo: [], sentAt: 0 }; }
+    this.db.handouts[id] = { ...(this.db.handouts[id] || {}), ...data };
+    this.persist();
+    return id;
+  }
+  async showHandout(id, plan) {
+    for (const w of plan.write) this.db.reveals[w.id] = w.doc;
+    for (const r of plan.remove) delete this.db.reveals[r];
+    if (this.db.handouts[id]) this.db.handouts[id] = { ...this.db.handouts[id], sentTo: plan.sentTo, ...(plan.write.length ? { sentAt: Date.now() } : {}) };
+    this.persist();
+  }
+  async deleteHandout(id, revealIds = []) {
+    for (const r of revealIds) delete this.db.reveals[r];
+    delete this.db.handouts[id]; delete this.db.pictures[id];
+    this.persist();
+  }
   async updateCalendarLog(id, data) { Object.assign(this.db.calendarLog[id] || {}, data); this.persist(); }
 
   // ── shops and their purchase ledger

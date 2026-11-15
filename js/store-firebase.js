@@ -90,6 +90,17 @@ export class FirebaseStore {
     // Asking the players for their initiative: the question (everyone reads it) and, for the DM, their answers.
     onSnapshot(this.ref('turnorder', 'ask'), (s) => h.turnask?.(s.exists() ? s.data() : null), err);
     if (this.isDM) onSnapshot(this.col('initiative'), (s) => h.initiative?.(list(s)), err);
+    // Handouts: the DM keeps them all and sees every copy shown. A player reads the copies for everyone and the ones for them
+    // (two small queries, merged), and fetches a picture only when they open one.
+    if (this.isDM) {
+      onSnapshot(this.col('handouts'), (s) => h.handouts?.(list(s)), err);
+      onSnapshot(this.col('reveals'), (s) => h.reveals?.(list(s)), err);
+    } else {
+      const got = { all: null, mine: null };                      // nothing is reported until both have answered once
+      const send = () => { if (got.all && got.mine) h.reveals?.([...got.all, ...got.mine]); };
+      onSnapshot(query(this.col('reveals'), where('to', '==', 'all')), (s) => { got.all = list(s); send(); }, err);
+      onSnapshot(query(this.col('reveals'), where('to', '==', this.uid)), (s) => { got.mine = list(s); send(); }, err);
+    }
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -295,6 +306,28 @@ export class FirebaseStore {
   saveInitiativeAsk(data) { return this.F.setDoc(this.ref('turnorder', 'ask'), { ...data, updatedAt: Date.now() }); }
   sendInitiative({ name, value, ask }) { return this.F.setDoc(this.ref('initiative', this.uid), { name, value, ask, at: Date.now() }); }
   deleteReminder(id) { return this.F.deleteDoc(this.ref('reminders', id)); }
+  // ── handouts (the DM's), and the copies shown to players
+  async saveHandout(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('handouts'), { createdAt: Date.now(), sentTo: [], sentAt: 0, ...data })).id;
+    await this.F.setDoc(this.ref('handouts', id), data, { merge: true });
+    return id;
+  }
+  // Show a handout to exactly these people (a list of "all" and uids; empty takes it back). plan comes from revealPlan.
+  async showHandout(id, plan) {
+    const batch = this.F.writeBatch(this.fs);
+    for (const w of plan.write) batch.set(this.ref('reveals', w.id), w.doc);
+    for (const rid of plan.remove) batch.delete(this.ref('reveals', rid));
+    const meta = { sentTo: plan.sentTo };
+    if (plan.write.length) meta.sentAt = Date.now();
+    batch.set(this.ref('handouts', id), meta, { merge: true });
+    await batch.commit();
+  }
+  async deleteHandout(id, revealIds = []) {
+    const batch = this.F.writeBatch(this.fs);
+    for (const rid of revealIds) batch.delete(this.ref('reveals', rid));
+    batch.delete(this.ref('handouts', id));
+    await batch.commit();
+  }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 
   // ── shops and their purchase ledger

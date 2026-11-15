@@ -9,6 +9,7 @@ import * as CAL from './calendar-data.js';
 import * as BK from './backup.js';
 import * as CD from './combat-data.js';
 import * as BD from './bestiary-data.js';
+import * as HD from './handouts-data.js';
 import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ const S = {
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
-  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null, initAsk: null, initiative: [],
+  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null, initAsk: null, initiative: [], handouts: [], reveals: [],
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -142,7 +143,7 @@ async function boot() {
     customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
-    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder, turnask: onTurnAsk, initiative: onInitiative,
+    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder, turnask: onTurnAsk, initiative: onInitiative, handouts: onHandouts, reveals: onReveals,
     ping: onPing, error: onError });
   startCalendarClock();
   nudgeBackup();
@@ -857,7 +858,7 @@ function renderPanel() {
   const views = { pin: pinView, about: aboutView, editPin: pinEditor, editPage: pageEditor, people: peopleView, person: personView, editPerson: personEditor,
     journal: journalView, journalEdit: journalEditView, sell: sellView, npcGen: npcGenView, renown: renownView, renownDetail: renownDetailView, renownTiers: renownTiersView,
     shop: shopView, shopGen: shopGenView, shopEdit: shopEditView, market: marketView, backpack: backpackView, inventory: inventoryView, calendar: calendarView, holidayEdit: holidayEditView, reminderEdit: reminderEditView, backup: backupView,
-    lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView, itemLib: itemLibView, itemEdit: itemEditView };
+    lootGen: lootGenView, magicLib: magicLibView, magicEdit: magicEditView, itemLib: itemLibView, itemEdit: itemEditView, handouts: handoutsView, handoutEdit: handoutEditView };
   body.append(views[S.panel.type]());
   if (sameView) body.scrollTop = scroll; else body.scrollTop = 0;
   const wasOpen = $('#panel').classList.contains('open');
@@ -5127,6 +5128,8 @@ function fightView() {
 
 const slotName = (slot) => (slot.group ? slot.group.name : slot.members[0].name);
 
+const restBtn = () => h('button', { class: 'btn small ghost', id: 'cbRest', type: 'button', text: 'Long rest', title: 'Every player back to full hit points, with no conditions or death saves',
+  onclick: () => { saveCombat(CD.longRest(S.combat)); toast('The party takes a long rest.'); } });
 const undoBtn = () => h('button', { class: 'btn small ghost', id: 'cbUndo', type: 'button', text: '↶ Undo', title: 'Take back the last change (Ctrl+Z)', disabled: !CB.undo.length, onclick: undoCombat });
 
 function roundBar(s, order) {
@@ -5144,6 +5147,7 @@ function roundBar(s, order) {
       h('div', { class: 'row cb-askrow' },
         h('button', { class: `btn small ${askOpen(S.initAsk) ? 'gold' : 'ghost'}`, id: 'cbAsk', type: 'button', text: askOpen(S.initAsk) ? 'Stop asking' : 'Ask players for initiative',
           title: 'Each player gets a box on their own screen to send what they rolled', onclick: () => askInitiative(!askOpen(S.initAsk)) }),
+        s.combatants.some((x) => x.kind === 'player') ? restBtn() : null,
         askOpen(S.initAsk) ? h('small', { id: 'cbAskNote', text: CD.waitingFor(s).length ? `Asked. Waiting for: ${CD.waitingFor(s).join(', ')}.` : 'Asked. Players not in the fight yet are added when they answer.' }) : null));
   }
   const cur = order.find((x) => x.key === s.turn), c = clock();
@@ -5333,7 +5337,7 @@ function useForm(x) {
 }
 
 function memberRow(x, { slot, inGroup, cur } = {}) {
-  const hex = CD.colorHex(x.color), down = CD.isDown(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text, fight = S.combat, dy = CD.dying(x);
+  const hex = CD.colorHex(x.color), down = CD.isDown(x), ko = x.kind === 'player' && CD.isOut(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text, fight = S.combat, dy = CD.dying(x);
   const dmg = h('input', { type: 'number', min: 0, class: 'cb-dmg', placeholder: 'amount', 'aria-label': `Damage or healing for ${x.name}` });
   const apply = (sign) => {
     const n = Math.abs(Math.floor(Number(dmg.value)));
@@ -5354,23 +5358,25 @@ function memberRow(x, { slot, inGroup, cur } = {}) {
   temp.addEventListener('change', () => saveCombat(CD.setTemp(S.combat, x.id, temp.value)));
   const pick = h('input', { type: 'checkbox', class: 'cb-pick', checked: CB.sel.has(x.id), 'aria-label': `Pick ${x.name} to group`,
     onchange: (e) => { if (e.target.checked) CB.sel.add(x.id); else CB.sel.delete(x.id); renderCombat(); } });
-  return h('div', { class: `cb-row${cur ? ' current' : ''}${down ? ' down' : ''}${x.kind === 'player' ? ' player' : ''}${inGroup ? ' ingroup' : ''}${dy === 'dead' ? ' down' : ''}`, style: `--c:${hex}`, 'data-id': x.id },
+  return h('div', { class: `cb-row${cur ? ' current' : ''}${down ? ' down' : ''}${ko ? ' ko' : ''}${x.kind === 'player' ? ' player' : ''}${inGroup ? ' ingroup' : ''}${dy === 'dead' ? ' down' : ''}`, style: `--c:${hex}`, 'data-id': x.id },
     h('div', { class: 'cb-line1' },
       inGroup ? null : pick,
       cur && !inGroup ? h('span', { class: 'cb-mark', text: '▶' }) : null,
       h('button', { class: 'cb-name linklike', type: 'button', title: 'Rename', text: x.name, onclick: () => { const n = prompt('Name', x.name); if (n?.trim()) saveCombat(CD.renameCombatant(S.combat, x.id, n)); } }),
       x.kind === 'player' ? h('span', { class: 'cb-chip pc', text: 'Player' }) : null,
-      down ? h('span', { class: 'cb-chip down', text: 'Down' }) : null,
+      down || ko ? h('span', { class: 'cb-chip down', text: 'Down' }) : null,
       dy ? h('span', { class: `cb-chip ${dy === 'dead' ? 'down' : dy === 'stable' ? 'ok' : 'dying'}`, text: dy === 'dead' ? 'Dead' : dy === 'stable' ? 'Stable' : 'Dying' }) : null,
       fight.share && x.hidden ? h('span', { class: 'cb-chip hid', title: 'The players cannot see this one', text: 'Hidden' }) : null,
-      x.kind === 'enemy' ? h('button', { class: 'cb-chip ac', type: 'button', title: 'Armor Class (click to change)', text: x.ac == null ? 'AC —' : `AC ${x.ac}`,
-        onclick: () => { const v = prompt(`Armor Class of ${x.name}`, x.ac ?? ''); if (v !== null) saveCombat(CD.setAc(S.combat, x.id, v)); } }) : null,
+      h('button', { class: 'cb-chip ac', type: 'button', title: 'Armor Class (click to change)', text: x.ac == null ? 'AC —' : `AC ${x.ac}`,
+        onclick: () => { const v = prompt(`Armor Class of ${x.name}`, x.ac ?? ''); if (v !== null) saveCombat(CD.setAc(S.combat, x.id, v)); } }),
       inGroup ? null : initBox(slot), inGroup ? null : rollBtn(slot)),
-    x.kind === 'enemy' ? h('div', { class: 'cb-line2' },
+    h('div', { class: 'cb-line2' },
       h('span', { class: 'cb-lbl', text: 'HP' }), hp, h('span', { class: 'cb-sl', text: '/' }), max, temp,
-      dmg,
-      h('button', { class: 'cb-hit', type: 'button', title: 'Damage', 'aria-label': `Damage ${x.name}`, text: '−', onclick: () => apply(-1) }),
-      h('button', { class: 'cb-heal', type: 'button', title: 'Heal', 'aria-label': `Heal ${x.name}`, text: '+', onclick: () => apply(1) })) : null,
+      ...(x.kind === 'player' && x.hp == null
+        ? [h('small', { class: 'cb-hphint', text: 'Give their most hit points to keep track of damage.' })]
+        : [dmg,
+          h('button', { class: 'cb-hit', type: 'button', title: 'Damage', 'aria-label': `Damage ${x.name}`, text: '−', onclick: () => apply(-1) }),
+          h('button', { class: 'cb-heal', type: 'button', title: 'Heal', 'aria-label': `Heal ${x.name}`, text: '+', onclick: () => apply(1) })])),
     condsLine(x),
     concLine(x),
     x.saves.on ? savesLine(x) : null,
@@ -5404,7 +5410,10 @@ function addSection() {
   for (const name of missing) {
     const init = h('input', { type: 'number', class: 'cb-init', step: 1, placeholder: 'init', 'aria-label': `Initiative for ${name}` });
     init.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPlayer(name, init.value); } });
-    box.append(h('div', { class: 'cb-addrow' }, h('span', { class: 'cb-addname', text: name }), init, h('button', { class: 'btn small cb-add-player', type: 'button', text: 'Add', onclick: () => addPlayer(name, init.value) })));
+    const mem = S.combat.sheet.find((e) => e.name.toLowerCase() === name.toLowerCase());
+    box.append(h('div', { class: 'cb-addrow' }, h('span', { class: 'cb-addname' }, name,
+      mem ? h('small', { class: 'cb-mem', text: ` ${mem.hp ?? mem.max ?? '?'}/${mem.max ?? '?'} HP${mem.ac != null ? `, AC ${mem.ac}` : ''} ` }) : null,
+      mem ? h('button', { class: 'linklike cb-forget', type: 'button', text: 'forget', title: 'Forget their hit points and armor', onclick: () => saveCombat(CD.forgetPlayer(S.combat, name)) }) : null), init, h('button', { class: 'btn small cb-add-player', type: 'button', text: 'Add', onclick: () => addPlayer(name, init.value) })));
   }
   if (missing.length > 1) box.append(h('button', { class: 'btn small ghost', id: 'cbAddAll', type: 'button', text: 'Add everyone (no initiative yet)', onclick: () => { let t = S.combat; for (const n of missing) t = CD.addPlayer(t, n).state; saveCombat(t); } }));
   else if (!missing.length) box.append(h('p', { class: 'muted', text: playerNames().length ? 'Every player is in the fight.' : 'No player has opened the atlas yet. Type a name below.' }));
@@ -5675,6 +5684,194 @@ function renderTurnBox() {
       h('span', { class: 'tb-caret', text: TB.open ? '▾' : '▸' })),
     next && TB.open ? h('div', { class: 'tb-next', id: 'tbNext', text: `Up next: ${next.name}` }) : null,
     TB.open ? h('ol', { class: 'tb-list', id: 'tbList' }, ...order.map(row)) : null].filter(Boolean));
+}
+
+// ─── handouts ───────────────────────────────────────────────────────
+// A letter, a map scrap, a riddle or a picture the DM puts in front of the party, on their own screens. The DM keeps the
+// handouts (the Handouts button) and shows each to everyone or to chosen players; it pops up for them at once, and stays in
+// their Handouts list afterwards. What a player has already opened is remembered in their browser. Taking one back removes it.
+const HO = { seen: (() => { try { return JSON.parse(lsGet('atlas-handouts-seen') || '{}') || {}; } catch { return {}; } })(), known: null, open: null };
+const saveSeen = () => lsSet('atlas-handouts-seen', JSON.stringify(HO.seen));
+const myReveals = () => HD.visibleTo(S.reveals, S.store?.uid);
+const revealsOf = (hid) => S.reveals.filter((r) => r.hid === hid);
+const handoutNames = () => Object.fromEntries(S.roster.map((r) => [r.uid || r.id, r.name]));
+
+function onHandouts(list) {
+  S.handouts = list.map(HD.normalizeHandout).sort((a, b) => b.createdAt - a.createdAt);
+  if (S.panel?.type === 'handouts') renderPanel();
+}
+function onReveals(list) {
+  S.reveals = list.map(HD.normalizeReveal);
+  if (!isDM()) {
+    const mine = myReveals();
+    if (HO.known === null) HO.known = HD.timesOf(mine);                      // the first look: what is there waits in the list, it does not pop up
+    else {
+      const fresh = HD.arrivals(mine, HO.known);
+      HO.known = { ...HO.known, ...HD.timesOf(mine) };
+      if (fresh.length) openHandoutModal(fresh[fresh.length - 1]);          // the newest of what has just arrived
+    }
+    if (HO.open && !mine.some((r) => r.hid === HO.open)) closeHandoutModal(); // taken back while they were reading it
+  }
+  updateHandoutsButton();
+  if (S.panel?.type === 'handouts') renderPanel();
+}
+function updateHandoutsButton() {
+  const b = $('#handoutsBtn');
+  if (!b) return;
+  const n = isDM() ? 0 : HD.unreadOf(myReveals(), HO.seen).length;
+  b.classList.toggle('alert', n > 0);
+  b.title = n ? `Handouts (${n} new)` : 'Handouts';
+  b.setAttribute('aria-label', n ? `Handouts, ${n} new` : 'Handouts');
+}
+
+// What is shown on top of everything: the handout, to read.
+function openHandoutModal(r) {
+  const m = $('#handoutModal');
+  if (!m) return;
+  HO.open = r.hid;
+  if (!isDM()) { HO.seen[r.hid] = Math.max(Number(HO.seen[r.hid]) || 0, r.at || 0); saveSeen(); updateHandoutsButton(); if (S.panel?.type === 'handouts') renderPanel(); }
+  const pic = pictureImg({ id: r.hid, picture: r.picture, pictureAt: r.pictureAt, image: r.image }, 'ho-pic');
+  m.replaceChildren(h('div', { class: 'ho-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': r.title },
+    h('div', { class: 'ho-kicker', text: isDM() ? 'A handout (as the players see it)' : 'From the DM' }),
+    h('h2', { class: 'ho-title', id: 'hoTitle', text: r.title }),
+    pic,
+    r.body ? h('div', { class: 'prose ho-body', id: 'hoBody', html: md(r.body) }) : null,
+    h('div', { class: 'row' }, h('button', { class: 'btn', id: 'hoClose', type: 'button', text: 'Close', onclick: closeHandoutModal }))));
+  m.hidden = false;
+  $('#hoClose')?.focus();
+}
+function closeHandoutModal() {
+  HO.open = null;
+  const m = $('#handoutModal');
+  if (m) { m.hidden = true; m.replaceChildren(); }
+}
+function setupHandoutModal() {
+  const m = $('#handoutModal');
+  if (!m) return;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('a.wiki')) closeHandoutModal(); });
+}
+
+function openHandouts() {
+  S.pinId = null; highlightPin();
+  S.panel = { type: 'handouts', id: 'all', pick: null, who: new Set(), everyone: true };
+  renderPanel();
+}
+function openHandoutEditor(id) {
+  S.panel = { type: 'handoutEdit', id: id || 'new' };
+  renderPanel();
+}
+
+function handoutsView() {
+  return isDM() ? handoutsDmView() : handoutsPlayerView();
+}
+
+// A player's list: everything they have been shown, newest first.
+function handoutsPlayerView() {
+  const list = myReveals();
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>From the DM</span>' }),
+    h('h2', { class: 'codex-title', text: 'Handouts' }),
+    h('p', { class: 'codex-sub', text: list.length ? `${list.length} handout${list.length === 1 ? '' : 's'}` : 'Nothing yet' }),
+    list.length
+      ? h('ul', { class: 'ho-list', id: 'hoList' }, ...list.map((r) => {
+        const isNew = HD.isUnread(r, HO.seen);
+        return h('li', {}, h('button', { class: `ho-row${isNew ? ' new' : ''}`, type: 'button', 'data-title': r.title, onclick: () => openHandoutModal(r) },
+          h('span', { class: 'ho-row-title', text: r.title }),
+          isNew ? h('span', { class: 'tag', text: 'new' }) : null,
+          h('small', { text: ago(r.at) })));
+      }))
+      : h('p', { class: 'muted', text: 'When the DM hands you something (a letter, a map, a clue), it appears on your screen and is kept here.' }));
+}
+
+// The DM's desk: every handout, who has been shown it, and what can be done with it.
+function handoutsDmView() {
+  const P = S.panel, names = handoutNames();
+  const players = S.roster.filter((r) => r.name && (r.uid || r.id) !== S.store?.uid).sort((a, b) => a.name.localeCompare(b.name));
+  const card = (ho) => {
+    const out = revealsOf(ho.id), label = HD.sentLabel(out.map((r) => r.to), names), shown = out.length > 0;
+    const chooser = P.pick === ho.id ? (() => {
+      const every = h('input', { type: 'checkbox', id: 'hoEveryone', checked: P.everyone, onchange: (e) => { P.everyone = e.target.checked; renderPanel(); } });
+      const boxes = players.map((r) => h('label', { class: 'check ho-who' },
+        h('input', { type: 'checkbox', 'data-uid': r.uid || r.id, checked: P.everyone || P.who.has(r.uid || r.id), disabled: P.everyone,
+          onchange: (e) => { if (e.target.checked) P.who.add(r.uid || r.id); else P.who.delete(r.uid || r.id); } }), ' ', r.name));
+      return h('div', { class: 'ho-chooser' },
+        h('label', { class: 'check' }, every, ' Everyone'),
+        players.length ? h('div', { class: 'ho-whos' }, ...boxes) : h('small', { class: 'muted', text: 'No player has opened the atlas yet, so you can only show it to everyone.' }),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small', id: 'hoShow', type: 'button', text: shown ? 'Show it' : 'Show it now', onclick: () => { const who = P.everyone ? [HD.ALL] : [...P.who]; if (!who.length) { toast('Choose who sees it, or tick Everyone.'); return; } showHandoutTo(ho, who); } }),
+          h('button', { class: 'btn small ghost', type: 'button', text: 'Cancel', onclick: () => { P.pick = null; renderPanel(); } })));
+    })() : null;
+    return h('li', { class: 'ho-card-dm', 'data-title': ho.title },
+      h('div', { class: 'ho-dm-head' },
+        h('strong', { class: 'ho-dm-title', text: ho.title }),
+        h('span', { class: `tag ho-state${shown ? ' on' : ''}`, text: shown ? `Shown to ${label}` : 'Not shown' })),
+      ho.body ? h('p', { class: 'ho-dm-peek', text: ho.body.replace(/[*_#>`]/g, '').replace(/\s+/g, ' ').slice(0, 140) + (ho.body.length > 140 ? '…' : '') }) : (ho.picture || ho.image ? h('p', { class: 'ho-dm-peek muted', text: 'A picture.' }) : null),
+      h('div', { class: 'row ho-actions' },
+        h('button', { class: 'btn small', type: 'button', 'data-act': 'show', text: shown ? 'Show again…' : 'Show…',
+          onclick: () => { P.pick = P.pick === ho.id ? null : ho.id; const now = out.map((r) => r.to); P.everyone = now.length ? now.includes(HD.ALL) : true; P.who = new Set(now.filter((t) => t !== HD.ALL)); renderPanel(); } }),
+        shown ? h('button', { class: 'btn small ghost', type: 'button', 'data-act': 'recall', text: 'Take back', title: 'Take it off the players’ screens and lists', onclick: () => showHandoutTo(ho, []) }) : null,
+        h('button', { class: 'btn small ghost', type: 'button', 'data-act': 'preview', text: 'Preview', onclick: () => openHandoutModal({ hid: ho.id, title: ho.title, body: ho.body, picture: ho.picture, pictureAt: ho.pictureAt, image: ho.image, at: Date.now() }) }),
+        h('button', { class: 'btn small ghost', type: 'button', 'data-act': 'edit', text: 'Edit', onclick: () => openHandoutEditor(ho.id) })),
+      chooser);
+  };
+  return h('div', { class: 'codex' },
+    h('div', { class: 'codex-kind', html: '<span>The DM’s desk</span>' }),
+    h('h2', { class: 'codex-title', text: 'Handouts' }),
+    h('p', { class: 'codex-sub', text: S.handouts.length ? `${S.handouts.length} handout${S.handouts.length === 1 ? '' : 's'}, ${S.handouts.filter((x) => revealsOf(x.id).length).length} shown` : 'Nothing written yet' }),
+    h('div', { class: 'codex-actions' }, h('button', { class: 'btn', id: 'hoNew', type: 'button', text: '+ New handout', onclick: () => openHandoutEditor(null) })),
+    S.handouts.length ? h('ul', { class: 'ho-dm-list', id: 'hoDmList' }, ...S.handouts.map(card))
+      : h('p', { class: 'muted', text: 'A handout is a letter, a note, a riddle, a map scrap or a picture. Write it here, then show it to everyone or to chosen players. It appears on their screens when you press Show, and you can take it back.' }));
+}
+
+async function showHandoutTo(ho, who) {
+  const plan = HD.revealPlan(ho, who, Date.now(), { again: true, existing: revealsOf(ho.id) });
+  try {
+    await S.store.showHandout(ho.id, plan);
+    if (S.panel?.type === 'handouts') S.panel.pick = null;
+    toast(who.length ? `Shown to ${HD.sentLabel(who, handoutNames())}.` : 'Taken back.');
+  } catch (e) { toast('Could not do that: ' + e.message); }
+}
+
+function handoutEditView() {
+  const P = S.panel, isNew = P.id === 'new', ho = isNew ? null : S.handouts.find((x) => x.id === P.id);
+  if (!isDM()) return h('p', { class: 'muted', text: 'Only the DM writes handouts.' });
+  if (!isNew && !ho) return h('p', { class: 'muted', text: 'That handout no longer exists.' });
+  const title = h('input', { type: 'text', id: 'hoTitleIn', maxlength: HD.TITLE_MAX, value: ho?.title || '', placeholder: 'e.g. A letter from the Baroness' });
+  const body = h('textarea', { id: 'hoBodyIn', rows: 12, placeholder: 'What the players read. A riddle, a letter, a list of names. Leave it empty for a picture on its own.' });
+  body.value = ho?.body || '';
+  const pic = pictureField(ho || {}, 'Picture (optional)');
+  const out = ho ? revealsOf(ho.id) : [];
+  const save = async () => {
+    const result = pic.result(), hasPic = result.mode === 'new' || result.mode === 'link' || (result.mode === 'keep' && !!(ho && (ho.picture || ho.image)));
+    const r = HD.handoutFrom({ title: title.value, body: body.value }, { hasPicture: hasPic });
+    if (r.error) { toast(r.error); return; }
+    const data = { title: r.title, body: r.body, ...pictureData(result) };
+    try {
+      const id = await S.store.saveHandout(data, ho?.id);
+      await savePicture(id, 'handout', result, data, !!ho?.picture);
+      // already shown: the players' copies catch up quietly (no new pop-up)
+      if (ho && out.length) await S.store.showHandout(id, HD.revealPlan({ ...ho, ...data, id }, out.map((x) => x.to), Date.now(), { existing: out }));
+      toast(ho && out.length ? 'Saved. The players’ copies are up to date.' : 'Saved.');
+      openHandouts();
+    } catch (e) { toast('Could not save: ' + e.message); }
+  };
+  return h('form', { class: 'editor', onsubmit: (ev) => ev.preventDefault() },
+    h('h2', { class: 'codex-title', text: isNew ? 'New handout' : 'Edit handout' }),
+    field('Title', title),
+    field('The words', body, 'Formatting: <b>**bold**</b>, <em>*italic*</em>, <code># Heading</code>, <code>- list item</code>, <code>&gt; quote</code>.'),
+    pic,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', id: 'hoSave', type: 'button', text: 'Save', onclick: save }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: openHandouts }),
+      ho ? h('button', { class: 'btn danger', id: 'hoDelete', type: 'button', text: 'Delete', onclick: async () => {
+        if (!confirm(`Delete “${ho.title}”${out.length ? ' and take it off the players’ screens' : ''}? This cannot be undone.`)) return;
+        try {
+          await S.store.deleteHandout(ho.id, [...new Set([...out.map((x) => x.id), ...ho.sentTo.map((w) => HD.revealId(ho.id, w))])]);
+          if (ho.picture) await S.store.savePicture(ho.id, 'handout', null).catch(() => {});
+          toast('Deleted.');
+        } catch (e) { toast('Could not delete: ' + e.message); }
+        openHandouts();
+      } }) : null));
 }
 
 // ─── DM editors ─────────────────────────────────────────────────────
@@ -6055,6 +6252,9 @@ function setupChrome() {
   $('#renownBtn').onclick = () => (S.panel?.type === 'renown' ? closePanel() : openRenownList());
   $('#marketBtn').onclick = () => (S.panel?.type === 'market' ? closePanel() : openMarket());
   $('#backpackBtn').onclick = () => (S.panel?.type === 'backpack' ? closePanel() : openBackpack());
+  $('#handoutsBtn').onclick = () => (S.panel?.type === 'handouts' ? closePanel() : openHandouts());
+  setupHandoutModal();
+  updateHandoutsButton();
   $('#calendarBtn').onclick = () => (S.panel?.type === 'calendar' ? closePanel() : openCalendar());
   updateCalButton();
   refreshBackpackViews();
@@ -6113,7 +6313,8 @@ function setupChrome() {
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (e.key === 'Escape') {
-      if (!$('#search').hidden) closeSearch();
+      if (!$('#handoutModal').hidden) closeHandoutModal();
+      else if (!$('#search').hidden) closeSearch();
       else if (S.pingMode) setPingMode(false);
       else if (S.placeShop) { const id = S.placeShop; S.placeShop = null; modeHint(); openShop(id); }
       else if (document.body.classList.contains('toc-open')) closeTOC();
