@@ -3953,10 +3953,24 @@ function inventoryView() {
 // DM: give, take or set a character's coins (always with a line in the ledger).
 async function dmCoins(uid, owner, mode) {
   const cur = normalizeCoins(backpackOf(uid)?.coins);
-  const ask = { give: `Give ${owner || 'them'} how much? e.g. "120 gp 40 sp"`, take: `Take how much from ${owner || 'them'}? They hold ${coinText(cur)}.`, set: `Set ${owner || 'their'} coins to how much? They hold ${coinText(cur)}. e.g. "50 gp"` }[mode];
-  const amount = parseCoins(prompt(ask, mode === 'set' ? coinText(cur).replace('No coins', '0 gp') : ''));
-  if (!amount) return;
-  const why = mode === 'set' ? '' : (prompt('Why? (optional; it goes in their history)', '') || '').trim().slice(0, 120);
+  const who = owner || 'them';
+  const title = { give: `Give coins to ${who}`, take: `Take coins from ${who}`, set: `Set ${owner ? owner + '\u2019s' : 'their'} coins` }[mode];
+  const ask = await modalBox(title, `They hold ${coinText(cur)}.`, (fail) => {
+    const coin = coinFields(mode === 'set' ? cur : {});
+    const why = mode === 'set' ? null : h('input', { type: 'text', id: 'coinWhy', maxlength: 120, autocomplete: 'off', placeholder: 'Optional. It goes in their history.' });
+    return {
+      okText: { give: 'Give', take: 'Take', set: 'Set' }[mode], focus: coin.focus,
+      nodes: [field(mode === 'set' ? 'Set it to' : 'How much', coin.node), why ? field('Why', why) : null].filter(Boolean),
+      read: () => {
+        const amount = coin.read();
+        if (!amount) return fail(COIN_BAD, coin.focus);
+        if (mode !== 'set' && !cpOf(amount)) return fail(COIN_NONE, coin.focus);
+        return { amount, why: why ? why.value.trim().slice(0, 120) : '' };
+      },
+    };
+  });
+  if (!ask) return;
+  const { amount, why } = ask;
   try {
     await S.store.transact(async (t) => {
       const purse = await t.purse(uid, owner);
@@ -4035,12 +4049,25 @@ async function dmGiveItem(uid, owner) {
 const COIN_KEYS = ['pp', 'gp', 'sp', 'cp'];
 const coinText = (c) => COIN_KEYS.filter((k) => c?.[k]).map((k) => `${Number(c[k]).toLocaleString()} ${k}`).join(', ') || 'No coins';
 const addCoins = (a, b, sign = 1) => Object.fromEntries(COIN_KEYS.map((k) => [k, Math.max(0, (Number(a?.[k]) || 0) + sign * (Number(b?.[k]) || 0))]));
-function parseCoins(text) {
-  const out = { cp: 0, sp: 0, gp: 0, pp: 0 };
-  let found = false;
-  for (const m of String(text || '').toLowerCase().matchAll(/(\d[\d,]*)\s*(pp|gp|sp|cp)/g)) { out[m[2]] += parseInt(m[1].replace(/,/g, ''), 10); found = true; }
-  return found ? out : null;
+const COIN_NAMES = { pp: 'Platinum', gp: 'Gold', sp: 'Silver', cp: 'Copper' };
+// Four boxes, one for each kind of coin, to type a number into (start fills them in). read() gives the coins, or null
+// when a box holds something that is not a whole number of 0 or more.
+function coinFields(start = {}) {
+  const inputs = Object.fromEntries(COIN_KEYS.map((k) => [k, h('input', { type: 'number', id: `coin-${k}`, min: 0, max: 1e9, step: 1, inputmode: 'numeric', placeholder: '0', value: start[k] || '' })]));
+  const node = h('div', { class: 'coin-boxes', role: 'group', 'aria-label': 'Coins' },
+    ...COIN_KEYS.map((k) => h('label', { class: `field coin-${k}` }, h('span', { text: COIN_NAMES[k] }), inputs[k])));
+  const read = () => {
+    const out = {};
+    for (const k of COIN_KEYS) {
+      const raw = inputs[k].value.trim(), n = raw === '' ? 0 : Number(raw);
+      if (!Number.isInteger(n) || n < 0 || n > 1e9) return null;
+      out[k] = n;
+    }
+    return out;
+  };
+  return { node, read, focus: inputs.gp };
 }
+const COIN_BAD = 'Coins must be whole numbers, 0 or more.', COIN_NONE = 'Put a number in at least one of the coin boxes.';
 const lootById = (id) => S.loot.find((x) => x.id === id);
 const partyNames = () => [...new Set([...S.backpacks.map((b) => b.owner), ...S.players.map((p) => p.name), ...S.loot.map((x) => x.claimedBy)].filter(Boolean))].sort();
 // the backpack a typed name belongs to (ignoring capitals and stray spaces)
@@ -4257,13 +4284,13 @@ function modalBox(title, lead, build) {
     focus?.focus();
   });
 }
-const amountField = () => h('input', { type: 'text', id: 'giveAmount', autocomplete: 'off', placeholder: 'e.g. 5 gp, or 2 gp 5 sp' });
 const qtyField = (max) => h('input', { type: 'number', id: 'giveQty', min: 1, max, step: 1, value: max });
-// Read an amount of coins and a count out of the two fields (or call fail); returns false when it failed.
-function readExtras(fail, amount, qty, qtyMax, out) {
-  if (amount) {
-    out.amount = parseCoins(amount.value);
-    if (!out.amount || !cpOf(out.amount)) { fail('Type an amount, like "5 gp".', amount); return false; }
+// Read the coin boxes and a count (or call fail); returns false when it failed.
+function readExtras(fail, coin, qty, qtyMax, out) {
+  if (coin) {
+    out.amount = coin.read();
+    if (!out.amount) { fail(COIN_BAD, coin.focus); return false; }
+    if (!cpOf(out.amount)) { fail(COIN_NONE, coin.focus); return false; }
   }
   if (qty) {
     out.qty = parseInt(qty.value, 10);
@@ -4281,15 +4308,15 @@ function askGive({ title, lead, coins, qtyMax }) {
     const who = h('select', { id: 'giveWho' },
       others.length > 1 ? h('option', { value: '', text: 'Choose a player…' }) : null,
       ...others.map((r) => h('option', { value: r.uid, text: r.name })));
-    const amount = coins ? amountField() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
+    const coin = coins ? coinFields() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
     return {
-      nodes: [field('Give it to', who), amount ? field('How much', amount) : null, qty ? field(`How many (you have ${qtyMax})`, qty) : null].filter(Boolean),
-      focus: others.length === 1 && amount ? amount : who,
+      nodes: [field('Give it to', who), coin ? field('How much', coin.node) : null, qty ? field(`How many (you have ${qtyMax})`, qty) : null].filter(Boolean),
+      focus: others.length === 1 && coin ? coin.focus : who,
       read: () => {
         const to = others.find((r) => r.uid === who.value);
         if (!to) return fail('Choose who to give it to.', who);
         const out = { to, amount: null, qty: null };
-        return readExtras(fail, amount, qty, qtyMax, out) ? out : null;
+        return readExtras(fail, coin, qty, qtyMax, out) ? out : null;
       },
     };
   });
@@ -4301,7 +4328,7 @@ function askWho({ title, lead, many, coins, qtyMax, okText = 'OK' }) {
   const names = partyNames();
   return modalBox(title, lead, (fail) => {
     const other = h('input', { type: 'text', id: 'whoOther', maxlength: 60, autocomplete: 'off', placeholder: many ? 'Names, with commas between' : 'Their name' });
-    const amount = coins ? amountField() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
+    const coin = coins ? coinFields() : null, qty = qtyMax > 1 ? qtyField(qtyMax) : null;
     let list, pick, otherField;
     if (many) {
       pick = names.map((n) => h('input', { type: 'checkbox', value: n, checked: true }));
@@ -4319,7 +4346,7 @@ function askWho({ title, lead, many, coins, qtyMax, okText = 'OK' }) {
     }
     return {
       okText,
-      nodes: [field(many ? 'Who' : 'Who is it for', list), otherField, amount ? field('How much', amount) : null, qty ? field(`How many (there are ${qtyMax})`, qty) : null].filter(Boolean),
+      nodes: [field(many ? 'Who' : 'Who is it for', list), otherField, coin ? field('How much', coin.node) : null, qty ? field(`How many (there are ${qtyMax})`, qty) : null].filter(Boolean),
       focus: list,
       read: () => {
         const out = { amount: null, qty: null };
@@ -4330,7 +4357,7 @@ function askWho({ title, lead, many, coins, qtyMax, okText = 'OK' }) {
           out.name = list.value === '__other' ? other.value.trim() : list.value;
           if (!out.name) return fail(list.value === '__other' ? 'Type their name.' : 'Choose who it is for.', list.value === '__other' ? other : list);
         }
-        return readExtras(fail, amount, qty, qtyMax, out) ? out : null;
+        return readExtras(fail, coin, qty, qtyMax, out) ? out : null;
       },
     };
   });
@@ -4430,11 +4457,23 @@ async function takeCoins() {
 }
 
 async function addCoinsPrompt() {
-  const amount = parseCoins(prompt('Add how much to Loot? e.g. "120 gp 40 sp"'));
-  if (!amount) return;
-  const why = prompt('Where did it come from? (optional)', '') || '';
-  await S.store.savePartyCoins(addCoins(S.partyCoins, amount)).catch((e) => toast(e.message));
-  await S.store.addLootLog(`Added to Loot${why ? ` (${why})` : ''}: ${coinText(amount)}.`).catch(() => {});
+  const ask = await modalBox('Add coins to Loot', `In Loot now: ${coinText(S.partyCoins)}.`, (fail) => {
+    const coin = coinFields();
+    const why = h('input', { type: 'text', id: 'coinWhy', maxlength: 120, autocomplete: 'off', placeholder: 'Optional, such as a chest or a reward' });
+    return {
+      okText: 'Add', focus: coin.focus,
+      nodes: [field('How much', coin.node), field('Where did it come from?', why)],
+      read: () => {
+        const amount = coin.read();
+        if (!amount) return fail(COIN_BAD, coin.focus);
+        if (!cpOf(amount)) return fail(COIN_NONE, coin.focus);
+        return { amount, why: why.value.trim() };
+      },
+    };
+  });
+  if (!ask) return;
+  await S.store.savePartyCoins(addCoins(S.partyCoins, ask.amount)).catch((e) => toast(e.message));
+  await S.store.addLootLog(`Added to Loot${ask.why ? ` (${ask.why})` : ''}: ${coinText(ask.amount)}.`).catch(() => {});
 }
 
 async function splitCoins() {

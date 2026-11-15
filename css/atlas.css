@@ -1155,3 +1155,15 @@ ol.gen-lines { list-style: none; padding: 0; margin: 4px 0 8px; }
 .stock-row input { width: 100%; min-width: 0; }
 .st-name { min-width: 0; overflow-wrap: anywhere; }
 .stock-row.is-removed .st-name { text-decoration: line-through; opacity: .55; }
+
+/* coin entry: a box for each kind of coin */
+.coin-boxes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.coin-boxes .field span { display: flex; align-items: center; gap: 5px; font-size: 11px; letter-spacing: .08em; }
+.coin-boxes .field span::before { content: ''; flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(60, 35, 10, .5); background: var(--coin, #b8862b); }
+.coin-boxes .coin-pp { --coin: #c9d6df; }
+.coin-boxes .coin-gp { --coin: #d9a82b; }
+.coin-boxes .coin-sp { --coin: #b9bcc0; }
+.coin-boxes .coin-cp { --coin: #b46a3c; }
+.coin-boxes input { width: 100%; min-width: 0; text-align: center; }
+@media (max-width: 420px) { .coin-boxes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.give-card input[type=number] { font: 17px var(--f-body); color: var(--ink); background: rgba(255, 252, 240, .7); border: 1px solid rgba(90, 60, 25, .4); border-radius: 4px; padding: 8px 10px; }
