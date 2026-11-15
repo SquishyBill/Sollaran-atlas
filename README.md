@@ -127,6 +127,16 @@ The Sacred Calendar of the Sollaran Archonate: twelve months of 28 days (336 day
 
 **The files.** `js/calendar-data.js` holds all the date maths (tested on its own). The date is the document `config/calendar` (`{ day, since, paused }`); holidays are `holidays`; the history is `calendarLog`. The season paintings, holiday and month emblems and the sun are in `img/`.
 
+## The combat tracker (DM)
+
+The crossed swords in the top bar open a tracker in a dock down the left of the page, beside whatever map or panel is showing. It stays open as you turn pages, and the fight is kept in the database (`combat/current`), so a refresh does not lose it. Only the DM can read it (`enemies` and `combat` are DM-only in the rules). The tracker has no tokens: it is the list.
+
+**Enemies.** The *Enemies* tab is your library: name, Armor Class, hit points, initiative bonus, a colour, the attacks and a free text. **Paste a stat block** into the box and press *Fill in from the text* to fill in what it can find (name, AC, hit points, the Dexterity or Initiative bonus, and the Actions as the attacks); you check it and save.
+
+**A fight.** *Add to the fight*: players from the party (with the initiative they rolled) and enemies from the library (how many, and *group* to give them one initiative and one turn); several are numbered, each with its own hit points. Tick two or more to **group** them under one initiative. Every group and every creature has a colour from ten (a group's colour carries to the ones in it unless one has its own). **Roll initiative for enemies** rolls a d20 plus each bonus (once per group); players' numbers are typed in. **Start combat** sorts everyone and starts round 1; **Next turn** and **Back** move the turn and count the rounds, skipping defeated enemies (never players). Damage and healing are typed into a box beside each creature's hit points. **End combat** sends the enemies away and keeps the players.
+
+**A window of its own.** The button beside the title opens the tracker alone (`?tracker`), to drag onto a second screen. The two stay in step, live. The logic is in `js/combat-data.js` (tested on its own).
+
 ## Backup and restore (DM)
 
 Open Contents and press **Backup and restore**. **Download a backup now** saves everything (pages, pins, pictures, people, DM secrets, renown, journal, shops, purchases, loot, backpacks, the calendar and settings) to one `.json` file on your computer. Players' private notes are not included, and the file holds your secrets, so keep it private. A quiet nudge appears when it has been more than two weeks.
@@ -186,6 +196,7 @@ js/config.js        campaign title, Firebase config, DM emails
 js/app.js           the atlas UI
 js/store-firebase.js  Firebase backend (anonymous players, Google DM)
 js/calendar-data.js   the calendar: dates, weekdays, holidays and the clock
+js/combat-data.js     the combat tracker: groups, initiative, rounds, hit points
 js/store-local.js     demo backend (browser storage)
 js/seed.js          demo content
 js/markdown.js      tiny safe markdown renderer

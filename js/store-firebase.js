@@ -81,6 +81,9 @@ export class FirebaseStore {
       (s) => h.holidays?.(list(s)), err);
     if (this.isDM) onSnapshot(this.col('calendarLog'), (s) => h.calendarLog?.(list(s)), err);
     if (this.isDM) onSnapshot(this.col('reminders'), (s) => h.reminders?.(list(s)), err);
+    // The combat tracker (the DM's alone): the library of enemies, and the fight that is going on.
+    if (this.isDM) onSnapshot(this.col('enemies'), (s) => h.enemies?.(list(s)), err);
+    if (this.isDM) onSnapshot(this.ref('combat', 'current'), (s) => h.combat?.(s.exists() ? s.data() : null), err);
 
     // Shops (hidden ones are the DM's) and every purchase made in them.
     onSnapshot(this.isDM ? this.col('shops') : query(this.col('shops'), where('hidden', '==', false)),
@@ -268,6 +271,14 @@ export class FirebaseStore {
     await this.F.setDoc(this.ref('reminders', id), data, { merge: true });
     return id;
   }
+  // ── the combat tracker: the enemy library, and the one fight in progress (written whole, as it is)
+  async saveEnemy(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('enemies'), { createdAt: Date.now(), ...data })).id;
+    await this.F.setDoc(this.ref('enemies', id), data);
+    return id;
+  }
+  deleteEnemy(id) { return this.F.deleteDoc(this.ref('enemies', id)); }
+  saveCombat(state) { return this.F.setDoc(this.ref('combat', 'current'), { ...state, updatedAt: Date.now() }); }
   deleteReminder(id) { return this.F.deleteDoc(this.ref('reminders', id)); }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 

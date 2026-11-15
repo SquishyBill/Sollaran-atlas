@@ -7,6 +7,7 @@ import { SHOP_TYPES, SIZES, sizeById, generateShop, generateStock, setCustomItem
 import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinValue } from './loot-data.js';
 import * as CAL from './calendar-data.js';
 import * as BK from './backup.js';
+import * as CD from './combat-data.js';
 import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ const S = {
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
+  enemies: [], combat: CD.newCombat(),
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -139,9 +141,13 @@ async function boot() {
     customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
+    enemies: onEnemies, combat: onCombat,
     ping: onPing, error: onError });
   startCalendarClock();
   nudgeBackup();
+  // the combat tracker comes back as it was left, and on its own in a window of its own when asked for (?tracker)
+  if (isDM() && trackerMode()) document.body.classList.add('tracker-mode');
+  if (isDM() && (trackerMode() || lsGet(CB_OPEN_KEY) === '1')) openCombat();
   // every player has a backpack from their first visit, so the DM can see who is in the party
   if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
 }
@@ -4933,6 +4939,360 @@ function renderDoc(page) {
   if (same) doc.scrollTop = scroll;
 }
 
+// ─── the combat tracker (DM) ────────────────────────────────────────
+// A dock down the left of the page that stays open as the DM turns from map to map, so the fight runs alongside whatever
+// is on show. The fight lives in the database (combat/current), so a refresh does not lose it, and the same tracker can
+// be opened in a window of its own (?tracker) for a second screen. Only the DM can see any of it.
+const CB = { open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '' };
+const CB_OPEN_KEY = 'atlas-combat-open';
+const trackerMode = () => new URLSearchParams(location.search).has('tracker');
+const playerNames = () => [...new Map([...S.roster.map((r) => r.name), ...S.backpacks.map((b) => b.owner), ...S.players.map((p) => p.name)]
+  .filter(Boolean).map((n) => String(n).trim()).filter(Boolean).map((n) => [n.toLowerCase(), n])).values()].sort((a, b) => a.localeCompare(b));
+const inFight = (name) => S.combat.combatants.some((x) => x.kind === 'player' && x.name.toLowerCase() === name.toLowerCase());
+
+function onEnemies(list) {
+  S.enemies = [...list].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (CB.open && (CB.tab !== 'fight' || CB.adding)) renderCombat(true);
+}
+function onCombat(doc) {
+  const next = CD.normalizeCombat(doc);
+  if (BK.same(next, S.combat)) return;
+  S.combat = next;
+  updateCombatButton();
+  renderCombat(true);
+}
+// Every change goes through here: shown at once, then kept in the database.
+function saveCombat(next, rolled) {
+  S.combat = next;
+  if (rolled !== undefined) CB.rolled = rolled;
+  updateCombatButton();
+  renderCombat();
+  S.store.saveCombat(next).catch((e) => toast('Could not save the fight: ' + e.message));
+}
+function updateCombatButton() {
+  const b = $('#combatBtn');
+  if (!b) return;
+  b.classList.toggle('on', CB.open);
+  b.classList.toggle('cb-live', !!S.combat.started);
+  b.title = S.combat.started ? `Combat: round ${S.combat.round}` : 'The combat tracker';
+}
+
+function openCombat(tab) {
+  if (!isDM()) return;
+  CB.open = true;
+  if (tab) CB.tab = tab;
+  $('#combatDock').hidden = false;
+  document.body.classList.add('combat-open');
+  lsSet(CB_OPEN_KEY, '1');
+  updateCombatButton();
+  renderCombat();
+  setTimeout(() => S.map?.invalidateSize(), 420);
+}
+function closeCombat() {
+  CB.open = false;
+  $('#combatDock').hidden = true;
+  document.body.classList.remove('combat-open');
+  lsSet(CB_OPEN_KEY, '0');
+  updateCombatButton();
+  setTimeout(() => S.map?.invalidateSize(), 420);
+}
+// A window of its own, to drag onto a second screen. It shows the same fight, live.
+function popOutCombat() {
+  const q = new URLSearchParams(location.search);
+  q.set('tracker', '1');
+  const w = window.open(`${location.pathname}?${q}`, 'atlas-tracker', 'popup=yes,width=520,height=860');
+  if (!w) { toast('The browser blocked the new window. Allow pop-ups for this site and try again.'); return; }
+  closeCombat();
+}
+
+function renderCombat(fromRemote) {
+  const dock = $('#combatDock');
+  if (!dock || !CB.open) return;
+  const el = document.activeElement;
+  if (fromRemote && dock.contains(el) && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;   // do not pull the page out from under typing
+  const live = new Set(S.combat.combatants.map((x) => x.id));
+  for (const id of [...CB.sel]) if (!live.has(id)) CB.sel.delete(id);
+  const scroll = dock.querySelector('.cb-body')?.scrollTop || 0;
+  const view = CB.tab === 'enemy' ? enemyEditView() : CB.tab === 'library' ? libraryView() : fightView();
+  dock.replaceChildren(combatHead(), h('div', { class: 'cb-body' }, view));
+  dock.querySelector('.cb-body').scrollTop = scroll;
+}
+
+function combatHead() {
+  const tab = (id, label) => h('button', { class: `cb-tab${CB.tab === id || (id === 'library' && CB.tab === 'enemy') ? ' on' : ''}`, id: `cbTab-${id}`, type: 'button', text: label, onclick: () => { CB.tab = id; CB.edit = null; renderCombat(); } });
+  return h('header', { class: 'cb-head' },
+    h('div', { class: 'cb-title' }, h('strong', { text: 'Combat' }), S.combat.started ? h('span', { class: 'cb-live-tag', text: `Round ${S.combat.round}` }) : null),
+    h('div', { class: 'cb-tabs' }, tab('fight', 'Fight'), tab('library', 'Enemies')),
+    trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbPop', type: 'button', title: 'Open the tracker in a window of its own, for a second screen', 'aria-label': 'Open in its own window', onclick: popOutCombat }, h('span', { text: '⧉' })),
+    trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbClose', type: 'button', title: 'Put the tracker away (the fight is kept)', 'aria-label': 'Close the tracker', onclick: closeCombat },
+      h('span', { text: '✕' })));
+}
+
+// ── the fight ───────────────────────────────────────────────────────
+function fightView() {
+  const s = S.combat, order = CD.slots(s), wrap = h('div', { class: 'cb-fight' });
+  wrap.append(roundBar(s, order));
+  if (CB.rolled.length) wrap.append(h('p', { class: 'cb-rolled', id: 'cbRolled', text: 'Rolled: ' + CB.rolled.map((r) => `${r.name} ${r.total} (${r.roll}${r.mod ? CD.modText(r.mod) : ''})`).join('; ') }));
+
+  const picked = [...CB.sel].filter((id) => s.combatants.some((x) => x.id === id && !x.group));
+  if (picked.length >= 2) {
+    const names = picked.map((id) => s.combatants.find((x) => x.id === id).name.replace(/\s+\d+$/, ''));
+    const guess = new Set(names).size === 1 ? `${names[0]}s` : 'Group';
+    const nameIn = h('input', { type: 'text', id: 'cbGroupName', maxlength: 60, placeholder: guess, 'aria-label': 'Group name' });
+    wrap.append(h('div', { class: 'cb-groupbar' },
+      nameIn,
+      h('button', { class: 'btn small', id: 'cbGroupBtn', type: 'button', text: `Group the ${picked.length} ticked`, onclick: () => { CB.sel.clear(); saveCombat(CD.makeGroup(S.combat, picked, nameIn.value.trim() || guess)); } }),
+      h('button', { class: 'linklike', type: 'button', text: 'clear ticks', onclick: () => { CB.sel.clear(); renderCombat(); } })));
+  } else if (!s.combatants.length) {
+    wrap.append(h('p', { class: 'muted', text: 'Nobody is in the fight yet. Add players and enemies below.' }));
+  } else if (s.combatants.filter((x) => !x.group).length >= 2) {
+    wrap.append(h('p', { class: 'muted cb-hint', text: 'Tick two or more to put them under one initiative as a group.' }));
+  }
+  wrap.append(h('div', { class: 'cb-list', id: 'cbList' }, ...order.map(slotCard)), addSection());
+  return wrap;
+}
+
+const slotName = (slot) => (slot.group ? slot.group.name : slot.members[0].name);
+
+function roundBar(s, order) {
+  const missing = CD.missingInit(s);
+  const rollMissing = () => { const r = CD.rollInitiative(S.combat); saveCombat(r.state, r.rolled); };
+  if (!s.started) {
+    return h('div', { class: 'cb-round' },
+      h('div', { class: 'cb-round-top' }, h('div', { class: 'cb-state', text: 'Getting ready' }),
+        h('small', { text: missing.length ? `No initiative yet: ${missing.join(', ')}` : order.length ? 'Everyone has an initiative.' : '' })),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', id: 'cbRoll', type: 'button', text: 'Roll initiative for enemies', disabled: !s.combatants.some((x) => x.kind === 'enemy'), onclick: rollMissing }),
+        h('button', { class: 'btn small gold', id: 'cbStart', type: 'button', text: 'Start combat', onclick: startFight }),
+        s.combatants.length ? h('button', { class: 'btn small ghost', id: 'cbClear', type: 'button', text: 'Clear', onclick: () => { if (confirm('Take everyone out of the fight list?')) saveCombat(CD.endCombat(S.combat, { keepPlayers: false }), []); } }) : null));
+  }
+  const cur = order.find((x) => x.key === s.turn);
+  return h('div', { class: 'cb-round live' },
+    h('div', { class: 'cb-round-top' }, h('div', { class: 'cb-round-n' }, 'Round ', h('b', { id: 'cbRoundN', text: String(s.round) })),
+      h('div', { class: 'cb-turn', id: 'cbTurn', text: cur ? `${slotName(cur)}${/s$/i.test(slotName(cur)) ? '’' : '’s'} turn` : '' })),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small ghost', id: 'cbPrev', type: 'button', text: '◀ Back', onclick: () => saveCombat(CD.advance(S.combat, -1), []) }),
+      h('button', { class: 'btn', id: 'cbNext', type: 'button', text: 'Next turn ▶', onclick: () => saveCombat(CD.advance(S.combat, 1), []) }),
+      h('button', { class: 'btn small ghost', id: 'cbEnd', type: 'button', text: 'End combat', onclick: endFight })),
+    missing.length ? h('div', { class: 'row cb-late' }, h('small', { text: `No initiative yet: ${missing.join(', ')}` }),
+      h('button', { class: 'btn small ghost', id: 'cbRollLate', type: 'button', text: 'Roll for the enemies', onclick: rollMissing })) : null);
+}
+function startFight() {
+  const r = CD.start(S.combat);
+  if (r.error) { toast(r.error); return; }
+  saveCombat(r.state, []);
+  const first = CD.slots(r.state).find((x) => x.key === r.state.turn);
+  toast(`Round 1. ${first ? slotName(first) : 'Someone'} goes first.`);
+}
+function endFight() {
+  const s = S.combat;
+  if (!confirm(`End the fight after ${s.round} round${s.round === 1 ? '' : 's'}? The enemies go; the players stay in the list.`)) return;
+  saveCombat(CD.endCombat(s), []);
+}
+
+// A place in the turn order: a group with its members, or one combatant alone.
+function slotCard(slot) {
+  const s = S.combat, cur = s.started && s.turn === slot.key;
+  if (!slot.group) return memberRow(slot.members[0], { slot, cur });
+  const g = slot.group;
+  return h('div', { class: `cb-slot cb-group${cur ? ' current' : ''}${slot.down ? ' down' : ''}`, style: `--c:${CD.colorHex(g.color)}`, 'data-key': slot.key },
+    h('div', { class: 'cb-line1 cb-ghead' },
+      cur ? h('span', { class: 'cb-mark', text: '▶' }) : null,
+      h('button', { class: 'cb-name linklike', type: 'button', title: 'Rename the group', text: g.name, onclick: () => { const n = prompt('Name this group', g.name); if (n?.trim()) saveCombat(CD.renameGroup(S.combat, g.id, n)); } }),
+      h('small', { class: 'cb-count', text: `${slot.members.length} together` }),
+      initBox(slot), rollBtn(slot),
+      h('button', { class: 'cb-dot', type: 'button', title: 'Colour of the group', 'aria-label': `Colour of ${g.name}`, onclick: () => { CB.picker = CB.picker === slot.key ? null : slot.key; renderCombat(); } }),
+      h('button', { class: 'linklike', type: 'button', text: 'ungroup', title: 'Break the group up; each keeps its initiative', onclick: () => saveCombat(CD.ungroup(S.combat, g.id)) })),
+    CB.picker === slot.key ? swatches(g.color, (c) => { CB.picker = null; saveCombat(CD.recolorGroup(S.combat, g.id, c)); }) : null,
+    ...slot.members.map((x) => memberRow(x, { inGroup: true })));
+}
+
+const initBox = (slot) => {
+  const inp = h('input', { type: 'number', class: 'cb-init', step: 1, value: slot.init ?? '', placeholder: '—', title: 'Initiative', 'aria-label': `Initiative for ${slotName(slot)}` });
+  inp.addEventListener('change', () => saveCombat(CD.setInit(S.combat, slot.key, inp.value)));
+  return inp;
+};
+// Roll one place in the order again: a d20 plus the bonus. (Players roll their own dice: their number is typed in.)
+const rollBtn = (slot) => (slot.members.some((x) => x.kind === 'player') ? null
+  : h('button', { class: 'cb-roll', type: 'button', title: `Roll initiative (d20 ${CD.modText(slot.mod ?? 0)})`, 'aria-label': `Roll initiative for ${slotName(slot)}`, text: '🎲',
+    onclick: () => { const roll = CD.d20(), mod = slot.mod ?? 0; saveCombat(CD.setInit(S.combat, slot.key, roll + mod), [{ name: slotName(slot), roll, mod, total: roll + mod }]); } }));
+const swatches = (current, pick) => h('div', { class: 'cb-swatches', role: 'group', 'aria-label': 'Colours' },
+  ...CD.COLORS.map((c) => h('button', { class: `cb-sw${c.id === current ? ' on' : ''}`, type: 'button', style: `--c:${c.hex}`, title: c.name, 'aria-label': c.name, onclick: () => pick(c.id) })));
+
+function memberRow(x, { slot, inGroup, cur } = {}) {
+  const hex = CD.colorHex(x.color), down = CD.isDown(x), open = CB.expanded.has(x.id), detail = x.attacks || x.text;
+  const dmg = h('input', { type: 'number', min: 0, class: 'cb-dmg', placeholder: 'amount', 'aria-label': `Damage or healing for ${x.name}` });
+  const apply = (sign) => { const n = Math.abs(Math.floor(Number(dmg.value))); if (n) saveCombat(CD.hit(S.combat, x.id, sign * n)); };
+  dmg.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(-1); } });
+  const hp = h('input', { type: 'number', min: 0, class: 'cb-hp', value: x.hp ?? '', title: 'Hit points now', 'aria-label': `Hit points of ${x.name}` });
+  hp.addEventListener('change', () => saveCombat(CD.setHp(S.combat, x.id, hp.value)));
+  const max = h('input', { type: 'number', min: 1, class: 'cb-hp cb-hpmax', value: x.max ?? '', title: 'Most hit points', 'aria-label': `Most hit points of ${x.name}` });
+  max.addEventListener('change', () => saveCombat(CD.setHp(S.combat, x.id, undefined, max.value)));
+  const pick = h('input', { type: 'checkbox', class: 'cb-pick', checked: CB.sel.has(x.id), 'aria-label': `Pick ${x.name} to group`,
+    onchange: (e) => { if (e.target.checked) CB.sel.add(x.id); else CB.sel.delete(x.id); renderCombat(); } });
+  return h('div', { class: `cb-row${cur ? ' current' : ''}${down ? ' down' : ''}${x.kind === 'player' ? ' player' : ''}${inGroup ? ' ingroup' : ''}`, style: `--c:${hex}`, 'data-id': x.id },
+    h('div', { class: 'cb-line1' },
+      inGroup ? null : pick,
+      cur && !inGroup ? h('span', { class: 'cb-mark', text: '▶' }) : null,
+      h('button', { class: 'cb-name linklike', type: 'button', title: 'Rename', text: x.name, onclick: () => { const n = prompt('Name', x.name); if (n?.trim()) saveCombat(CD.renameCombatant(S.combat, x.id, n)); } }),
+      x.kind === 'player' ? h('span', { class: 'cb-chip pc', text: 'Player' }) : null,
+      down ? h('span', { class: 'cb-chip down', text: 'Down' }) : null,
+      x.kind === 'enemy' ? h('button', { class: 'cb-chip ac', type: 'button', title: 'Armor Class (click to change)', text: x.ac == null ? 'AC —' : `AC ${x.ac}`,
+        onclick: () => { const v = prompt(`Armor Class of ${x.name}`, x.ac ?? ''); if (v !== null) saveCombat(CD.setAc(S.combat, x.id, v)); } }) : null,
+      inGroup ? null : initBox(slot), inGroup ? null : rollBtn(slot)),
+    x.kind === 'enemy' ? h('div', { class: 'cb-line2' },
+      h('span', { class: 'cb-lbl', text: 'HP' }), hp, h('span', { class: 'cb-sl', text: '/' }), max,
+      dmg,
+      h('button', { class: 'cb-hit', type: 'button', title: 'Damage', 'aria-label': `Damage ${x.name}`, text: '−', onclick: () => apply(-1) }),
+      h('button', { class: 'cb-heal', type: 'button', title: 'Heal', 'aria-label': `Heal ${x.name}`, text: '+', onclick: () => apply(1) })) : null,
+    h('div', { class: 'cb-line3' },
+      detail ? h('button', { class: 'linklike', type: 'button', text: open ? '▾ attacks and notes' : '▸ attacks and notes', onclick: () => { if (open) CB.expanded.delete(x.id); else CB.expanded.add(x.id); renderCombat(); } }) : null,
+      h('button', { class: 'cb-dot', type: 'button', title: 'Colour', 'aria-label': `Colour of ${x.name}`, onclick: () => { CB.picker = CB.picker === x.id ? null : x.id; renderCombat(); } }),
+      inGroup ? h('button', { class: 'linklike', type: 'button', text: 'leave group', onclick: () => saveCombat(CD.removeFromGroup(S.combat, x.id)) }) : null,
+      h('button', { class: 'linklike cb-del', type: 'button', text: 'remove', title: 'Take them out of the fight', onclick: () => saveCombat(CD.removeCombatant(S.combat, x.id)) })),
+    CB.picker === x.id ? swatches(x.color, (c) => { CB.picker = null; saveCombat(CD.recolorCombatant(S.combat, x.id, c)); }) : null,
+    open && detail ? h('div', { class: 'cb-detail' },
+      x.attacks ? h('div', {}, h('b', { text: 'Attacks' }), h('pre', { text: x.attacks })) : null,
+      x.text ? h('div', {}, h('b', { text: 'Notes' }), h('pre', { text: x.text })) : null) : null);
+}
+
+// ── adding to the fight ─────────────────────────────────────────────
+function addSection() {
+  const box = h('div', { class: 'cb-add' });
+  box.append(h('button', { class: 'btn small ghost', id: 'cbAddToggle', type: 'button', text: CB.adding ? 'Done adding' : '+ Add to the fight', onclick: () => { CB.adding = !CB.adding; renderCombat(); } }));
+  if (!CB.adding) return box;
+
+  // players: from the party, or a name typed in; their initiative is what they rolled at the table
+  box.append(h('h3', { text: 'Players' }));
+  const addPlayer = (name, init) => { const r = CD.addPlayer(S.combat, name, init); if (!r.id) { toast(`${name} is already in the fight.`); return; } saveCombat(r.state); };
+  const missing = playerNames().filter((n) => !inFight(n));
+  for (const name of missing) {
+    const init = h('input', { type: 'number', class: 'cb-init', step: 1, placeholder: 'init', 'aria-label': `Initiative for ${name}` });
+    init.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPlayer(name, init.value); } });
+    box.append(h('div', { class: 'cb-addrow' }, h('span', { class: 'cb-addname', text: name }), init, h('button', { class: 'btn small cb-add-player', type: 'button', text: 'Add', onclick: () => addPlayer(name, init.value) })));
+  }
+  if (missing.length > 1) box.append(h('button', { class: 'btn small ghost', id: 'cbAddAll', type: 'button', text: 'Add everyone (no initiative yet)', onclick: () => { let t = S.combat; for (const n of missing) t = CD.addPlayer(t, n).state; saveCombat(t); } }));
+  else if (!missing.length) box.append(h('p', { class: 'muted', text: playerNames().length ? 'Every player is in the fight.' : 'No player has opened the atlas yet. Type a name below.' }));
+  const other = h('input', { type: 'text', id: 'cbOtherName', maxlength: 80, placeholder: 'Someone else (a name)', 'aria-label': 'A name to add' });
+  const otherInit = h('input', { type: 'number', class: 'cb-init', step: 1, placeholder: 'init', 'aria-label': 'Their initiative' });
+  box.append(h('div', { class: 'cb-addrow' }, other, otherInit, h('button', { class: 'btn small ghost', id: 'cbAddOther', type: 'button', text: 'Add', onclick: () => { if (other.value.trim()) addPlayer(other.value, otherInit.value); } })));
+
+  // enemies: from the library, or a quick one made on the spot
+  box.append(h('h3', { text: 'Enemies' }));
+  if (!S.enemies.length) {
+    box.append(h('p', { class: 'muted', text: 'Your enemy list is empty.' }),
+      h('button', { class: 'btn small', id: 'cbFirstEnemy', type: 'button', text: 'Make your first enemy', onclick: () => { CB.tab = 'enemy'; CB.edit = 'new'; renderCombat(); } }));
+  } else {
+    const list = h('div', { class: 'cb-libs' });
+    const fill = () => list.replaceChildren(...S.enemies.filter((e) => !CB.query || e.name.toLowerCase().includes(CB.query.toLowerCase())).map((e) => libraryRow(e)));
+    const q = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy…', value: CB.query, 'aria-label': 'Find an enemy' });
+    q.addEventListener('input', () => { CB.query = q.value; fill(); });
+    fill();
+    box.append(q, list);
+  }
+  const f = {
+    name: h('input', { type: 'text', id: 'qkName', maxlength: 80, placeholder: 'Name', 'aria-label': 'Name' }),
+    ac: h('input', { type: 'number', id: 'qkAc', min: 0, max: 40, placeholder: 'AC', 'aria-label': 'Armor Class' }),
+    hp: h('input', { type: 'number', id: 'qkHp', min: 1, placeholder: 'HP', 'aria-label': 'Hit points' }),
+    mod: h('input', { type: 'number', id: 'qkMod', placeholder: 'Init +', 'aria-label': 'Initiative bonus' }),
+    n: h('input', { type: 'number', id: 'qkCount', min: 1, max: 40, value: 1, 'aria-label': 'How many' }),
+  };
+  box.append(h('details', { class: 'cb-quick', open: !S.enemies.length }, h('summary', { text: 'Quick enemy (not saved to the list)' }),
+    h('div', { class: 'cb-quickrow' }, f.name, f.ac, f.hp, f.mod, f.n,
+      h('button', { class: 'btn small', id: 'qkAdd', type: 'button', text: 'Add', onclick: () => {
+        const e = CD.enemyFrom({ name: f.name.value, ac: f.ac.value, hp: f.hp.value, mod: f.mod.value, color: 'grey' });
+        if (e.error) { toast(e.error); return; }
+        saveCombat(CD.addEnemies(S.combat, e, Number(f.n.value) || 1).state, []);
+      } }))));
+  return box;
+}
+
+// A line of the enemy list, with how many to add (and whether they share one initiative as a group).
+function libraryRow(e, { manage } = {}) {
+  const count = h('input', { type: 'number', class: 'cb-num', min: 1, max: 40, value: 1, title: 'How many', 'aria-label': `How many ${e.name}` });
+  const grp = h('input', { type: 'checkbox', class: 'cb-grp-in', 'aria-label': `Add the ${e.name} as one group` });
+  const add = () => {
+    const n = Math.max(1, Math.min(40, parseInt(count.value, 10) || 1));
+    saveCombat(CD.addEnemies(S.combat, e, n, { asGroup: grp.checked }).state, []);
+  };
+  return h('div', { class: 'cb-lib', style: `--c:${CD.colorHex(e.color)}`, 'data-id': e.id },
+    h('div', { class: 'cb-lib-main' },
+      h('b', { class: 'cb-name', text: e.name }),
+      h('small', { text: [e.ac != null ? `AC ${e.ac}` : '', e.hp != null ? `HP ${e.hp}` : '', e.mod ? `Init ${CD.modText(e.mod)}` : ''].filter(Boolean).join(' · ') })),
+    h('div', { class: 'cb-lib-add' }, count,
+      h('label', { class: 'cb-grp', title: 'They share one initiative and one turn' }, grp, ' group'),
+      h('button', { class: 'btn small cb-add-btn', type: 'button', text: 'Add', onclick: add })),
+    manage ? h('div', { class: 'cb-lib-manage' },
+      h('button', { class: 'linklike', type: 'button', text: 'edit', onclick: () => { CB.tab = 'enemy'; CB.edit = e.id; renderCombat(); } }),
+      h('button', { class: 'linklike cb-del', type: 'button', text: 'delete', onclick: async () => {
+        if (!confirm(`Delete ${e.name} from your list? Ones already in the fight stay.`)) return;
+        await S.store.deleteEnemy(e.id).catch((err) => toast(err.message));
+      } })) : null);
+}
+
+// ── the enemy list ──────────────────────────────────────────────────
+function libraryView() {
+  const wrap = h('div', { class: 'cb-library' });
+  const list = h('div', { class: 'cb-libs' });
+  const fill = () => {
+    const rows = S.enemies.filter((e) => !CB.query || e.name.toLowerCase().includes(CB.query.toLowerCase()));
+    list.replaceChildren(...(rows.length ? rows.map((e) => libraryRow(e, { manage: true })) : [h('p', { class: 'muted', text: S.enemies.length ? 'No enemy has that name.' : 'No enemies yet. Make one, or paste in a stat block.' })]));
+  };
+  const q = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy…', value: CB.query, 'aria-label': 'Find an enemy' });
+  q.addEventListener('input', () => { CB.query = q.value; fill(); });
+  fill();
+  wrap.append(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'enNew', type: 'button', text: '+ New enemy', onclick: () => { CB.tab = 'enemy'; CB.edit = 'new'; renderCombat(); } })), q, list);
+  return wrap;
+}
+
+function enemyEditView() {
+  const isNew = CB.edit === 'new', e = isNew ? {} : S.enemies.find((x) => x.id === CB.edit);
+  if (!isNew && !e) { CB.tab = 'library'; return libraryView(); }
+  let color = e.color || 'grey';
+  const f = {
+    paste: h('textarea', { id: 'enPaste', rows: 4, placeholder: 'Paste a stat block here (from D&D Beyond, a PDF, or your notes) and press the button.' }),
+    name: h('input', { type: 'text', id: 'enName', maxlength: 80, value: e.name || '' }),
+    ac: h('input', { type: 'number', id: 'enAc', min: 0, max: 40, value: e.ac ?? '' }),
+    hp: h('input', { type: 'number', id: 'enHp', min: 1, max: 9999, value: e.hp ?? '' }),
+    mod: h('input', { type: 'number', id: 'enMod', min: -10, max: 30, value: e.mod || '' , placeholder: '0' }),
+    attacks: h('textarea', { id: 'enAttacks', rows: 5, placeholder: 'Scimitar. +4 to hit, 5 ft., 5 (1d6 + 2) slashing.' }),
+    text: h('textarea', { id: 'enText', rows: 6, placeholder: 'Traits, tactics, anything you want in front of you.' }),
+  };
+  f.attacks.value = e.attacks || ''; f.text.value = e.text || '';
+  const sw = h('div', { class: 'cb-swatches' });
+  const drawSw = () => sw.replaceChildren(...CD.COLORS.map((c) => h('button', { class: `cb-sw${c.id === color ? ' on' : ''}`, type: 'button', style: `--c:${c.hex}`, title: c.name, 'aria-label': c.name, onclick: () => { color = c.id; drawSw(); } })));
+  drawSw();
+  const fillFromText = () => {
+    const p = CD.parseStatBlock(f.paste.value);
+    const got = [];
+    if (p.name) { f.name.value = p.name; got.push('name'); }
+    if (p.ac != null) { f.ac.value = p.ac; got.push('AC'); }
+    if (p.hp != null) { f.hp.value = p.hp; got.push('HP'); }
+    if (p.mod != null) { f.mod.value = p.mod || ''; got.push('initiative bonus'); }
+    if (p.attacks) { f.attacks.value = p.attacks; got.push('attacks'); }
+    if (p.text) { f.text.value = p.text; got.push('notes'); }
+    toast(got.length ? `Filled in: ${got.join(', ')}. Check them over.` : 'I could not find anything to fill in. You can type it in yourself.');
+  };
+  const save = async () => {
+    const clean = CD.enemyFrom({ name: f.name.value, ac: f.ac.value, hp: f.hp.value, mod: f.mod.value, color, attacks: f.attacks.value, text: f.text.value });
+    if (clean.error) { toast(clean.error); return; }
+    try { await S.store.saveEnemy(clean, isNew ? undefined : e.id); CB.tab = 'library'; CB.edit = null; renderCombat(); toast(`${clean.name} is on your list.`); }
+    catch (err) { toast('Could not save: ' + err.message); }
+  };
+  return h('form', { class: 'editor cb-edit', onsubmit: (ev) => { ev.preventDefault(); save(); } },
+    h('h2', { class: 'codex-title', text: isNew ? 'New enemy' : 'Edit enemy' }),
+    field('Paste a stat block (optional)', f.paste, 'It fills in what it can find. You can fix anything after.'),
+    h('button', { class: 'btn small ghost', id: 'enFill', type: 'button', text: 'Fill in from the text', onclick: fillFromText }),
+    field('Name', f.name),
+    h('div', { class: 'row gen-pickers' }, field('Armor Class', f.ac), field('Hit points', f.hp), field('Initiative bonus', f.mod)),
+    field('Colour', sw),
+    field('Attacks', f.attacks),
+    field('Text', f.text),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', id: 'enSave', type: 'submit', text: 'Save' }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: () => { CB.tab = 'library'; CB.edit = null; renderCombat(); } })));
+}
+
 // ─── DM editors ─────────────────────────────────────────────────────
 function field(label, input, hint) {
   // A <label> forwards clicks on its text to the first control inside it, which is only
@@ -5316,6 +5676,7 @@ function setupChrome() {
   refreshBackpackViews();
   $('#pingBtn').onclick = () => setPingMode(!S.pingMode);
   $('#editBtn').onclick = () => setEdit(!S.edit);
+  $('#combatBtn').onclick = () => (CB.open ? closeCombat() : openCombat());
   $('#torchBtn').onclick = () => {
     S.torch = !S.torch;
     $('#torchBtn').classList.toggle('on', S.torch);
