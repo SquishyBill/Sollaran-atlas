@@ -8,6 +8,7 @@ import { generateLoot, rerollLine, SETTINGS, MODES, SRD_MAGIC, RARITIES, coinVal
 import * as CAL from './calendar-data.js';
 import * as BK from './backup.js';
 import * as CD from './combat-data.js';
+import * as BD from './bestiary-data.js';
 import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -4943,7 +4944,7 @@ function renderDoc(page) {
 // A dock down the left of the page that stays open as the DM turns from map to map, so the fight runs alongside whatever
 // is on show. The fight lives in the database (combat/current), so a refresh does not lose it, and the same tracker can
 // be opened in a window of its own (?tracker) for a second screen. Only the DM can see any of it.
-const CB = { open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '' };
+const CB = { open: false, tab: 'fight', adding: false, sel: new Set(), expanded: new Set(), picker: null, edit: null, rolled: [], query: '', starterOpen: null };
 const CB_OPEN_KEY = 'atlas-combat-open';
 const trackerMode = () => new URLSearchParams(location.search).has('tracker');
 const playerNames = () => [...new Map([...S.roster.map((r) => r.name), ...S.backpacks.map((b) => b.owner), ...S.players.map((p) => p.name)]
@@ -5177,19 +5178,8 @@ function addSection() {
   const otherInit = h('input', { type: 'number', class: 'cb-init', step: 1, placeholder: 'init', 'aria-label': 'Their initiative' });
   box.append(h('div', { class: 'cb-addrow' }, other, otherInit, h('button', { class: 'btn small ghost', id: 'cbAddOther', type: 'button', text: 'Add', onclick: () => { if (other.value.trim()) addPlayer(other.value, otherInit.value); } })));
 
-  // enemies: from the library, or a quick one made on the spot
-  box.append(h('h3', { text: 'Enemies' }));
-  if (!S.enemies.length) {
-    box.append(h('p', { class: 'muted', text: 'Your enemy list is empty.' }),
-      h('button', { class: 'btn small', id: 'cbFirstEnemy', type: 'button', text: 'Make your first enemy', onclick: () => { CB.tab = 'enemy'; CB.edit = 'new'; renderCombat(); } }));
-  } else {
-    const list = h('div', { class: 'cb-libs' });
-    const fill = () => list.replaceChildren(...S.enemies.filter((e) => !CB.query || e.name.toLowerCase().includes(CB.query.toLowerCase())).map((e) => libraryRow(e)));
-    const q = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy…', value: CB.query, 'aria-label': 'Find an enemy' });
-    q.addEventListener('input', () => { CB.query = q.value; fill(); });
-    fill();
-    box.append(q, list);
-  }
+  // enemies: from your list or the starter monsters, or a quick one made on the spot
+  box.append(h('h3', { text: 'Enemies' }), ...enemyBrowser({}));
   const f = {
     name: h('input', { type: 'text', id: 'qkName', maxlength: 80, placeholder: 'Name', 'aria-label': 'Name' }),
     ac: h('input', { type: 'number', id: 'qkAc', min: 0, max: 40, placeholder: 'AC', 'aria-label': 'Armor Class' }),
@@ -5197,7 +5187,7 @@ function addSection() {
     mod: h('input', { type: 'number', id: 'qkMod', placeholder: 'Init +', 'aria-label': 'Initiative bonus' }),
     n: h('input', { type: 'number', id: 'qkCount', min: 1, max: 40, value: 1, 'aria-label': 'How many' }),
   };
-  box.append(h('details', { class: 'cb-quick', open: !S.enemies.length }, h('summary', { text: 'Quick enemy (not saved to the list)' }),
+  box.append(h('details', { class: 'cb-quick' }, h('summary', { text: 'Quick enemy (not saved to the list)' }),
     h('div', { class: 'cb-quickrow' }, f.name, f.ac, f.hp, f.mod, f.n,
       h('button', { class: 'btn small', id: 'qkAdd', type: 'button', text: 'Add', onclick: () => {
         const e = CD.enemyFrom({ name: f.name.value, ac: f.ac.value, hp: f.hp.value, mod: f.mod.value, color: 'grey' });
@@ -5207,21 +5197,50 @@ function addSection() {
   return box;
 }
 
+// Your own enemies and the starter monsters, with one search for both. manage adds edit and delete to your own.
+function enemyBrowser({ manage } = {}) {
+  const mine = h('div', { class: 'cb-libs', id: 'cbMine' }), starters = h('div', { class: 'cb-libs', id: 'cbStarters' });
+  const note = (text) => h('p', { class: 'muted', text });
+  const fill = () => {
+    const q = CB.query.trim().toLowerCase();
+    const own = S.enemies.filter((e) => !q || e.name.toLowerCase().includes(q));
+    mine.replaceChildren(...(own.length ? own.map((e) => libraryRow(e, { manage })) : [note(S.enemies.length ? 'None of yours has that name.' : 'Your own list is empty. Make an enemy, paste in a stat block, or copy a starter monster from below.')]));
+    const found = BD.findMonsters(CB.query);
+    starters.replaceChildren(...(found.length ? found.map((m) => libraryRow(m, { starter: true })) : [note('No starter monster has that name.')]));
+  };
+  const search = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy\u2026', value: CB.query, 'aria-label': 'Find an enemy' });
+  search.addEventListener('input', () => { CB.query = search.value; fill(); });
+  const details = h('details', { class: 'cb-starter', id: 'cbStarter', open: CB.starterOpen ?? !S.enemies.length },
+    h('summary', { text: `Starter monsters (${BD.BESTIARY.length}), weakest first` }), starters, h('p', { class: 'cb-srd', text: BD.SRD_NOTICE }));
+  details.addEventListener('toggle', () => { CB.starterOpen = details.open; });
+  fill();
+  return [search, h('h4', { class: 'cb-sub', text: 'Your enemies' }), mine, details];
+}
+
+// Put a starter monster on your own list, to change however you like.
+async function copyStarter(m) {
+  if (S.enemies.some((e) => e.name.toLowerCase() === m.name.toLowerCase())) { toast(`${m.name} is already on your list.`); return; }
+  const clean = CD.enemyFrom(m);
+  if (clean.error) { toast(clean.error); return; }
+  try { await S.store.saveEnemy(clean); toast(`${m.name} is on your list. You can change anything about it.`); } catch (e) { toast('Could not save: ' + e.message); }
+}
+
 // A line of the enemy list, with how many to add (and whether they share one initiative as a group).
-function libraryRow(e, { manage } = {}) {
+function libraryRow(e, { manage, starter } = {}) {
   const count = h('input', { type: 'number', class: 'cb-num', min: 1, max: 40, value: 1, title: 'How many', 'aria-label': `How many ${e.name}` });
   const grp = h('input', { type: 'checkbox', class: 'cb-grp-in', 'aria-label': `Add the ${e.name} as one group` });
   const add = () => {
     const n = Math.max(1, Math.min(40, parseInt(count.value, 10) || 1));
     saveCombat(CD.addEnemies(S.combat, e, n, { asGroup: grp.checked }).state, []);
   };
-  return h('div', { class: 'cb-lib', style: `--c:${CD.colorHex(e.color)}`, 'data-id': e.id },
-    h('div', { class: 'cb-lib-main' },
-      h('b', { class: 'cb-name', text: e.name }),
-      h('small', { text: [e.ac != null ? `AC ${e.ac}` : '', e.hp != null ? `HP ${e.hp}` : '', e.mod ? `Init ${CD.modText(e.mod)}` : ''].filter(Boolean).join(' · ') })),
+  const stats = [starter ? `CR ${e.cr}` : '', e.ac != null ? `AC ${e.ac}` : '', e.hp != null ? `HP ${e.hp}` : '', e.mod ? `Init ${CD.modText(e.mod)}` : ''].filter(Boolean).join(' \u00b7 ');
+  return h('div', { class: `cb-lib${starter ? ' starter' : ''}`, style: `--c:${CD.colorHex(e.color)}`, 'data-id': e.id },
+    h('div', { class: 'cb-lib-main' }, h('b', { class: 'cb-name', text: e.name }), h('small', { text: stats })),
     h('div', { class: 'cb-lib-add' }, count,
       h('label', { class: 'cb-grp', title: 'They share one initiative and one turn' }, grp, ' group'),
       h('button', { class: 'btn small cb-add-btn', type: 'button', text: 'Add', onclick: add })),
+    starter ? h('div', { class: 'cb-lib-manage' }, h('small', { class: 'cb-kind', text: e.type }),
+      h('button', { class: 'linklike cb-copy', type: 'button', text: 'copy to my list', title: 'Keep it on your own list, to change however you like', onclick: () => copyStarter(e) })) : null,
     manage ? h('div', { class: 'cb-lib-manage' },
       h('button', { class: 'linklike', type: 'button', text: 'edit', onclick: () => { CB.tab = 'enemy'; CB.edit = e.id; renderCombat(); } }),
       h('button', { class: 'linklike cb-del', type: 'button', text: 'delete', onclick: async () => {
@@ -5232,17 +5251,9 @@ function libraryRow(e, { manage } = {}) {
 
 // ── the enemy list ──────────────────────────────────────────────────
 function libraryView() {
-  const wrap = h('div', { class: 'cb-library' });
-  const list = h('div', { class: 'cb-libs' });
-  const fill = () => {
-    const rows = S.enemies.filter((e) => !CB.query || e.name.toLowerCase().includes(CB.query.toLowerCase()));
-    list.replaceChildren(...(rows.length ? rows.map((e) => libraryRow(e, { manage: true })) : [h('p', { class: 'muted', text: S.enemies.length ? 'No enemy has that name.' : 'No enemies yet. Make one, or paste in a stat block.' })]));
-  };
-  const q = h('input', { type: 'search', id: 'cbSearch', class: 'cb-search', placeholder: 'Find an enemy…', value: CB.query, 'aria-label': 'Find an enemy' });
-  q.addEventListener('input', () => { CB.query = q.value; fill(); });
-  fill();
-  wrap.append(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'enNew', type: 'button', text: '+ New enemy', onclick: () => { CB.tab = 'enemy'; CB.edit = 'new'; renderCombat(); } })), q, list);
-  return wrap;
+  return h('div', { class: 'cb-library' },
+    h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'enNew', type: 'button', text: '+ New enemy', onclick: () => { CB.tab = 'enemy'; CB.edit = 'new'; renderCombat(); } })),
+    ...enemyBrowser({ manage: true }));
 }
 
 function enemyEditView() {

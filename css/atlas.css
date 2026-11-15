@@ -1281,3 +1281,10 @@ body.tracker-mode .combat-dock { inset: 0; width: auto; border-radius: 0; box-sh
 .cb-head .icon-btn { background: rgba(255, 250, 235, .6); border: 1px solid rgba(90, 60, 25, .5); box-shadow: none; color: var(--ink); }
 .cb-head .icon-btn span { font-size: 16px; line-height: 1; color: var(--ink); }
 .cb-ghead .cb-dot { background: rgba(255, 248, 230, .9); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+
+.cb-sub { margin: 10px 0 4px; font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+.cb-starter { margin-top: 12px; }
+.cb-starter summary { cursor: pointer; font: 700 12px var(--f-head); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
+.cb-lib.starter { background: rgba(240, 232, 205, .6); }
+.cb-kind { color: var(--ink-faint); font-style: italic; margin-right: auto; }
+.cb-srd { margin: 8px 0 0; font-size: 12px; line-height: 1.35; color: var(--ink-faint); font-style: italic; }

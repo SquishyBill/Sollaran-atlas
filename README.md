@@ -133,6 +133,8 @@ The crossed swords in the top bar open a tracker in a dock down the left of the 
 
 **Enemies.** The *Enemies* tab is your library: name, Armor Class, hit points, initiative bonus, a colour, the attacks and a free text. **Paste a stat block** into the box and press *Fill in from the text* to fill in what it can find (name, AC, hit points, the Dexterity or Initiative bonus, and the Actions as the attacks); you check it and save.
 
+**Starter monsters.** Under your list is a collapsible list of 36 common monsters (commoners and bandits up to an owlbear, a knight and a troll), weakest first, with the same search. Add them to a fight straight away, or press *copy to my list* to keep one and change it. Their numbers follow the System Reference Document 5.1 (© Wizards of the Coast, CC-BY 4.0), which the page says under the list; check them against your own books. They live in `js/bestiary-data.js`, whose tests check that each one's hit points match its dice, each damage figure matches its dice, and each initiative bonus matches its Dexterity.
+
 **A fight.** *Add to the fight*: players from the party (with the initiative they rolled) and enemies from the library (how many, and *group* to give them one initiative and one turn); several are numbered, each with its own hit points. Tick two or more to **group** them under one initiative. Every group and every creature has a colour from ten (a group's colour carries to the ones in it unless one has its own). **Roll initiative for enemies** rolls a d20 plus each bonus (once per group); players' numbers are typed in. **Start combat** sorts everyone and starts round 1; **Next turn** and **Back** move the turn and count the rounds, skipping defeated enemies (never players). Damage and healing are typed into a box beside each creature's hit points. **End combat** sends the enemies away and keeps the players.
 
 **A window of its own.** The button beside the title opens the tracker alone (`?tracker`), to drag onto a second screen. The two stay in step, live. The logic is in `js/combat-data.js` (tested on its own).
@@ -197,6 +199,7 @@ js/app.js           the atlas UI
 js/store-firebase.js  Firebase backend (anonymous players, Google DM)
 js/calendar-data.js   the calendar: dates, weekdays, holidays and the clock
 js/combat-data.js     the combat tracker: groups, initiative, rounds, hit points
+js/bestiary-data.js   the starter monsters (SRD 5.1)
 js/store-local.js     demo backend (browser storage)
 js/seed.js          demo content
 js/markdown.js      tiny safe markdown renderer
