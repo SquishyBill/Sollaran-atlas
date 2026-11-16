@@ -1500,3 +1500,7 @@ body.table-mode .topbar, body.table-mode .stage, body.table-mode .panel, body.ta
 body.table-mode .turn-box, body.table-mode .init-box, body.table-mode #embers, body.table-mode .demo-ribbon, body.table-mode .toast, body.table-mode .ho-modal { display: none !important; }
 body.table-mode .battle-view { inset: 0; left: 0; }
 @media (max-width: 760px) { .battle-view, body.combat-open .battle-view { left: 0; z-index: 24; } }
+.cb-saved-sum { cursor: pointer; padding: 4px 0; }
+.cb-saved-body { padding: 4px 0 6px; }
+.cb-saved-body p { margin: 4px 0; }
+.cb-savebox { margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(128,128,128,.3); }
