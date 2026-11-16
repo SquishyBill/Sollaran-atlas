@@ -5607,7 +5607,7 @@ function savedView() {
         ...enc.groups.map((g) => h('p', { class: 'muted' }, `Group “${g.name}”: ${groupOf(g).map((i) => i.name).join(', ')}`)),
         loose.length && enc.groups.length ? h('p', { class: 'muted', text: `Not grouped: ${loose.map((i) => i.name).join(', ')}` }) : null,
         h('div', { class: 'row' },
-          h('button', { class: 'btn small cb-use', type: 'button', text: 'Use this fight', title: 'Swap the Fight tab for this one, ready to roll initiative', onclick: () => use(enc, true) }),
+          h('button', { class: 'btn small gold cb-use', type: 'button', text: 'Use this fight', title: 'Swap the Fight tab for this one, ready to roll initiative', onclick: () => use(enc, true) }),
           h('button', { class: 'btn small ghost cb-load', type: 'button', text: 'Add to the current fight', onclick: () => use(enc, false) }),
           h('button', { class: 'btn small ghost cb-upd', type: 'button', text: 'Replace with the current fight', title: 'Overwrite this saved fight with what is on the Fight tab now',
             disabled: !S.combat.combatants.length, onclick: async () => { if (confirm(`Overwrite “${enc.name}” with the fight as it is now?`)) { CB.openSaved = enc.id; await saveFightAs(enc.name, { quiet: true }) || 0; } } }),
