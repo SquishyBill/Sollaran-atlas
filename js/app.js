@@ -746,6 +746,7 @@ function onPing(p) {
   if (!p?.at || p.at <= S.lastPing) return;
   S.lastPing = p.at;
   if (Date.now() - p.at > 60_000) return; // stale ping from a previous session
+  if (String(p.pageId).startsWith('bm:')) { showBattleRipple(p); return; }   // a ping on a battle map
   const page = pageById(p.pageId);
   if (!page) return;
   if (p.pageId === S.pageId && S.imgSize) { showRipple(p); return; }
@@ -768,6 +769,7 @@ function showRipple(p) {
 
 function setPingMode(on) {
   S.pingMode = on;
+  $('#battleView')?.classList.toggle('pinging', !!on);
   $('#pingBtn').classList.toggle('on', on);
   if (on && S.edit) setEdit(false);
   modeHint();
@@ -6060,10 +6062,12 @@ function buildBattle(v, m, tv, key) {
   const tokens = h('div', { class: 'bv-tokens' }), loading = h('div', { class: 'bv-loading', text: 'Loading the map…' });
   const frame = h('div', { class: 'bv-frame', id: 'bvFrame' }, img, grid, fog, tokens, loading);
   const hud = h('div', { class: 'bv-hud', id: 'bvHud', hidden: true });
-  const stage = h('div', { class: 'bv-stage' }, frame, hud);
+  const torch = h('div', { class: `torch bv-torch${S.torch ? ' show' : ''}` });
+  const stage = h('div', { class: 'bv-stage' }, frame, hud, torch);
+  stage.addEventListener('pointermove', (e) => { if (!S.torch) return; const r = stage.getBoundingClientRect(); torch.style.setProperty('--tx', `${e.clientX - r.left}px`); torch.style.setProperty('--ty', `${e.clientY - r.top}px`); });
   const bar = tv ? null : buildBar();
   v.replaceChildren(...[bar, stage].filter(Boolean));
-  BV.els = { img, grid, fog, tokens, loading, frame, stage, hud, bar };
+  BV.els = { img, grid, fog, tokens, loading, frame, stage, hud, bar, torch };
   BV.ro = new ResizeObserver(() => fitBattle());
   BV.ro.observe(stage);
   mapImage(m).then((src) => {
@@ -6225,7 +6229,29 @@ function syncBar() {
 }
 
 // Dragging on the map: tokens move, the brush paints fog.
+// A ping on the battle map: the spot is kept as a fraction of the picture, so it lands in the same place on the DM's screen and the TV.
+function battlePing(fx, fy) {
+  const m = curMap();
+  if (!m) return;
+  setPingMode(false);
+  S.store.sendPing({ pageId: `bm:${m.id}`, x: Math.round(fx * 10000) / 10000, y: Math.round(fy * 10000) / 10000, by: myName() || (isDM() ? 'The DM' : 'Someone') })
+    .catch((e) => toast('Ping failed: ' + e.message));
+}
+function showBattleRipple(p) {
+  const E = BV.els, m = BV.m;
+  if (!E || !m || `bm:${m.id}` !== p.pageId || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  const el = h('div', { class: 'ping-wrap bv-ping', style: `left:${p.x * 100}%;top:${p.y * 100}%`, html: `<div class="ping"><i></i><i></i><i></i><b>${esc(p.by)}</b></div>` });
+  E.frame.append(el);
+  setTimeout(() => el.remove(), 4200);
+}
+// Torchlight over the battle map: a dim, flickering pool of light that follows the mouse.
+function paintBattleTorch() {
+  const E = BV.els;
+  if (!E?.torch) return;
+  E.torch.classList.toggle('show', !!S.torch);
+}
 function wireBattleInput(frame) {
+  frame.addEventListener('contextmenu', (e) => { e.preventDefault(); const r = frame.getBoundingClientRect(); battlePing(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))); });
   const pt = (e) => { const r = frame.getBoundingClientRect(); return { fx: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), fy: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; };
   const strokeCells = (d, m) => {
     if (d.box) return BT.boxCells(m, d.c0, d.r0, d.c, d.r);
@@ -6235,6 +6261,7 @@ function wireBattleInput(frame) {
   frame.addEventListener('pointerdown', (e) => {
     const m = curMap();
     if (!m || e.button !== 0) return;
+    if (S.pingMode) { const q = pt(e); battlePing(q.fx, q.fy); e.preventDefault(); return; }
     if (BM.tool === 'move') {
       const el = e.target.closest('.bv-token');
       if (!el) { if (BM.sel) { BM.sel = null; paintTokens(); syncBar(); } return; }
@@ -6669,6 +6696,8 @@ function setupChrome() {
     S.torch = !S.torch;
     $('#torchBtn').classList.toggle('on', S.torch);
     $('#torch').classList.toggle('show', S.torch);
+    paintBattleTorch();
+    if (BV.els?.torch) { const r = BV.els.stage.getBoundingClientRect(); BV.els.torch.style.setProperty('--tx', `${r.width / 2}px`); BV.els.torch.style.setProperty('--ty', `${r.height / 2}px`); }
     const r = $('#mapWrap').getBoundingClientRect();
     $('#torch').style.setProperty('--tx', `${r.width / 2}px`);
     $('#torch').style.setProperty('--ty', `${r.height / 2}px`);
