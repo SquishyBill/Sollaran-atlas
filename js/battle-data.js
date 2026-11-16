@@ -86,7 +86,7 @@ export function normalizeMap(raw) {
   const x = raw && typeof raw === 'object' ? raw : {};
   const m = { id: x.id ? String(x.id) : '', name: text(x.name, 80) || 'Battle map', iw: Math.max(1, int(x.iw) ?? 1000), ih: Math.max(1, int(x.ih) ?? 1000),
     cols: clamp(int(x.cols) ?? 24, MIN_COLS, MAX_COLS), grid: x.grid !== false, fog: '', tokens: [], showTokens: x.showTokens !== false,
-    parts: clamp(int(x.parts) ?? 0, 0, 12), imgAt: num(x.imgAt), createdAt: num(x.createdAt) };
+    parts: clamp(int(x.parts) ?? 0, 0, 12), imgAt: num(x.imgAt), createdAt: num(x.createdAt), ft: clamp(num(x.ft, 5) || 5, 1, 100), aoe: normalizeAoe(x.aoe) };
   const want = m.cols * rowsOf(m);
   m.fog = typeof x.fog === 'string' && x.fog.length === want && /^[01]+$/.test(x.fog) ? x.fog : newFog(m.cols, rowsOf(m), false);
   const seen = new Set();
@@ -181,4 +181,73 @@ export function tokenStates(m, combat) {
     const shown = m.showTokens && t.on && !(x && x.hidden) && !(kind !== 'player' && fogged);
     return { id: t.id, cid: t.cid, name, label: initials(name), color, hex: CD.colorHex(color), kind, fx: t.fx, fy: t.fy, size: t.size, on: t.on, linked: !!x, gone: !!t.cid && !x, down, current, fogged, shown };
   });
+}
+
+// ── areas of effect ──
+// A spell's area laid over the map: a circle (sphere), cone, line or cube. It is kept on the map (so the table's screen shows it too)
+// as { shape, ft, width, color, ax, ay, dx, dy }: the size in feet, where it starts (ax, ay) and, for a cone or line, the spot it aims
+// at (dx, dy), all as fractions of the picture. Cones are the 5e kind: as wide at the far end as they are long (about 53 degrees).
+export const AOE_SHAPES = ['circle', 'cone', 'line', 'cube'];
+export const AOE_SHAPE_NAMES = { circle: 'Circle', cone: 'Cone', line: 'Line', cube: 'Cube' };
+export const AOE_COLORS = [
+  { id: 'fire', name: 'Fire', hex: '#e2552b' }, { id: 'cold', name: 'Cold', hex: '#4aa8e0' }, { id: 'lightning', name: 'Lightning', hex: '#e8c83a' },
+  { id: 'acid', name: 'Acid / poison', hex: '#6cbf3a' }, { id: 'necrotic', name: 'Necrotic', hex: '#8a4bc2' }, { id: 'plain', name: 'Plain', hex: '#e8e8e8' },
+];
+export const AOE_PRESETS = [
+  { name: 'Fireball', shape: 'circle', ft: 20, color: 'fire' }, { name: 'Burning Hands', shape: 'cone', ft: 15, color: 'fire' },
+  { name: 'Cone of Cold', shape: 'cone', ft: 60, color: 'cold' }, { name: 'Lightning Bolt', shape: 'line', ft: 100, width: 5, color: 'lightning' },
+  { name: 'Thunderwave', shape: 'cube', ft: 15, color: 'plain' }, { name: 'Cloudkill / Stinking Cloud', shape: 'circle', ft: 20, color: 'acid' },
+  { name: 'Spirit Guardians', shape: 'circle', ft: 15, color: 'plain' }, { name: 'Darkness', shape: 'circle', ft: 15, color: 'necrotic' },
+  { name: 'Hypnotic Pattern', shape: 'cube', ft: 30, color: 'plain' }, { name: 'Sleep', shape: 'circle', ft: 20, color: 'plain' },
+  { name: 'Entangle', shape: 'cube', ft: 20, color: 'acid' }, { name: 'Dragon breath (cone)', shape: 'cone', ft: 30, color: 'fire' },
+  { name: 'Dragon breath (line)', shape: 'line', ft: 60, width: 5, color: 'fire' }, { name: 'Wall of Fire', shape: 'line', ft: 60, width: 5, color: 'fire' },
+];
+export const aoeColorHex = (id) => (AOE_COLORS.find((c) => c.id === id) || AOE_COLORS[0]).hex;
+export const ftPerSquare = (m) => clamp(num(m.ft, 5) || 5, 1, 100);
+
+export function normalizeAoe(raw) {
+  const a = raw && typeof raw === 'object' ? raw : null;
+  if (!a || !AOE_SHAPES.includes(a.shape)) return null;
+  return { shape: a.shape, ft: clamp(num(a.ft, 20), 1, 1000), width: clamp(num(a.width, 5), 1, 200), color: AOE_COLORS.some((c) => c.id === a.color) ? a.color : 'fire',
+    ax: clamp(num(a.ax, 0.5), 0, 1), ay: clamp(num(a.ay, 0.5), 0, 1), dx: clamp(num(a.dx, 0.5), 0, 1), dy: clamp(num(a.dy, 0.5), 0, 1) };
+}
+
+// The outline in squares (x across, y down from the top left): a circle { c: [x, y], r }, or a polygon { pts: [[x, y], ...] }.
+export function aoeShape(m, a) {
+  const rows = rowsOf(m), L = a.ft / ftPerSquare(m), ox = a.ax * m.cols, oy = a.ay * rows;
+  if (a.shape === 'circle') return { c: [ox, oy], r: L };
+  if (a.shape === 'cube') return { pts: [[ox - L / 2, oy - L / 2], [ox + L / 2, oy - L / 2], [ox + L / 2, oy + L / 2], [ox - L / 2, oy + L / 2]] };
+  let ux = a.dx * m.cols - ox, uy = a.dy * rows - oy;
+  const len = Math.hypot(ux, uy);
+  if (len < 1e-6) { ux = 1; uy = 0; } else { ux /= len; uy /= len; }
+  const px = -uy, py = ux, at = (t, s) => [ox + ux * t + px * s, oy + uy * t + py * s];
+  if (a.shape === 'cone') return { pts: [at(0, 0), at(L, L / 2), at(L, -L / 2)] };
+  const w = a.width / ftPerSquare(m) / 2;
+  return { pts: [at(0, w), at(L, w), at(L, -w), at(0, -w)] };
+}
+export function aoeContains(shape, x, y) {
+  if (shape.c) return Math.hypot(x - shape.c[0], y - shape.c[1]) <= shape.r + 1e-6;
+  const p = shape.pts; let pos = false, neg = false;
+  for (let i = 0; i < p.length; i++) {
+    const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length], cr = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+    if (cr > 1e-9) pos = true; else if (cr < -1e-9) neg = true;
+  }
+  return !(pos && neg);
+}
+// The tokens whose middle is inside the area.
+export function aoeHits(m, a) {
+  if (!a) return [];
+  const sh = aoeShape(m, a), rows = rowsOf(m);
+  return m.tokens.filter((t) => aoeContains(sh, t.fx * m.cols, t.fy * rows)).map((t) => t.id);
+}
+// Where a circle or cube comes to rest: a circle on a corner of the grid, a cube with its edges on the lines.
+export function snapAoeCentre(m, a, fx, fy) {
+  const rows = rowsOf(m), L = a.ft / ftPerSquare(m), x = fx * m.cols, y = fy * rows;
+  let sx = Math.round(x), sy = Math.round(y);
+  if (a.shape === 'cube') { const odd = Math.round(L) % 2; if (odd) { sx = Math.floor(x) + 0.5; sy = Math.floor(y) + 0.5; } }
+  return { ax: clamp(sx, 0, m.cols) / m.cols, ay: clamp(sy, 0, rows) / rows };
+}
+export function snapAoeCorner(m, fx, fy) {
+  const rows = rowsOf(m);
+  return { ax: clamp(Math.round(fx * m.cols), 0, m.cols) / m.cols, ay: clamp(Math.round(fy * rows), 0, rows) / rows };
 }

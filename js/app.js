@@ -5916,7 +5916,7 @@ function handoutEditView() {
 // (the players' screens never receive one). The map for the table is drawn by a window of its own, opened on the TV with the
 // DM's own sign-in (?table), which shows only what the players should see: the fog is solid there, and enemies standing in
 // fog, tokens switched off, and creatures the DM is hiding are left out. On the DM's own screen the fog is see-through.
-const BM = { open: null, tool: 'move', brush: 2, box: false, sel: null, drag: null };
+const BM = { open: null, tool: 'move', brush: 2, box: false, sel: null, drag: null, aoe: { shape: 'circle', ft: 20, width: 5, color: 'fire' } };
 const BV = { key: null, m: null, els: null, ro: null, preview: null };
 const tableMode = () => new URLSearchParams(location.search).has('table');
 const battleVisible = () => { const v = $('#battleView'); return !!v && !v.hidden; };
@@ -6060,14 +6060,16 @@ function buildBattle(v, m, tv, key) {
   const img = h('img', { class: 'bv-img', alt: '', draggable: 'false' });
   const grid = h('canvas', { class: 'bv-grid' }), fog = h('canvas', { class: 'bv-fog' });
   const tokens = h('div', { class: 'bv-tokens' }), loading = h('div', { class: 'bv-loading', text: 'Loading the map…' });
-  const frame = h('div', { class: 'bv-frame', id: 'bvFrame' }, img, grid, fog, tokens, loading);
+  const aoe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  aoe.setAttribute('class', 'bv-aoe'); aoe.setAttribute('preserveAspectRatio', 'none');
+  const frame = h('div', { class: 'bv-frame', id: 'bvFrame' }, img, grid, aoe, fog, tokens, loading);
   const hud = h('div', { class: 'bv-hud', id: 'bvHud', hidden: true });
   const torch = h('div', { class: `torch bv-torch${S.torch ? ' show' : ''}` });
   const stage = h('div', { class: 'bv-stage' }, frame, hud, torch);
   stage.addEventListener('pointermove', (e) => { if (!S.torch) return; const r = stage.getBoundingClientRect(); torch.style.setProperty('--tx', `${e.clientX - r.left}px`); torch.style.setProperty('--ty', `${e.clientY - r.top}px`); });
   const bar = tv ? null : buildBar();
   v.replaceChildren(...[bar, stage].filter(Boolean));
-  BV.els = { img, grid, fog, tokens, loading, frame, stage, hud, bar, torch };
+  BV.els = { img, grid, fog, tokens, loading, frame, stage, hud, bar, torch, aoe };
   BV.ro = new ResizeObserver(() => fitBattle());
   BV.ro.observe(stage);
   mapImage(m).then((src) => {
@@ -6088,7 +6090,7 @@ function fitBattle() {
   const k = Math.min(W / m.iw, H / m.ih);
   E.frame.style.width = `${Math.floor(m.iw * k)}px`;
   E.frame.style.height = `${Math.floor(m.ih * k)}px`;
-  paintGrid(); paintFogLayer(); paintTokens(); paintHud();
+  paintGrid(); paintAoe(); paintFogLayer(); paintTokens(); paintHud();
 }
 function paintGrid() {
   const E = BV.els, m = BV.m, w = E.frame.clientWidth, hh = E.frame.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -6133,8 +6135,9 @@ function paintTokens() {
   const E = BV.els, m = BV.m, tv = tableMode();
   E.frame.style.setProperty('--cell', `${E.frame.clientWidth / m.cols}px`);
   const states = BT.tokenStates(m, S.combat), list = tv ? states.filter((s) => s.shown) : states;
+  const hitSet = new Set(BT.aoeHits(m, (!tv && BV.aoePrev) || m.aoe));
   E.tokens.replaceChildren(...list.map((s) => h('div', {
-    class: `bv-token ${s.kind}${s.current ? ' current' : ''}${s.down ? ' down' : ''}${!s.shown ? ' off' : ''}${BM.sel === s.id ? ' sel' : ''}${s.gone ? ' gone' : ''}`,
+    class: `bv-token ${s.kind}${s.current ? ' current' : ''}${s.down ? ' down' : ''}${!s.shown ? ' off' : ''}${BM.sel === s.id ? ' sel' : ''}${s.gone ? ' gone' : ''}${hitSet.has(s.id) ? ' aoe-hit' : ''}`,
     'data-id': s.id, 'data-name': s.name, style: `left:${s.fx * 100}%;top:${s.fy * 100}%;width:calc(var(--cell) * ${s.size});height:calc(var(--cell) * ${s.size});--c:${s.hex}`,
     title: tv ? '' : `${s.name}${s.shown ? '' : !m.showTokens ? ' (tokens are off)' : !s.on ? ' (switched off for the TV)' : ' (not shown on the TV: in the fog or hidden)'}${s.gone ? ' (no longer in the fight)' : ''}` },
     h('span', { class: 'bv-lab', text: s.down ? '✕' : s.label }), h('span', { class: 'bv-cap', text: s.name }))));
@@ -6145,6 +6148,113 @@ function paintHud() {
   const c = S.combat, cur = c.started ? CD.slots(c).find((x) => x.key === c.turn) : null;
   E.hud.hidden = !cur;
   if (cur) E.hud.textContent = `Round ${c.round} · ${possessive(slotName(cur))} turn`;
+}
+
+// ── areas of effect ──
+const SVGNS = 'http://www.w3.org/2000/svg';
+function paintAoe() {
+  const E = BV.els, m = BV.m;
+  if (!E?.aoe || !m) return;
+  const tv = tableMode(), a = (!tv && BV.aoePrev) || m.aoe, rows = BT.rowsOf(m), svg = E.aoe;
+  svg.setAttribute('viewBox', `0 0 ${m.cols} ${rows}`);
+  svg.replaceChildren();
+  if (a) {
+    const sh = BT.aoeShape(m, a), hex = BT.aoeColorHex(a.color), prev = !tv && !!BV.aoePrev;
+    const el = document.createElementNS(SVGNS, sh.c ? 'circle' : 'polygon');
+    if (sh.c) { el.setAttribute('cx', sh.c[0]); el.setAttribute('cy', sh.c[1]); el.setAttribute('r', sh.r); }
+    else el.setAttribute('points', sh.pts.map((p) => p.join(',')).join(' '));
+    el.setAttribute('class', `bv-aoe-shape${prev ? ' prev' : ''}`);
+    el.setAttribute('style', `fill:${hex};stroke:${hex}`);
+    svg.append(el);
+  }
+  if (!tv) paintAoeHits();
+}
+function paintAoeHits() {
+  const m = BV.m, el = BV.els?.bar?.querySelector('#bvAoeHits');
+  if (!el || !m) return;
+  const a = BV.aoePrev || m.aoe;
+  if (!a) { el.textContent = ''; return; }
+  const ids = new Set(BT.aoeHits(m, a)), names = BT.tokenStates(m, S.combat).filter((s) => ids.has(s.id)).map((s) => s.name);
+  el.textContent = names.length ? `Catches ${names.length}: ${names.join(', ')}` : 'Catches nobody.';
+}
+function buildAoeRow() {
+  const set = (patch) => { Object.assign(BM.aoe, patch); BV.aoePrev = null; syncAoeRow(curMap()); };
+  const shapes = h('span', { class: 'bv-aoe-shapes' }, ...BT.AOE_SHAPES.map((s) => h('button', { class: 'btn small bv-tool', type: 'button', 'data-shape': s, text: BT.AOE_SHAPE_NAMES[s], onclick: () => set({ shape: s }) })));
+  const ft = h('input', { type: 'number', id: 'bvAoeFt', min: 1, max: 1000, step: 5, title: 'Size in feet (the radius of a circle, the length of a cone or line, the side of a cube)', 'aria-label': 'Size in feet' });
+  ft.addEventListener('change', () => set({ ft: Math.max(1, Math.min(1000, Number(ft.value) || 5)) }));
+  const wd = h('input', { type: 'number', id: 'bvAoeW', min: 1, max: 200, step: 5, title: 'Width of the line in feet', 'aria-label': 'Width in feet' });
+  wd.addEventListener('change', () => set({ width: Math.max(1, Math.min(200, Number(wd.value) || 5)) }));
+  const color = h('select', { id: 'bvAoeColor', 'aria-label': 'Colour' }, ...BT.AOE_COLORS.map((c) => h('option', { value: c.id, text: c.name })));
+  color.addEventListener('change', () => { set({ color: color.value }); const x = curMap(); if (x?.aoe) setMap({ ...x, aoe: { ...x.aoe, color: color.value } }, ['aoe']); });
+  const preset = h('select', { id: 'bvAoePreset', 'aria-label': 'A common spell' }, h('option', { value: '', text: 'A common spell…' }), ...BT.AOE_PRESETS.map((p, i) => h('option', { value: i, text: `${p.name} (${p.ft} ft ${BT.AOE_SHAPE_NAMES[p.shape].toLowerCase()})` })));
+  preset.addEventListener('change', () => { const p = BT.AOE_PRESETS[Number(preset.value)]; if (p) set({ shape: p.shape, ft: p.ft, width: p.width || 5, color: p.color }); preset.value = ''; });
+  const sq = h('input', { type: 'number', id: 'bvFtSq', min: 1, max: 100, title: 'How many feet one square of the grid is', 'aria-label': 'Feet per square' });
+  sq.addEventListener('change', () => { const x = curMap(); if (x) setMap({ ...x, ft: Math.max(1, Math.min(100, Number(sq.value) || 5)) }, ['ft']); });
+  const clear = h('button', { class: 'btn small ghost', id: 'bvAoeClear', type: 'button', text: 'Clear the shape', onclick: () => { const x = curMap(); BV.aoePrev = null; if (x) setMap({ ...x, aoe: null }, ['aoe']); } });
+  return h('div', { class: 'bv-row bv-aoe-row', id: 'bvAoeRow', hidden: true },
+    shapes, h('label', { class: 'bv-opt' }, 'Feet ', ft), h('label', { class: 'bv-opt bv-aoe-w' }, 'Width ', wd), color, preset,
+    h('label', { class: 'bv-opt', title: 'How many feet one square of the grid is' }, 'Ft / square ', sq), clear,
+    h('small', { class: 'bv-aoe-help', id: 'bvAoeHelp' }), h('small', { class: 'bv-aoe-hits', id: 'bvAoeHits' }));
+}
+function syncAoeRow(m) {
+  const bar = BV.els?.bar;
+  if (!bar || !m) return;
+  const row = bar.querySelector('#bvAoeRow'), A = BM.aoe, f = document.activeElement;
+  row.hidden = BM.tool !== 'aoe';
+  if (row.hidden) return;
+  for (const b of row.querySelectorAll('[data-shape]')) b.classList.toggle('on', b.dataset.shape === A.shape);
+  const put = (sel, v) => { const el = row.querySelector(sel); if (el !== f) el.value = v; };
+  put('#bvAoeFt', A.ft); put('#bvAoeW', A.width); put('#bvAoeColor', A.color); put('#bvFtSq', m.ft);
+  row.querySelector('.bv-aoe-w').hidden = A.shape !== 'line';
+  row.querySelector('#bvAoeHelp').textContent = A.shape === 'circle' || A.shape === 'cube' ? 'Click the map to drop it.' : 'Press where it starts (on a token to start from it), drag to aim, let go.';
+  paintAoeHits();
+}
+// Aiming it: a circle or cube follows the mouse and drops on a click; a cone or line starts where you press and aims as you drag.
+function wireAoe(frame) {
+  const pt = (e) => { const r = frame.getBoundingClientRect(); return { fx: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), fy: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; };
+  const shapeAt = (m, o, p, e) => {
+    const A = BM.aoe;
+    let dx = p.fx, dy = p.fy;
+    if (e && e.shiftKey && (A.shape === 'cone' || A.shape === 'line')) {          // Shift: aim in steps of 15 degrees
+      const rows = BT.rowsOf(m), vx = (p.fx - o.ax) * m.cols, vy = (p.fy - o.ay) * rows, len = Math.hypot(vx, vy), ang = Math.round(Math.atan2(vy, vx) / (Math.PI / 12)) * (Math.PI / 12);
+      dx = o.ax + Math.cos(ang) * len / m.cols; dy = o.ay + Math.sin(ang) * len / rows;
+    }
+    return BT.normalizeAoe({ ...A, ax: o.ax, ay: o.ay, dx, dy });
+  };
+  const originFor = (m, e, p) => {
+    const tok = e.target.closest?.('.bv-token');
+    const t = tok && m.tokens.find((x) => x.id === tok.dataset.id);
+    return t ? { ax: t.fx, ay: t.fy } : BT.snapAoeCorner(m, p.fx, p.fy);
+  };
+  let drag = null;
+  frame.addEventListener('pointermove', (e) => {
+    const m = curMap();
+    if (!m || BM.tool !== 'aoe' || S.pingMode) return;
+    const p = pt(e), A = BM.aoe;
+    if (drag) { BV.aoePrev = shapeAt(m, drag.o, p, e); paintAoe(); paintTokens(); return; }
+    if (A.shape === 'circle' || A.shape === 'cube') { BV.aoePrev = shapeAt(m, BT.snapAoeCentre(m, A, p.fx, p.fy), p, e); paintAoe(); paintTokens(); }
+  });
+  frame.addEventListener('pointerleave', () => { if (!drag && BV.aoePrev) { BV.aoePrev = null; paintAoe(); paintTokens(); } });
+  frame.addEventListener('pointerdown', (e) => {
+    const m = curMap();
+    if (!m || e.button !== 0 || BM.tool !== 'aoe' || S.pingMode) return;
+    const p = pt(e), A = BM.aoe;
+    if (A.shape === 'circle' || A.shape === 'cube') {
+      const a = shapeAt(m, BT.snapAoeCentre(m, A, p.fx, p.fy), p, e);
+      BV.aoePrev = null; setMap({ ...m, aoe: a }, ['aoe']); e.preventDefault(); return;
+    }
+    drag = { o: originFor(m, e, p) };
+    BV.aoePrev = shapeAt(m, drag.o, { fx: drag.o.ax + 1 / m.cols, fy: drag.o.ay }, e); paintAoe(); paintTokens();
+    frame.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  const finish = (e, commit) => {
+    if (!drag) return;
+    const m = curMap(), a = BV.aoePrev;
+    drag = null; BV.aoePrev = null;
+    if (m && commit && a) setMap({ ...m, aoe: a }, ['aoe']); else { paintAoe(); paintTokens(); }
+  };
+  frame.addEventListener('pointerup', (e) => finish(e, true));
+  frame.addEventListener('pointercancel', (e) => finish(e, false));
 }
 
 // ── the DM's controls ──
@@ -6186,11 +6296,12 @@ function buildBar() {
     h('div', { class: 'bv-row' }, name, h('label', { class: 'bv-opt' }, 'Squares across ', cols), h('label', { class: 'bv-opt' }, grid, ' Grid'), tv,
       b('bvTable', 'Table window', 'A window with only the map, to drag onto the TV', popOutTable, 'ghost'),
       b('bvClose', 'Close', 'Put the map away (it is kept)', closeBattleView, 'ghost')),
-    h('div', { class: 'bv-row' }, tool('move', 'Move tokens', 'Drag tokens; click one to change it'), tool('reveal', 'Reveal', 'Paint the fog away'), tool('hide', 'Fog', 'Paint fog back'),
+    h('div', { class: 'bv-row' }, tool('move', 'Move tokens', 'Drag tokens; click one to change it'), tool('reveal', 'Reveal', 'Paint the fog away'), tool('hide', 'Fog', 'Paint fog back'), tool('aoe', 'Area of effect', 'Lay a spell’s area over the map: circle, cone, line or cube'),
       h('label', { class: 'bv-opt' }, 'Brush ', brush), h('label', { class: 'bv-opt' }, box, ' Box'),
       b('bvRevealAll', 'Reveal all', 'Clear all the fog', () => { const x = m(); if (x) setMap(BT.fogAll(x, false), ['fog']); }, 'ghost'),
       b('bvFogAll', 'Fog all', 'Cover the whole map', () => { const x = m(); if (x) setMap(BT.fogAll(x, true), ['fog']); }, 'ghost')),
     h('div', { class: 'bv-row' }, h('label', { class: 'bv-opt bv-strong' }, tokOn, ' Tokens on the TV'), addFight, addTok, clearGone),
+    buildAoeRow(),
     h('div', { class: 'bv-row bv-tok', id: 'bvTok' }));
 }
 
@@ -6210,6 +6321,7 @@ function syncBar() {
   tv.title = onTv ? 'The TV shows this map. Press to blank it.' : 'Show this map on the TV';
   $b('bvDropGone').hidden = !BT.tokenStates(m, S.combat).some((s) => s.gone);
   E.frame.classList.toggle('painting', BM.tool !== 'move');
+  syncAoeRow(m);
   // the token that is picked, if any
   const box = $b('bvTok'), t = BM.sel ? m.tokens.find((x) => x.id === BM.sel) : null;
   if (box.contains(focused) && t) return;
@@ -6251,6 +6363,7 @@ function paintBattleTorch() {
   E.torch.classList.toggle('show', !!S.torch);
 }
 function wireBattleInput(frame) {
+  wireAoe(frame);
   frame.addEventListener('contextmenu', (e) => { e.preventDefault(); const r = frame.getBoundingClientRect(); battlePing(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))); });
   const pt = (e) => { const r = frame.getBoundingClientRect(); return { fx: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), fy: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; };
   const strokeCells = (d, m) => {
@@ -6262,6 +6375,7 @@ function wireBattleInput(frame) {
     const m = curMap();
     if (!m || e.button !== 0) return;
     if (S.pingMode) { const q = pt(e); battlePing(q.fx, q.fy); e.preventDefault(); return; }
+    if (BM.tool === 'aoe') return;   // wireAoe handles it
     if (BM.tool === 'move') {
       const el = e.target.closest('.bv-token');
       if (!el) { if (BM.sel) { BM.sel = null; paintTokens(); syncBar(); } return; }
