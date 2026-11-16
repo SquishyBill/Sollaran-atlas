@@ -5126,6 +5126,7 @@ function fightView() {
     wrap.append(h('p', { class: 'muted cb-hint', text: 'Tick two or more to put them under one initiative as a group.' }));
   }
   wrap.append(h('div', { class: 'cb-list', id: 'cbList' }, ...order.map(slotCard)), addSection(),
+    s.combatants.length && !s.started ? h('div', { class: 'cb-savebox' }, h('h4', { class: 'cb-sub', text: 'Save this fight for later' }), saveFightRow('fv')) : null,
     h('p', { class: 'muted cb-keys', text: 'Keys: N next turn · B back · Ctrl+Z undo' }));
   return wrap;
 }
@@ -5562,34 +5563,64 @@ function enemyEditView() {
 }
 
 // ── saved fights ────────────────────────────────────────────────────
-// Keep a fight's enemies under a name, to bring back another time at full strength.
+// Set a fight up on the Fight tab (players and enemies, grouped), keep it here under a name, and bring it back when it happens.
+async function saveFightAs(nameValue, { quiet } = {}) {
+  const enc = CD.encounterFrom(S.combat, nameValue);
+  if (enc.error) { toast(enc.error); return false; }
+  const same = S.encounters.find((x) => x.name.toLowerCase() === enc.name.toLowerCase());
+  if (same && !confirm(`“${same.name}” is already saved. Replace it?`)) return false;
+  try { await S.store.saveEncounter(enc, same?.id); if (!quiet) toast(`“${enc.name}” is saved. Find it on the Saved tab.`); return true; }
+  catch (e) { toast('Could not save: ' + e.message); return false; }
+}
+// A name box and a Save button, for the Fight tab and the Saved tab.
+function saveFightRow(idPrefix) {
+  const has = S.combat.combatants.length > 0;
+  const name = h('input', { type: 'text', id: `${idPrefix}Name`, maxlength: 60, placeholder: 'Name this fight, e.g. Goblin ambush', 'aria-label': 'A name for this fight' });
+  const go = async () => { if (await saveFightAs(name.value)) name.value = ''; };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  return h('div', { class: 'cb-saverow' }, name, h('button', { class: 'btn small', id: `${idPrefix}Save`, type: 'button', text: 'Save fight', disabled: !has, onclick: go }));
+}
 function savedView() {
-  const enemies = S.combat.combatants.filter((x) => x.kind === 'enemy');
-  const name = h('input', { type: 'text', id: 'svName', maxlength: 60, placeholder: 'e.g. Goblin ambush', 'aria-label': 'A name for this fight' });
-  const save = async () => {
-    const enc = CD.encounterFrom(S.combat, name.value);
-    if (enc.error) { toast(enc.error); return; }
-    const same = S.encounters.find((x) => x.name.toLowerCase() === enc.name.toLowerCase());
-    if (same && !confirm(`“${same.name}” is already saved. Replace it?`)) return;
-    try { await S.store.saveEncounter(enc, same?.id); name.value = ''; toast(`“${enc.name}” is saved.`); } catch (e) { toast('Could not save: ' + e.message); }
+  const sumLine = (enc) => {
+    const by = new Map();
+    for (const i of enc.items) { const b = i.name.replace(/\s+\d+$/, ''); by.set(b, (by.get(b) || 0) + 1); }
+    return [...by].map(([n, c]) => (c > 1 ? `${c} ${n}` : n)).join(', ');
   };
-  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
-  const sum = (enc) => { const by = new Map(); for (const i of enc.items) { const b = i.name.replace(/\s+\d+$/, ''); by.set(b, (by.get(b) || 0) + 1); } return [...by].map(([n, c]) => (c > 1 ? `${c} ${n}` : n)).join(', '); };
+  const use = (enc, replace) => {
+    if (replace && S.combat.combatants.length && !confirm(`Swap the current fight for “${enc.name}”? Everyone now in the list is taken out first.`)) return;
+    const base = replace ? CD.endCombat(S.combat, { keepPlayers: false }) : S.combat;
+    saveCombat(CD.loadEncounter(base, enc, { rollHp: CB.rollHp }), []);
+    CB.tab = 'fight'; renderCombat(); toast(`“${enc.name}” is ready on the Fight tab.`);
+  };
   const row = (enc) => {
     const xp = enc.items.reduce((t, i) => t + (CD.xpOf(i.cr) || 0), 0);
-    return h('div', { class: 'cb-lib cb-saved', 'data-id': enc.id },
-      h('div', { class: 'cb-lib-main' }, h('b', { class: 'cb-name', text: enc.name }), h('small', { text: `${sum(enc)}${xp ? ` · ${xp} XP` : ''}` })),
-      h('div', { class: 'cb-lib-add' },
-        h('button', { class: 'btn small cb-load', type: 'button', text: 'Add to the fight', onclick: () => { saveCombat(CD.loadEncounter(S.combat, enc, { rollHp: CB.rollHp }), []); CB.tab = 'fight'; renderCombat(); toast(`“${enc.name}” is in the fight.`); } })),
-      h('div', { class: 'cb-lib-manage' }, h('button', { class: 'linklike cb-del', type: 'button', text: 'delete', onclick: async () => {
-        if (!confirm(`Delete “${enc.name}”?`)) return;
-        await S.store.deleteEncounter(enc.id).catch((err) => toast(err.message));
-      } })));
+    const bits = [`${enc.items.length} enem${enc.items.length === 1 ? 'y' : 'ies'}`, `${enc.players.length} player${enc.players.length === 1 ? '' : 's'}`, xp ? `${xp} XP` : ''].filter(Boolean).join(' · ');
+    const groupOf = (g) => enc.items.filter((i) => i.group === g.id);
+    const loose = enc.items.filter((i) => !i.group);
+    const d = h('details', { class: 'cb-lib cb-saved', 'data-id': enc.id, open: CB.openSaved === enc.id ? '' : null },
+      h('summary', { class: 'cb-saved-sum' }, h('b', { class: 'cb-name', text: enc.name }), ' ', h('small', { text: bits })),
+      h('div', { class: 'cb-saved-body' },
+        enc.players.length ? h('p', {}, h('b', { text: 'Players: ' }), enc.players.join(', ')) : h('p', { class: 'muted', text: 'No players saved with this one.' }),
+        enc.items.length ? h('p', {}, h('b', { text: 'Enemies: ' }), sumLine(enc)) : null,
+        ...enc.groups.map((g) => h('p', { class: 'muted' }, `Group “${g.name}”: ${groupOf(g).map((i) => i.name).join(', ')}`)),
+        loose.length && enc.groups.length ? h('p', { class: 'muted', text: `Not grouped: ${loose.map((i) => i.name).join(', ')}` }) : null,
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small cb-use', type: 'button', text: 'Use this fight', title: 'Swap the Fight tab for this one, ready to roll initiative', onclick: () => use(enc, true) }),
+          h('button', { class: 'btn small ghost cb-load', type: 'button', text: 'Add to the current fight', onclick: () => use(enc, false) }),
+          h('button', { class: 'btn small ghost cb-upd', type: 'button', text: 'Replace with the current fight', title: 'Overwrite this saved fight with what is on the Fight tab now',
+            disabled: !S.combat.combatants.length, onclick: async () => { if (confirm(`Overwrite “${enc.name}” with the fight as it is now?`)) { CB.openSaved = enc.id; await saveFightAs(enc.name, { quiet: true }) || 0; } } }),
+          h('button', { class: 'linklike cb-del', type: 'button', text: 'delete', onclick: async () => {
+            if (!confirm(`Delete “${enc.name}”?`)) return;
+            await S.store.deleteEncounter(enc.id).catch((err) => toast(err.message));
+          } }))));
+    d.addEventListener('toggle', () => { if (d.open) CB.openSaved = enc.id; else if (CB.openSaved === enc.id) CB.openSaved = null; });
+    return d;
   };
+  const n = S.combat.combatants.length;
   return h('div', { class: 'cb-saved-view' },
-    h('h4', { class: 'cb-sub', text: 'Save this fight' }),
-    h('p', { class: 'muted', text: enemies.length ? `The ${enemies.length} enem${enemies.length === 1 ? 'y' : 'ies'} in the fight now, and how they are grouped. The players are not saved.` : 'Put some enemies in the fight first, then save them here.' }),
-    h('div', { class: 'cb-saverow' }, name, h('button', { class: 'btn small', id: 'svSave', type: 'button', text: 'Save', disabled: !enemies.length, onclick: save })),
+    h('h4', { class: 'cb-sub', text: 'Save the fight on the Fight tab' }),
+    h('p', { class: 'muted', text: n ? `Saves the ${n} in the list now (players and enemies), and how the enemies are grouped. Hit points start full again when you bring it back.` : 'Nobody is on the Fight tab yet. Add players and enemies there, then come back and save it.' }),
+    saveFightRow('sv'),
     h('h4', { class: 'cb-sub', text: 'Saved fights' }),
     h('div', { class: 'cb-libs', id: 'svList' }, ...(S.encounters.length ? S.encounters.map(row) : [h('p', { class: 'muted', text: 'Nothing saved yet.' })])));
 }

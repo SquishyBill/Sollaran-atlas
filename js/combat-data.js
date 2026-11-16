@@ -635,10 +635,11 @@ export function setShare(state, { on, health } = {}) { const s = clone(state); i
 // Keep the enemies of a fight (and how they are grouped) under a name, to bring back another time. Hit points are full again.
 export function encounterFrom(state, name) {
   const s = clone(state), n = text(name, 60), enemies = s.combatants.filter((x) => x.kind === 'enemy');
+  const players = s.combatants.filter((x) => x.kind === 'player').map((x) => x.name);
   if (!n) return { error: 'Give the fight a name.' };
-  if (!enemies.length) return { error: 'There are no enemies in the fight to save.' };
+  if (!enemies.length && !players.length) return { error: 'There is nobody in the fight to save. Add players and enemies first.' };
   const usedGroups = s.groups.filter((g) => enemies.some((x) => x.group === g.id));
-  return { name: n, groups: usedGroups.map((g) => ({ id: g.id, name: g.name, color: g.color })),
+  return { name: n, players, groups: usedGroups.map((g) => ({ id: g.id, name: g.name, color: g.color })),
     items: enemies.map((x) => ({ name: x.name, color: x.color, ac: x.ac, hp: x.max ?? x.hp, mod: x.mod, attacks: x.attacks, text: x.text, cr: x.cr, group: x.group,
       uses: x.uses.map((u) => ({ name: u.name, max: u.max, recharge: u.recharge, reset: u.reset })) })) };
 }
@@ -651,7 +652,8 @@ export function normalizeEncounter(raw) {
     name: text(x.name, 80), color: colorId(x.color), ac: int(x.ac), hp: int(x.hp), mod: int(x.mod) ?? 0, attacks: text(x.attacks, 4000), text: text(x.text, 8000),
     cr: crText(x.cr), group: x.group && gids.has(String(x.group)) ? String(x.group) : null,
     uses: normUses(x.uses).map(({ name, max, recharge, reset }) => ({ name, max, recharge, reset })) }));
-  return { name: text(e.name, 60), groups, items };
+  const players = [...new Set((Array.isArray(e.players) ? e.players : []).map((p) => text(typeof p === 'string' ? p : p?.name, 80)).filter(Boolean))].slice(0, 40);
+  return { name: text(e.name, 60), players, groups, items };
 }
 // Bring a saved fight into the current one: fresh copies, numbered if the same enemy is already there, with the same groups.
 export function loadEncounter(state, enc, { rollHp = false, rng = Math.random } = {}) {
@@ -670,6 +672,7 @@ export function loadEncounter(state, enc, { rollHp = false, rng = Math.random } 
     const ids = e.items.map((it, i) => (it.group === g.id ? mapped.get(i) : null)).filter(Boolean);
     if (ids.length) s = makeGroup(s, ids, g.name, g.color);
   }
+  for (const p of e.players) s = addPlayer(s, p).state;   // players already in the fight are skipped
   return s;
 }
 
