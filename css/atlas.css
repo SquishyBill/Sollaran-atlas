@@ -99,7 +99,7 @@ button:disabled { cursor: default; }
 body.is-dm .dm-only { display: grid !important; }
 body.is-dm button.btn.dm-only { display: block !important; }
 .map-only { transition: opacity .2s; }
-body:not(.on-map) .map-only { opacity: .3; pointer-events: none; }
+body:not(.on-map):not(.battle-open) .map-only { opacity: .3; pointer-events: none; }
 
 /* ─── stage & book ───────────────────────────────────────────────── */
 .stage { position: fixed; inset: var(--bar) 0 0 0; z-index: 1; }
@@ -1504,3 +1504,6 @@ body.table-mode .battle-view { inset: 0; left: 0; }
 .cb-saved-body { padding: 4px 0 6px; }
 .cb-saved-body p { margin: 4px 0; }
 .cb-savebox { margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(128,128,128,.3); }
+.bv-torch { z-index: 6; }
+.bv-ping { position: absolute; width: 160px; height: 160px; transform: translate(-50%, -50%); z-index: 8; pointer-events: none; }
+.battle-view.pinging .bv-frame, .battle-view.pinging .bv-token { cursor: crosshair; }
