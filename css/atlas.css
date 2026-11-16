@@ -1438,3 +1438,65 @@ label.cb-opt { flex-wrap: nowrap; align-items: flex-start; }
 .ho-chooser { margin-top: 8px; padding: 8px 10px; border: 1px dashed rgba(90, 60, 25, .55); border-radius: 6px; background: rgba(201, 164, 92, .16); }
 .ho-whos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 2px 12px; margin: 6px 0; }
 @media (max-width: 560px) { .ho-card { padding: 16px 16px 18px; } .ho-title { font-size: 23px; } }
+
+/* the dock's header has five tabs now, so they sit on a row of their own */
+.cb-head { flex-wrap: wrap; }
+.cb-tabs { order: 5; flex-basis: 100%; }
+.cb-tabs .cb-tab { flex: 1; }
+
+/* ─── battle maps ─── */
+.cb-maps { display: flex; flex-direction: column; gap: 8px; }
+.cb-mapform { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; border: 1px dashed rgba(90, 60, 25, .55); border-radius: 6px; background: rgba(201, 164, 92, .16); }
+.cb-mapform input[type=file] { font-size: 14px; }
+.cb-maprow { padding: 8px 10px; border: 1px solid rgba(90, 60, 25, .4); border-radius: 6px; background: rgba(255, 250, 235, .6); display: flex; flex-direction: column; gap: 4px; }
+.cb-maprow.ontv { border-color: #b07a00; box-shadow: inset 4px 0 0 #b07a00; }
+.cb-mapname { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.cb-mapname strong { font: 700 17px var(--f-head); }
+.cb-maprow small { color: var(--ink-soft); }
+.battle-view { position: fixed; top: var(--bar); right: 0; bottom: 0; left: 0; z-index: 18; display: flex; flex-direction: column; background: #14100c; color: #f0dca8; }
+.battle-view[hidden] { display: none; }
+body.combat-open .battle-view { left: calc(var(--combat-w) + 40px); }
+.bv-bar { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; background: var(--leather-2); border-bottom: 1px solid rgba(201, 164, 92, .4); }
+.bv-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bv-row[hidden] { display: none; }
+.bv-bar input[type=text], .bv-bar input[type=number], .bv-bar select { background: rgba(255, 252, 240, .92); color: var(--ink); border: 1px solid rgba(90, 60, 25, .5); border-radius: 4px; padding: 4px 8px; font: 15px var(--f-body); }
+.bv-bar input[type=text] { min-width: 150px; flex: 1 1 150px; max-width: 280px; }
+.bv-bar input[type=number] { width: 64px; }
+.bv-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; white-space: nowrap; }
+.bv-strong { font-weight: 700; color: var(--gold-hi); }
+.bv-tool.on { background: var(--wax); color: #fff; border-color: var(--gold-hi); }
+.bv-tok { padding-top: 6px; border-top: 1px dashed rgba(201, 164, 92, .35); }
+.bv-sw { display: flex; gap: 4px; flex-wrap: wrap; }
+.bv-stage { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; overflow: hidden; }
+.bv-frame { position: relative; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 6px 30px rgba(0, 0, 0, .6); }
+.bv-frame.painting { cursor: crosshair; }
+.bv-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.bv-grid, .bv-tokens { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.bv-fog { position: absolute; pointer-events: none; opacity: .5; }
+.battle-view.table .bv-fog { opacity: 1; }
+.bv-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f0dca8; font-style: italic; background: #1c120c; }
+.bv-token {
+  position: absolute; transform: translate(-50%, -50%); border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; pointer-events: auto; cursor: grab;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 70%, #fff), var(--c) 70%); border: max(2px, calc(var(--cell) * .06)) solid #1b120b;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .6); color: #fff; font: 700 calc(var(--cell) * .34) var(--f-head); text-shadow: 0 1px 2px rgba(0, 0, 0, .8); touch-action: none;
+}
+.battle-view.table .bv-token { cursor: default; pointer-events: none; }
+.bv-token.player { border-color: #f0dca8; }
+.bv-token.current { box-shadow: 0 0 0 max(3px, calc(var(--cell) * .09)) #ffd34d, 0 0 calc(var(--cell) * .6) #ffb300; animation: bvPulse 1.6s ease-in-out infinite; z-index: 3; }
+@keyframes bvPulse { 50% { box-shadow: 0 0 0 max(3px, calc(var(--cell) * .09)) #ffd34d, 0 0 calc(var(--cell) * .25) #ffb300; } }
+.bv-token.down { filter: grayscale(1) brightness(.7); }
+.bv-token.off { opacity: .45; border-style: dashed; }
+.bv-token.gone { border-style: dotted; }
+.bv-token.sel { outline: 3px solid #4da3ff; outline-offset: 2px; }
+.bv-token.drag { cursor: grabbing; z-index: 5; transition: none; }
+.bv-lab { pointer-events: none; }
+.bv-cap { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 1px; padding: 0 5px; border-radius: 6px; background: rgba(15, 10, 6, .78); font: 600 calc(var(--cell) * .24) var(--f-body); white-space: nowrap; pointer-events: none; max-width: calc(var(--cell) * 3); overflow: hidden; text-overflow: ellipsis; text-shadow: none; }
+.bv-hud { position: absolute; left: 16px; bottom: 14px; padding: 6px 14px; border-radius: 6px; background: rgba(15, 10, 6, .82); border: 1px solid rgba(201, 164, 92, .6); font: 700 clamp(16px, 2.2vw, 30px) var(--f-head); color: var(--gold-hi); }
+.bv-hud[hidden] { display: none; }
+.bv-wait { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 10px; }
+.bv-wait-title { font: 700 clamp(28px, 5vw, 64px) var(--f-title); color: var(--gold); }
+.bv-wait-sub { font-style: italic; color: rgba(240, 220, 168, .6); font-size: clamp(16px, 2vw, 26px); }
+body.table-mode .topbar, body.table-mode .stage, body.table-mode .panel, body.table-mode #festBar, body.table-mode .scrim, body.table-mode .combat-dock,
+body.table-mode .turn-box, body.table-mode .init-box, body.table-mode #embers, body.table-mode .demo-ribbon, body.table-mode .toast, body.table-mode .ho-modal { display: none !important; }
+body.table-mode .battle-view { inset: 0; left: 0; }
+@media (max-width: 760px) { .battle-view, body.combat-open .battle-view { left: 0; z-index: 24; } }

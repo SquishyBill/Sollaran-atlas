@@ -155,6 +155,18 @@ The crossed swords in the top bar open a tracker in a dock down the left of the 
 
 **A window of its own.** The button beside the title opens the tracker alone (`?tracker`), to drag onto a second screen. The two stay in step, live. The logic is in `js/combat-data.js` (tested on its own).
 
+## Battle maps (DM)
+
+The **Maps** tab of the combat dock is a library of battle maps, kept apart from the atlas's own maps (they are not pages and never appear in the contents). **A new map**: a name, a picture (shrunk to fit a TV, 2560 across at most) and how many squares across it is; it can start fully fogged. **Open** puts it over the page beside the dock, with the controls above it.
+
+**On the TV.** *Open the table window* opens a window of its own with only the map, to drag onto the TV; it uses your own sign-in and shows whatever map you *Put on the TV*, live. There the fog is solid; on your screen it is see-through. *Blank the TV* (or *On the TV: blank it*) puts the waiting screen up. If a round is running, the TV shows whose turn it is.
+
+**Fog.** The fog is a light one: a layer over the picture, one block for each square, with soft edges. *Reveal* and *Fog* paint it away or back with a brush 1, 2, 3 or 5 squares wide, or a *Box*; *Reveal all* and *Fog all* do the whole map. Because the map is only ever on your own signed-in windows (no player's screen can read it), there is nothing for a player to look under.
+
+**Tokens.** *Add the fight* puts a token on the map for each player and enemy in the tracker that has none (named and coloured after them, with their letters, "G2" for Goblin 2); *+ Token* adds one of your own (a door, an NPC). Drag a token and it settles on the middle of a square. Click one to change it: size (1 to 4 squares), colour, *Show on the TV*, or remove. The token of the creature whose turn it is glows, and a defeated enemy's (or a player at 0) is greyed with a cross. **Tokens on the TV** switches every token on or off for the table at once. Enemy tokens standing in fog, tokens switched off, and creatures you have hidden from the players are never on the TV; your own screen shows them faded.
+
+**The files.** `js/battle-data.js` has the logic (tested on its own); a map is `battlemaps/{id}` (the DM only) with the picture in pieces in `pictures/{id}~{n}` (kind `battle`; no player can read them), and what is on the TV is `tabletop/live`. Battle maps are in backups.
+
 ## Handouts
 
 The envelope button in the top bar is **Handouts**. The DM writes them there: a title, some words (the same simple formatting as the journal) and an optional picture, or only a picture. **Show…** puts one on the players' screens at once, as a card over the map: tick *Everyone* or choose players by name. It stays in each player's Handouts list afterwards, with a dot on the button for anything unread; one a player opens is remembered in their browser. *Show again* makes it pop up again, **Take back** removes it from their screens and lists (closing it for anyone reading it), *Preview* shows it as a player sees it, and editing one that is out updates their copies quietly, without a new pop-up. Deleting a handout takes everything with it.

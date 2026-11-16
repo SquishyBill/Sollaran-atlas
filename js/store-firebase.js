@@ -90,6 +90,11 @@ export class FirebaseStore {
     // Asking the players for their initiative: the question (everyone reads it) and, for the DM, their answers.
     onSnapshot(this.ref('turnorder', 'ask'), (s) => h.turnask?.(s.exists() ? s.data() : null), err);
     if (this.isDM) onSnapshot(this.col('initiative'), (s) => h.initiative?.(list(s)), err);
+    // Battle maps and what is on the table's screen: the DM's alone.
+    if (this.isDM) {
+      onSnapshot(this.col('battlemaps'), (s) => h.battlemaps?.(list(s)), err);
+      onSnapshot(this.ref('tabletop', 'live'), (s) => h.tabletop?.(s.exists() ? s.data() : null), err);
+    }
     // Handouts: the DM keeps them all and sees every copy shown. A player reads the copies for everyone and the ones for them
     // (two small queries, merged), and fetches a picture only when they open one.
     if (this.isDM) {
@@ -328,6 +333,19 @@ export class FirebaseStore {
     batch.delete(this.ref('handouts', id));
     await batch.commit();
   }
+  // ── battle maps (the DM's): the picture is kept in pieces in pictures/{id}~{n}
+  async saveBattleMap(data, id) {
+    if (!id) return (await this.F.addDoc(this.col('battlemaps'), { createdAt: Date.now(), ...data })).id;
+    await this.F.setDoc(this.ref('battlemaps', id), data, { merge: true });
+    return id;
+  }
+  async deleteBattleMap(id, parts = 0) {
+    const batch = this.F.writeBatch(this.fs);
+    for (let i = 0; i < parts; i++) batch.delete(this.ref('pictures', `${id}~${i}`));
+    batch.delete(this.ref('battlemaps', id));
+    await batch.commit();
+  }
+  saveTabletop(data) { return this.F.setDoc(this.ref('tabletop', 'live'), { ...data, updatedAt: Date.now() }, { merge: true }); }
   updateCalendarLog(id, data) { return this.F.setDoc(this.ref('calendarLog', id), data, { merge: true }); }
 
   // ── shops and their purchase ledger

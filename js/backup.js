@@ -11,7 +11,7 @@ export const SECTIONS = [
   { label: 'Loot', cols: ['loot', 'lootLog', 'lootTruth', 'caches', 'party'] },
   { label: 'Backpacks', cols: ['backpacks', 'backpackLog', 'roster'] },
   { label: 'The calendar', cols: ['holidays', 'calendarLog', 'reminders'] },
-  { label: 'The combat tracker', cols: ['enemies', 'encounters', 'combat'] },
+  { label: 'The combat tracker', cols: ['enemies', 'encounters', 'combat', 'battlemaps'] },
   { label: 'Handouts', cols: ['handouts'] },
   { label: 'Settings', cols: ['config'] },
 ];
@@ -22,7 +22,7 @@ export const LABELS = {
   notes: 'Notes', shops: 'Shops', purchases: 'Purchases', sales: 'Sales', haggles: 'Haggles', accounts: 'Savings accounts', players: 'Persuasion bonuses',
   magicItems: 'My magic items', magicPublic: 'Magic items in shops', loot: 'Loot', lootLog: 'Loot history', lootTruth: 'What unidentified items really are', caches: 'Hidden caches',
   party: 'The party’s coins', backpacks: 'Backpacks', backpackLog: 'Backpack history', roster: 'The party’s names', holidays: 'Holidays', calendarLog: 'Calendar history',
-  reminders: 'Reminders', enemies: 'Enemies in the library', encounters: 'Saved fights', combat: 'The fight in progress', handouts: 'Handouts', config: 'Settings (calendar, festivals, scribes…)',
+  reminders: 'Reminders', enemies: 'Enemies in the library', encounters: 'Saved fights', combat: 'The fight in progress', battlemaps: 'Battle maps', handouts: 'Handouts', config: 'Settings (calendar, festivals, scribes…)',
 };
 
 // Where a changed copy may be put back over the top of a newer one. Money, stock and history move all the time, so an

@@ -10,6 +10,7 @@ import * as BK from './backup.js';
 import * as CD from './combat-data.js';
 import * as BD from './bestiary-data.js';
 import * as HD from './handouts-data.js';
+import * as BT from './battle-data.js';
 import { ledgerLine, normalizeCoins, cpOf, coinsOf, receive as receiveCoins, pay as payCoins, takeCoins as takeFromPurse, addCoins as addPurse, splitEvenly, gpToCp, heldBy, LEDGER_KINDS } from './backpack-data.js';
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ const S = {
   loot: [], lootTruth: {}, lootLog: [], partyCoins: { cp: 0, sp: 0, gp: 0, pp: 0 }, caches: [], magicItems: [], magicPublic: [], customItems: [],
   backpacks: [], backpackLog: [], backpackCfg: {}, roster: [],
   calendar: null, holidays: [], calendarLog: [], reminders: [],
-  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null, initAsk: null, initiative: [], handouts: [], reveals: [],
+  enemies: [], combat: CD.newCombat(), encounters: [], turnOrder: null, initAsk: null, initiative: [], handouts: [], reveals: [], battleMaps: [], table: null,
   pageId: null, pinId: null,
   panel: null,            // {type:'pin'|'about'|'editPin'|'editPage', id?, draft?}
   edit: false, pingMode: false, torch: false,
@@ -143,13 +144,14 @@ async function boot() {
     customItems: (list) => { S.customItems = list; setCustomItems(list); if (['shop', 'itemLib'].includes(S.panel?.type)) renderPanel(); },
     backpacks: onBackpacks, backpackLog: onBackpackLog, backpackCfg: onBackpackCfg, roster: (list) => { S.roster = list; },
     calendar: onCalendar, holidays: onHolidays, calendarLog: onCalendarLog, reminders: onReminders,
-    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder, turnask: onTurnAsk, initiative: onInitiative, handouts: onHandouts, reveals: onReveals,
+    enemies: onEnemies, combat: onCombat, encounters: onEncounters, turnorder: onTurnOrder, turnask: onTurnAsk, initiative: onInitiative, handouts: onHandouts, reveals: onReveals, battlemaps: onBattleMaps, tabletop: onTable,
     ping: onPing, error: onError });
   startCalendarClock();
   nudgeBackup();
   // the combat tracker comes back as it was left, and on its own in a window of its own when asked for (?tracker)
   if (isDM() && trackerMode()) document.body.classList.add('tracker-mode');
-  if (isDM() && (trackerMode() || lsGet(CB_OPEN_KEY) === '1')) openCombat();
+  if (isDM() && !tableMode() && (trackerMode() || lsGet(CB_OPEN_KEY) === '1')) openCombat();
+  if (tableMode()) { document.body.classList.add('table-mode'); renderBattle(); }
   if (isDM()) setupCombatKeys();
   // every player has a backpack from their first visit, so the DM can see who is in the party
   if (!isDM()) S.store.ensureBackpack(myName()).catch((e) => console.warn('Could not set up the backpack:', e));
@@ -4978,6 +4980,7 @@ function onCombat(doc) {
   S.combat = next;
   updateCombatButton();
   renderCombat(true);
+  if (battleVisible()) renderBattle();
   if (CB.published === null) publishTurnOrder();
   if (first) applyInitiatives();
 }
@@ -4994,6 +4997,7 @@ function saveCombat(next, rolled, { undo = true, quiet = false } = {}) {
   if (rolled !== undefined) CB.rolled = rolled;
   updateCombatButton();
   renderCombat(quiet);
+  if (battleVisible()) renderBattle();
   S.store.saveCombat(next).catch((e) => toast('Could not save the fight: ' + e.message));
   publishTurnOrder();
 }
@@ -5082,7 +5086,7 @@ function renderCombat(fromRemote) {
   if (CB.cond && !live.has(CB.cond)) CB.cond = null;
   if (CB.useForm && !live.has(CB.useForm)) CB.useForm = null;
   const scroll = dock.querySelector('.cb-body')?.scrollTop || 0;
-  const view = CB.tab === 'enemy' ? enemyEditView() : CB.tab === 'library' ? libraryView() : CB.tab === 'saved' ? savedView() : CB.tab === 'log' ? logView() : fightView();
+  const view = CB.tab === 'enemy' ? enemyEditView() : CB.tab === 'library' ? libraryView() : CB.tab === 'maps' ? mapsView() : CB.tab === 'saved' ? savedView() : CB.tab === 'log' ? logView() : fightView();
   dock.replaceChildren(combatHead(), h('div', { class: 'cb-body' }, view));
   dock.querySelector('.cb-body').scrollTop = scroll;
 }
@@ -5092,7 +5096,7 @@ function combatHead() {
   return h('header', { class: 'cb-head' },
     h('div', { class: 'cb-title' }, h('strong', { text: 'Combat' }), S.combat.started ? h('span', { class: 'cb-live-tag', text: `Round ${S.combat.round}` }) : null,
       S.combat.started && S.combat.share ? h('span', { class: 'cb-share-tag', id: 'cbShareTag', title: 'The players can see the turn order', text: 'players can see' }) : null),
-    h('div', { class: 'cb-tabs' }, tab('fight', 'Fight'), tab('library', 'Enemies'), tab('saved', 'Saved'), tab('log', 'Log')),
+    h('div', { class: 'cb-tabs' }, tab('fight', 'Fight'), tab('library', 'Enemies'), tab('saved', 'Saved'), tab('maps', 'Maps'), tab('log', 'Log')),
     trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbPop', type: 'button', title: 'Open the tracker in a window of its own, for a second screen', 'aria-label': 'Open in its own window', onclick: popOutCombat }, h('span', { text: '⧉' })),
     trackerMode() ? null : h('button', { class: 'icon-btn small', id: 'cbClose', type: 'button', title: 'Put the tracker away (the fight is kept)', 'aria-label': 'Close the tracker', onclick: closeCombat },
       h('span', { text: '✕' })));
@@ -5874,6 +5878,375 @@ function handoutEditView() {
       } }) : null));
 }
 
+// ─── battle maps ────────────────────────────────────────────────────
+// Kept apart from the atlas's own maps: a picture with a square grid, a fog over it and tokens on it. They are the DM's alone
+// (the players' screens never receive one). The map for the table is drawn by a window of its own, opened on the TV with the
+// DM's own sign-in (?table), which shows only what the players should see: the fog is solid there, and enemies standing in
+// fog, tokens switched off, and creatures the DM is hiding are left out. On the DM's own screen the fog is see-through.
+const BM = { open: null, tool: 'move', brush: 2, box: false, sel: null, drag: null };
+const BV = { key: null, m: null, els: null, ro: null, preview: null };
+const tableMode = () => new URLSearchParams(location.search).has('table');
+const battleVisible = () => { const v = $('#battleView'); return !!v && !v.hidden; };
+const curMap = () => S.battleMaps.find((x) => x.id === BM.open) || null;
+const liveMap = () => (S.table?.on ? S.battleMaps.find((x) => x.id === S.table.mapId) || null : null);
+const imgCache = new Map();
+function mapImage(m) {
+  const key = `${m.id}:${m.imgAt}`;
+  if (!imgCache.has(key)) {
+    imgCache.set(key, Promise.all(Array.from({ length: m.parts }, (_, i) => S.store.getPicture(`${m.id}~${i}`))).then((parts) => {
+      if (!parts.length || parts.some((p) => !p)) { imgCache.delete(key); return null; }
+      return BT.joinData(parts);
+    }));
+  }
+  return imgCache.get(key);
+}
+
+function onBattleMaps(list) {
+  if (BM.drag) return;                              // do not pull the map from under a stroke or a drag
+  S.battleMaps = list.map(BT.normalizeMap).sort((a, b) => a.name.localeCompare(b.name));
+  if (BM.open && !curMap()) BM.open = null;
+  renderBattle();
+  if (CB.open && CB.tab === 'maps') renderCombat(true);
+}
+function onTable(doc) {
+  S.table = doc ? { mapId: String(doc.mapId || ''), on: !!doc.on } : null;
+  renderBattle();
+  if (CB.open && CB.tab === 'maps') renderCombat(true);
+}
+// A change to one map: shown at once, then kept in the database (only the fields that changed).
+function setMap(next, keys) {
+  S.battleMaps = S.battleMaps.map((x) => (x.id === next.id ? next : x));
+  renderBattle();
+  S.store.saveBattleMap(Object.fromEntries(keys.map((k) => [k, next[k]])), next.id).catch((e) => toast('Could not save the map: ' + e.message));
+}
+
+function openBattle(id) { BM.open = id; BM.sel = null; BM.tool = 'move'; renderBattle(); }
+function closeBattleView() { BM.open = null; BM.sel = null; renderBattle(); }
+function popOutTable() {
+  const w = window.open(`${location.pathname}?table=1`, 'atlas-table', 'popup=yes,width=1280,height=720');
+  if (!w) toast('The browser blocked the new window. Allow pop-ups for this site and try again.');
+}
+const putOnTv = (id, on) => S.store.saveTabletop({ mapId: id, on }).catch((e) => toast('Could not do that: ' + e.message));
+
+// Shrink a battle map to a size a TV can use (2560 across at most), and tell how big it came out.
+async function shrinkBattle(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    for (const [max, q] of [[2560, 0.82], [2200, 0.74], [1800, 0.66], [1400, 0.6]]) {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      let out = c.toDataURL('image/webp', q);
+      if (!out.startsWith('data:image/webp')) out = c.toDataURL('image/jpeg', q);
+      if (out.length < 4_500_000) return { data: out, iw: c.width, ih: c.height };
+    }
+    throw new Error('that picture is too large');
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// ── the library, in the combat dock ──
+function mapsView() {
+  const wrap = h('div', { class: 'cb-maps', id: 'cbMaps' });
+  wrap.append(h('p', { class: 'muted', text: 'Battle maps are kept apart from the atlas’s maps, and only you can see them. Put one on the TV with its fog and tokens; the players’ own screens never get it.' }));
+  const live = liveMap();
+  wrap.append(h('div', { class: 'row' },
+    h('button', { class: 'btn small', id: 'bmTable', type: 'button', text: 'Open the table window', title: 'A window with only the map, to drag onto the TV', onclick: popOutTable }),
+    live ? h('button', { class: 'btn small ghost', id: 'bmBlackout', type: 'button', text: 'Blank the TV', onclick: () => putOnTv(live.id, false) }) : null));
+
+  const name = h('input', { type: 'text', id: 'bmName', maxlength: 80, placeholder: 'Name, e.g. The crypt, level 1', 'aria-label': 'Name of the map' });
+  const file = h('input', { type: 'file', id: 'bmFile', accept: 'image/*', 'aria-label': 'The picture' });
+  const cols = h('input', { type: 'number', id: 'bmCols', min: BT.MIN_COLS, max: BT.MAX_COLS, value: 24, title: 'How many squares across the picture', 'aria-label': 'Squares across' });
+  const fogged = h('input', { type: 'checkbox', id: 'bmFogged', checked: true });
+  const add = h('button', { class: 'btn small', id: 'bmAdd', type: 'button', text: 'Add the map' });
+  add.onclick = async () => {
+    const f = file.files[0];
+    if (!f) { toast('Choose a picture first.'); return; }
+    add.disabled = true; add.textContent = 'Working…';
+    try {
+      const img = await shrinkBattle(f), parts = BT.splitData(img.data);
+      const base = BT.normalizeMap({ iw: img.iw, ih: img.ih, cols: Number(cols.value) || 24 });
+      const id = await S.store.saveBattleMap({ name: name.value.trim() || f.name.replace(/\.[^.]+$/, '') || 'Battle map', iw: img.iw, ih: img.ih, cols: base.cols, grid: true,
+        fog: BT.newFog(base.cols, BT.rowsOf(base), fogged.checked), tokens: [], showTokens: true, parts: 0, imgAt: 0 });
+      for (let i = 0; i < parts.length; i++) await S.store.savePicture(`${id}~${i}`, 'battle', parts[i]);
+      await S.store.saveBattleMap({ parts: parts.length, imgAt: Date.now() }, id);
+      toast('The map is added.');
+      openBattle(id);
+    } catch (e) { toast('Could not add the map: ' + e.message); }
+    add.disabled = false; add.textContent = 'Add the map';
+  };
+  wrap.append(h('div', { class: 'cb-form cb-mapform' }, h('b', { text: 'A new map' }), name, file,
+    h('label', { class: 'cb-opt' }, 'Squares across ', cols), h('label', { class: 'cb-opt' }, fogged, ' start fully fogged'), add,
+    h('small', { text: 'Any picture; it is shrunk to fit a TV. Count the squares across it once.' })));
+
+  if (!S.battleMaps.length) wrap.append(h('p', { class: 'muted', text: 'No battle maps yet.' }));
+  for (const m of S.battleMaps) {
+    const onTv = live && live.id === m.id;
+    wrap.append(h('div', { class: `cb-maprow${onTv ? ' ontv' : ''}`, 'data-name': m.name },
+      h('div', { class: 'cb-mapname' }, h('strong', { text: m.name }), onTv ? h('span', { class: 'cb-chip pc', text: 'On the TV' }) : null),
+      h('small', { text: `${BT.rowsOf(m) * m.cols} squares (${m.cols} × ${BT.rowsOf(m)}), ${m.tokens.length} token${m.tokens.length === 1 ? '' : 's'}` }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', 'data-act': 'open', text: 'Open', onclick: () => openBattle(m.id) }),
+        h('button', { class: 'btn small ghost', type: 'button', 'data-act': 'tv', text: onTv ? 'Take off the TV' : 'Put on the TV', onclick: () => putOnTv(m.id, !onTv) }),
+        h('button', { class: 'linklike', type: 'button', 'data-act': 'delete', text: 'delete', onclick: async () => {
+          if (!confirm(`Delete “${m.name}”, with its fog and tokens? This cannot be undone.`)) return;
+          try { await S.store.deleteBattleMap(m.id, m.parts); if (onTv) await putOnTv(m.id, false); } catch (e) { toast('Could not delete: ' + e.message); }
+        } }))));
+  }
+  return wrap;
+}
+
+// ── the map itself, on the DM's screen and on the table's ──
+function renderBattle() {
+  const v = $('#battleView');
+  if (!v) return;
+  const tv = tableMode(), m = tv ? liveMap() : curMap();
+  document.body.classList.toggle('battle-open', !!m && !tv);
+  if (!m) {
+    BV.key = null; BV.ro?.disconnect();
+    if (!tv) { v.hidden = true; v.replaceChildren(); return; }
+    v.hidden = false; v.className = 'battle-view table';
+    v.replaceChildren(h('div', { class: 'bv-wait', id: 'bvWait' }, h('div', { class: 'bv-wait-title', text: CAMPAIGN.title }), h('div', { class: 'bv-wait-sub', text: 'The DM is setting up.' })));
+    return;
+  }
+  v.hidden = false; v.className = `battle-view${tv ? ' table' : ''}`;
+  const key = `${m.id}:${m.imgAt}:${tv}`;
+  BV.m = m;
+  if (BV.key !== key) buildBattle(v, m, tv, key);
+  fitBattle();
+  if (!tv) syncBar();
+}
+
+function buildBattle(v, m, tv, key) {
+  BV.ro?.disconnect();
+  BV.key = key; BM.drag = null; BV.preview = null;
+  const img = h('img', { class: 'bv-img', alt: '', draggable: 'false' });
+  const grid = h('canvas', { class: 'bv-grid' }), fog = h('canvas', { class: 'bv-fog' });
+  const tokens = h('div', { class: 'bv-tokens' }), loading = h('div', { class: 'bv-loading', text: 'Loading the map…' });
+  const frame = h('div', { class: 'bv-frame', id: 'bvFrame' }, img, grid, fog, tokens, loading);
+  const hud = h('div', { class: 'bv-hud', id: 'bvHud', hidden: true });
+  const stage = h('div', { class: 'bv-stage' }, frame, hud);
+  const bar = tv ? null : buildBar();
+  v.replaceChildren(...[bar, stage].filter(Boolean));
+  BV.els = { img, grid, fog, tokens, loading, frame, stage, hud, bar };
+  BV.ro = new ResizeObserver(() => fitBattle());
+  BV.ro.observe(stage);
+  mapImage(m).then((src) => {
+    if (BV.key !== key) return;
+    if (!src) { loading.textContent = 'The picture is missing. Add the map again.'; return; }
+    img.onload = () => loading.remove();
+    img.src = src;
+  });
+  if (!tv) wireBattleInput(frame);
+}
+
+// Size the picture to the room there is, and draw everything over it.
+function fitBattle() {
+  const E = BV.els, m = BV.m;
+  if (!E || !m) return;
+  const W = E.stage.clientWidth, H = E.stage.clientHeight;
+  if (!W || !H) return;
+  const k = Math.min(W / m.iw, H / m.ih);
+  E.frame.style.width = `${Math.floor(m.iw * k)}px`;
+  E.frame.style.height = `${Math.floor(m.ih * k)}px`;
+  paintGrid(); paintFogLayer(); paintTokens(); paintHud();
+}
+function paintGrid() {
+  const E = BV.els, m = BV.m, w = E.frame.clientWidth, hh = E.frame.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+  E.grid.width = Math.max(1, Math.round(w * dpr)); E.grid.height = Math.max(1, Math.round(hh * dpr));
+  const ctx = E.grid.getContext('2d');
+  ctx.clearRect(0, 0, E.grid.width, E.grid.height);
+  E.grid.style.display = m.grid ? '' : 'none';
+  if (!m.grid) return;
+  const rows = BT.rowsOf(m), cw = E.grid.width / m.cols, ch = E.grid.height / rows;
+  const lines = (style, width, off) => {
+    ctx.strokeStyle = style; ctx.lineWidth = width; ctx.beginPath();
+    for (let c = 0; c <= m.cols; c++) { const x = Math.round(c * cw) + off; ctx.moveTo(x, 0); ctx.lineTo(x, E.grid.height); }
+    for (let r = 0; r <= rows; r++) { const y = Math.round(r * ch) + off; ctx.moveTo(0, y); ctx.lineTo(E.grid.width, y); }
+    ctx.stroke();
+  };
+  lines('rgba(0,0,0,.38)', Math.max(1, dpr), 0);
+  lines('rgba(255,255,255,.3)', Math.max(1, dpr * 0.7), Math.max(1, Math.round(dpr)));
+}
+// The fog: one block for each square, drawn small and blurred so its edge is soft. A margin of a square all round keeps the
+// edge of the map from fading.
+function paintFogLayer() {
+  const E = BV.els, base = BV.preview || BV.m, rows = BT.rowsOf(base), S8 = 8;
+  const cv = E.fog;
+  cv.width = (base.cols + 2) * S8; cv.height = (rows + 2) * S8;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#090705';
+  for (let r = 0; r < rows; r++) for (let c = 0; c < base.cols; c++) {
+    if (base.fog[r * base.cols + c] !== '1') continue;
+    let x = (c + 1) * S8, y = (r + 1) * S8, w = S8, h2 = S8;
+    if (c === 0) { x -= S8; w += S8; } if (c === base.cols - 1) w += S8;
+    if (r === 0) { y -= S8; h2 += S8; } if (r === rows - 1) h2 += S8;
+    ctx.fillRect(x, y, w, h2);
+  }
+  const cell = E.frame.clientWidth / base.cols;
+  cv.style.left = `${-100 / base.cols}%`; cv.style.top = `${-100 / rows}%`;
+  cv.style.width = `${(base.cols + 2) / base.cols * 100}%`; cv.style.height = `${(rows + 2) / rows * 100}%`;
+  cv.style.filter = `blur(${Math.max(1, cell * 0.22).toFixed(1)}px)`;
+  cv.dataset.fogged = String(BT.fogCount(base));
+}
+function paintTokens() {
+  const E = BV.els, m = BV.m, tv = tableMode();
+  E.frame.style.setProperty('--cell', `${E.frame.clientWidth / m.cols}px`);
+  const states = BT.tokenStates(m, S.combat), list = tv ? states.filter((s) => s.shown) : states;
+  E.tokens.replaceChildren(...list.map((s) => h('div', {
+    class: `bv-token ${s.kind}${s.current ? ' current' : ''}${s.down ? ' down' : ''}${!s.shown ? ' off' : ''}${BM.sel === s.id ? ' sel' : ''}${s.gone ? ' gone' : ''}`,
+    'data-id': s.id, 'data-name': s.name, style: `left:${s.fx * 100}%;top:${s.fy * 100}%;width:calc(var(--cell) * ${s.size});height:calc(var(--cell) * ${s.size});--c:${s.hex}`,
+    title: tv ? '' : `${s.name}${s.shown ? '' : !m.showTokens ? ' (tokens are off)' : !s.on ? ' (switched off for the TV)' : ' (not shown on the TV: in the fog or hidden)'}${s.gone ? ' (no longer in the fight)' : ''}` },
+    h('span', { class: 'bv-lab', text: s.down ? '✕' : s.label }), h('span', { class: 'bv-cap', text: s.name }))));
+}
+function paintHud() {
+  const E = BV.els;
+  if (!tableMode()) { E.hud.hidden = true; return; }
+  const c = S.combat, cur = c.started ? CD.slots(c).find((x) => x.key === c.turn) : null;
+  E.hud.hidden = !cur;
+  if (cur) E.hud.textContent = `Round ${c.round} · ${possessive(slotName(cur))} turn`;
+}
+
+// ── the DM's controls ──
+function buildBar() {
+  const m = () => curMap();
+  const b = (id, text, title, onclick, cls = '') => h('button', { class: `btn small ${cls}`, id, type: 'button', text, title, onclick });
+  const tool = (id, text, title) => h('button', { class: 'btn small bv-tool', id: `bvTool-${id}`, type: 'button', text, title, onclick: () => { BM.tool = id; syncBar(); } });
+  const name = h('input', { type: 'text', id: 'bvName', maxlength: 80, 'aria-label': 'Name of the map' });
+  name.addEventListener('change', () => { const x = m(); if (x && name.value.trim()) setMap({ ...x, name: name.value.trim() }, ['name']); });
+  const cols = h('input', { type: 'number', id: 'bvCols', min: BT.MIN_COLS, max: BT.MAX_COLS, title: 'Squares across the picture', 'aria-label': 'Squares across' });
+  cols.addEventListener('change', () => { const x = m(); if (x) setMap(BT.setCols(x, cols.value), ['cols', 'fog']); });
+  const grid = h('input', { type: 'checkbox', id: 'bvGrid' });
+  grid.addEventListener('change', () => { const x = m(); if (x) setMap({ ...x, grid: grid.checked }, ['grid']); });
+  const brush = h('select', { id: 'bvBrush', title: 'How many squares wide the brush is', 'aria-label': 'Brush size' }, ...[1, 2, 3, 5].map((n) => h('option', { value: n, text: `${n} × ${n}` })));
+  brush.addEventListener('change', () => { BM.brush = Number(brush.value); });
+  const box = h('input', { type: 'checkbox', id: 'bvBox' });
+  box.addEventListener('change', () => { BM.box = box.checked; });
+  const tokOn = h('input', { type: 'checkbox', id: 'bvTokens' });
+  tokOn.addEventListener('change', () => { const x = m(); if (x) setMap({ ...x, showTokens: tokOn.checked }, ['showTokens']); });
+  const addFight = b('bvAddFight', 'Add the fight', 'A token for every player and enemy in the tracker that has none yet', () => {
+    const x = m(); if (!x) return;
+    const r = BT.addFromFight(x, S.combat);
+    if (!r.added) { toast(S.combat.combatants.length ? 'Everyone in the fight already has a token.' : 'Nobody is in the fight yet.'); return; }
+    setMap(r.map, ['tokens']); toast(`${r.added} token${r.added === 1 ? '' : 's'} added.`);
+  });
+  const addTok = b('bvAddToken', '+ Token', 'A token for something else: a door, an NPC, a boulder', () => {
+    const x = m(); if (!x) return;
+    const n = prompt('Name of the token'); if (!n || !n.trim()) return;
+    const r = BT.addToken(x, { name: n.trim(), kind: 'other', color: 'blue' });
+    if (!r.token) { toast('That is as many tokens as a map can hold.'); return; }
+    BM.sel = r.token.id; setMap(r.map, ['tokens']);
+  });
+  const clearGone = b('bvDropGone', 'Clear the gone', 'Take off the tokens of creatures that have left the fight', () => {
+    const x = m(); if (!x) return;
+    const r = BT.dropGone(x, S.combat); if (r.removed) setMap(r.map, ['tokens']);
+  });
+  const tv = b('bvTv', '', '', () => { const x = m(); if (x) putOnTv(x.id, !(liveMap()?.id === x.id)); });
+  return h('div', { class: 'bv-bar', id: 'bvBar' },
+    h('div', { class: 'bv-row' }, name, h('label', { class: 'bv-opt' }, 'Squares across ', cols), h('label', { class: 'bv-opt' }, grid, ' Grid'), tv,
+      b('bvTable', 'Table window', 'A window with only the map, to drag onto the TV', popOutTable, 'ghost'),
+      b('bvClose', 'Close', 'Put the map away (it is kept)', closeBattleView, 'ghost')),
+    h('div', { class: 'bv-row' }, tool('move', 'Move tokens', 'Drag tokens; click one to change it'), tool('reveal', 'Reveal', 'Paint the fog away'), tool('hide', 'Fog', 'Paint fog back'),
+      h('label', { class: 'bv-opt' }, 'Brush ', brush), h('label', { class: 'bv-opt' }, box, ' Box'),
+      b('bvRevealAll', 'Reveal all', 'Clear all the fog', () => { const x = m(); if (x) setMap(BT.fogAll(x, false), ['fog']); }, 'ghost'),
+      b('bvFogAll', 'Fog all', 'Cover the whole map', () => { const x = m(); if (x) setMap(BT.fogAll(x, true), ['fog']); }, 'ghost')),
+    h('div', { class: 'bv-row' }, h('label', { class: 'bv-opt bv-strong' }, tokOn, ' Tokens on the TV'), addFight, addTok, clearGone),
+    h('div', { class: 'bv-row bv-tok', id: 'bvTok' }));
+}
+
+function syncBar() {
+  const E = BV.els, m = curMap();
+  if (!E?.bar || !m) return;
+  const $b = (id) => E.bar.querySelector(`#${id}`);
+  const focused = document.activeElement;
+  const setVal = (el, v) => { if (el !== focused) el.value = v; };
+  setVal($b('bvName'), m.name); setVal($b('bvCols'), m.cols);
+  $b('bvGrid').checked = m.grid; $b('bvBox').checked = BM.box; $b('bvTokens').checked = m.showTokens; $b('bvBrush').value = String(BM.brush);
+  for (const t of ['move', 'reveal', 'hide']) $b(`bvTool-${t}`).classList.toggle('on', BM.tool === t);
+  const onTv = liveMap()?.id === m.id;
+  const tv = $b('bvTv');
+  tv.textContent = onTv ? 'On the TV: blank it' : 'Put on the TV';
+  tv.classList.toggle('gold', !onTv); tv.classList.toggle('ghost', onTv);
+  tv.title = onTv ? 'The TV shows this map. Press to blank it.' : 'Show this map on the TV';
+  $b('bvDropGone').hidden = !BT.tokenStates(m, S.combat).some((s) => s.gone);
+  E.frame.classList.toggle('painting', BM.tool !== 'move');
+  // the token that is picked, if any
+  const box = $b('bvTok'), t = BM.sel ? m.tokens.find((x) => x.id === BM.sel) : null;
+  if (box.contains(focused) && t) return;
+  if (!t) { box.replaceChildren(); box.hidden = true; return; }
+  box.hidden = false;
+  const st = BT.tokenStates(m, S.combat).find((s) => s.id === t.id);
+  const nm = h('input', { type: 'text', id: 'bvTokName', maxlength: 60, value: t.name, disabled: !!t.cid, title: t.cid ? 'Named after its creature in the fight' : '', 'aria-label': 'Name of the token' });
+  nm.addEventListener('change', () => { const x = m && curMap(); if (x && nm.value.trim()) setMap(BT.updateToken(x, t.id, { name: nm.value.trim() }), ['tokens']); });
+  const size = h('select', { id: 'bvTokSize', 'aria-label': 'Size of the token' }, ...[[1, 'Medium'], [2, 'Large'], [3, 'Huge'], [4, 'Gargantuan']].map(([n, l]) => h('option', { value: n, text: `${l} (${n} × ${n})`, selected: t.size === n })));
+  size.addEventListener('change', () => { const x = curMap(); if (x) setMap(BT.updateToken(x, t.id, { size: Number(size.value) }), ['tokens']); });
+  const on = h('input', { type: 'checkbox', id: 'bvTokOn', checked: t.on });
+  on.addEventListener('change', () => { const x = curMap(); if (x) setMap(BT.updateToken(x, t.id, { on: on.checked }), ['tokens']); });
+  box.replaceChildren(h('b', { text: st?.name || t.name }), nm, size, h('label', { class: 'bv-opt' }, on, ' Show on the TV'),
+    t.cid ? null : h('div', { class: 'bv-sw' }, ...CD.COLORS.map((c) => h('button', { class: `cb-sw${c.id === t.color ? ' on' : ''}`, type: 'button', style: `--c:${c.hex}`, title: c.name, 'aria-label': c.name,
+      onclick: () => { const x = curMap(); if (x) setMap(BT.updateToken(x, t.id, { color: c.id }), ['tokens']); } }))),
+    h('button', { class: 'btn small ghost', id: 'bvTokDel', type: 'button', text: 'Remove', onclick: () => { const x = curMap(); BM.sel = null; if (x) setMap(BT.removeToken(x, t.id), ['tokens']); } }));
+}
+
+// Dragging on the map: tokens move, the brush paints fog.
+function wireBattleInput(frame) {
+  const pt = (e) => { const r = frame.getBoundingClientRect(); return { fx: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), fy: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; };
+  const strokeCells = (d, m) => {
+    if (d.box) return BT.boxCells(m, d.c0, d.r0, d.c, d.r);
+    return BT.lineCells(d.pc, d.pr, d.c, d.r).flatMap(([c, r]) => BT.brushCells(m, c, r, BM.brush));
+  };
+  const preview = (d, m) => { d.work = d.box ? BT.paintFog(d.base, strokeCells(d, m), d.hidden) : BT.paintFog(d.work, strokeCells(d, m), d.hidden); BV.preview = d.work; paintFogLayer(); };
+  frame.addEventListener('pointerdown', (e) => {
+    const m = curMap();
+    if (!m || e.button !== 0) return;
+    if (BM.tool === 'move') {
+      const el = e.target.closest('.bv-token');
+      if (!el) { if (BM.sel) { BM.sel = null; paintTokens(); syncBar(); } return; }
+      BM.drag = { kind: 'token', id: el.dataset.id, el, moved: false, x0: e.clientX, y0: e.clientY, at: pt(e) };
+    } else {
+      const { c, r } = BT.cellOf(m, pt(e).fx, pt(e).fy);
+      BM.drag = { kind: 'fog', hidden: BM.tool === 'hide', box: BM.box, base: m, work: m, c0: c, r0: r, c, r, pc: c, pr: r };
+      preview(BM.drag, m);
+    }
+    frame.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  frame.addEventListener('pointermove', (e) => {
+    const d = BM.drag, m = curMap();
+    if (!d || !m) return;
+    const p = pt(e);
+    if (d.kind === 'token') {
+      if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 5) return;
+      d.moved = true; d.at = p; d.el.classList.add('drag');
+      d.el.style.left = `${p.fx * 100}%`; d.el.style.top = `${p.fy * 100}%`;
+    } else {
+      const { c, r } = BT.cellOf(m, p.fx, p.fy);
+      if (c === d.c && r === d.r) return;
+      d.pc = d.c; d.pr = d.r; d.c = c; d.r = r;
+      preview(d, m);
+    }
+  });
+  const end = (e, commit) => {
+    const d = BM.drag;
+    if (!d) return;
+    BM.drag = null; BV.preview = null;
+    const m = curMap();
+    if (m && commit) {
+      if (d.kind === 'token') {
+        if (d.moved) setMap(BT.moveToken(m, d.id, d.at.fx, d.at.fy), ['tokens']);
+        else { BM.sel = BM.sel === d.id ? null : d.id; paintTokens(); syncBar(); }
+      } else setMap({ ...m, fog: d.work.fog }, ['fog']);
+    } else renderBattle();
+  };
+  frame.addEventListener('pointerup', (e) => end(e, true));
+  frame.addEventListener('pointercancel', (e) => end(e, false));
+}
+
 // ─── DM editors ─────────────────────────────────────────────────────
 function field(label, input, hint) {
   // A <label> forwards clicks on its text to the first control inside it, which is only
@@ -6318,6 +6691,7 @@ function setupChrome() {
       else if (S.pingMode) setPingMode(false);
       else if (S.placeShop) { const id = S.placeShop; S.placeShop = null; modeHint(); openShop(id); }
       else if (document.body.classList.contains('toc-open')) closeTOC();
+      else if (BM.open && !tableMode() && !typing) closeBattleView();
       else if (S.panel && !typing) closePanel();
       return;
     }

@@ -44,7 +44,7 @@ export class LocalStore {
     this.db.journal ||= {};
     this.db.haggles ||= {};
     this.db.players ||= {};
-    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder', 'initiative', 'handouts', 'reveals']) this.db[k] ||= {};
+    for (const k of ['loot', 'lootTruth', 'lootLog', 'caches', 'magicItems', 'magicPublic', 'customItems', 'backpacks', 'backpackLog', 'holidays', 'calendarLog', 'roster', 'reminders', 'enemies', 'combat', 'encounters', 'turnorder', 'initiative', 'handouts', 'reveals', 'battlemaps', 'tabletop']) this.db[k] ||= {};
     this.db.party ||= { coins: { cp: 0, sp: 0, gp: 0, pp: 0 } };
   }
 
@@ -75,6 +75,8 @@ export class LocalStore {
     this.handlers.turnask?.(this.db.turnorder.ask || null);
     if (dm) this.handlers.initiative?.(rows(this.db.initiative));
     if (dm) this.handlers.handouts?.(rows(this.db.handouts));
+    if (dm) this.handlers.battlemaps?.(rows(this.db.battlemaps));
+    if (dm) this.handlers.tabletop?.(this.db.tabletop.live || null);
     this.handlers.reveals?.(rows(this.db.reveals).filter((r) => dm || r.to === 'all' || r.to === this.uid));
     this.handlers.shops?.(rows(this.db.shops).filter((x) => dm || !x.hidden));
     this.handlers.purchases?.(rows(this.db.purchases));
@@ -239,6 +241,18 @@ export class LocalStore {
     delete this.db.handouts[id]; delete this.db.pictures[id];
     this.persist();
   }
+  async saveBattleMap(data, id) {
+    if (!id) { id = 'bm-' + rid(); this.db.battlemaps[id] = { createdAt: Date.now() }; }
+    this.db.battlemaps[id] = { ...(this.db.battlemaps[id] || {}), ...data };
+    this.persist();
+    return id;
+  }
+  async deleteBattleMap(id, parts = 0) {
+    for (let i = 0; i < parts; i++) delete this.db.pictures[`${id}~${i}`];
+    delete this.db.battlemaps[id];
+    this.persist();
+  }
+  async saveTabletop(data) { this.db.tabletop.live = { ...(this.db.tabletop.live || {}), ...data, updatedAt: Date.now() }; this.persist(); }
   async updateCalendarLog(id, data) { Object.assign(this.db.calendarLog[id] || {}, data); this.persist(); }
 
   // ── shops and their purchase ledger
